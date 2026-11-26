@@ -37,6 +37,7 @@
 import { createLogger, toErrorMessage, getSyncIntervalMs } from "@omnesis/core";
 import { parseSourceId, SourceId } from "@omnesis/types";
 import { blocksSync } from "@omnesis/source-sdk";
+import { DoctorReadAccess } from "./doctor-read-access.js";
 import { sourceDisplayMeta } from "./source-display-meta.js";
 import { SourceLifecycle } from "./source-lifecycle.js";
 import { FileWatcherManager } from "./file-watcher-manager.js";
@@ -80,6 +81,8 @@ export { NEEDS_AUTH_ERROR_PREFIX } from "./sync-engine-types.js";
 const log = createLogger("collector:sync");
 
 export class SyncEngine {
+  readonly permissionAccess = new DoctorReadAccess(undefined, undefined, "permissions");
+  readonly publicationGuard: "managed-v1" | undefined;
   // Tunables now live in `./tunables.ts` so every magic number in the
   // collector is in one searchable spot. The class still keeps the
   // overrides on `opts` for tests + future config-store wiring.
@@ -117,6 +120,7 @@ export class SyncEngine {
       filePollIntervalMs?: number;
       syncTimeoutMs?: number;
       ingestionContext?: DocumentIngestionContext;
+      enforceReadAccess?: boolean;
     },
   ) {
     this.pushDebounceMs = opts?.pushDebounceMs ?? DEFAULT_PUSH_DEBOUNCE_MS;
@@ -131,12 +135,15 @@ export class SyncEngine {
       },
     );
     this.registry = new SourceRegistry(this.scheduler, this.fileWatchers);
+    const permissionAccess = opts?.enforceReadAccess ? this.permissionAccess : undefined;
+    this.publicationGuard = permissionAccess ? "managed-v1" : undefined;
     this.runner = new SourceSyncRunner(
       this.gateway,
       this.registry,
       syncTimeoutMs,
       undefined,
       opts?.ingestionContext,
+      permissionAccess,
     );
     this.dispatcher = new SyncDispatcher(this.registry, (source, reason) =>
       this.syncSource(source, reason),

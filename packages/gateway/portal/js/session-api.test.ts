@@ -3,7 +3,7 @@
 
 import { afterEach, expect, test, vi } from "vitest";
 // @ts-expect-error — portal modules are plain JS without sibling declarations.
-import { checkSession } from "./api.js";
+import { checkSession, getScope, login } from "./api.js";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -34,4 +34,23 @@ test("a completed session read clears its deadline", async () => {
   expect(await checkSession()).toEqual({ authenticated: true, scope: ["admin"], csrfToken: "fictional-csrf" });
   await vi.advanceTimersByTimeAsync(10_000);
   expect(signal?.aborted).toBe(false);
+});
+
+
+test("plural session scopes remain available for guarded portal metadata reads", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ authenticated: true, scopes: ["read:documents"] })));
+  await checkSession();
+  expect(getScope()).toEqual(["read:documents"]);
+});
+
+test("plural login scopes are cached without changing the response or authentication policy", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ok: true, scopes: ["admin"], csrfToken: "fictional-csrf" })));
+  expect(await login("fictional-token")).toMatchObject({ ok: true, scopes: ["admin"] });
+  expect(getScope()).toEqual(["admin"]);
+});
+
+test("legacy singular scope takes precedence when supplied", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ authenticated: true, scope: "admin", scopes: ["read:documents"] })));
+  await checkSession();
+  expect(getScope()).toBe("admin");
 });

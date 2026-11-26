@@ -33,6 +33,7 @@ const config = () => ({
     notify: [],
     allow_login_shell: false,
     project_doc_max_bytes: 0,
+    web_search: "disabled",
     tools: { experimental_request_user_input: { enabled: false }, update_plan: { enabled: false } },
   },
 });
@@ -41,9 +42,9 @@ test("only the inspected pinned runtime may normalize the executor beneath the d
     feature.name === "unified_exec" ? { ...feature, enabled: true } : feature,
   );
   await expect(
-    assertManagedCodexEffectiveFeatures(async () => ({ data }), undefined, "0.169.0"),
+    assertManagedCodexEffectiveFeatures(async () => ({ data }), undefined, "0.171.0"),
   ).resolves.toBeUndefined();
-  for (const version of [undefined, "0.168.0", "0.170.0"])
+  for (const version of [undefined, "0.168.0", "0.169.0", "0.170.0", "0.172.0"])
     await expect(
       assertManagedCodexEffectiveFeatures(async () => ({ data }), undefined, version),
     ).rejects.toThrow(/process policy/u);
@@ -51,7 +52,7 @@ test("only the inspected pinned runtime may normalize the executor beneath the d
     feature.name === "shell_tool" ? { ...feature, enabled: true } : feature,
   );
   await expect(
-    assertManagedCodexEffectiveFeatures(async () => ({ data: shellEnabled }), undefined, "0.169.0"),
+    assertManagedCodexEffectiveFeatures(async () => ({ data: shellEnabled }), undefined, "0.171.0"),
   ).rejects.toThrow(/process policy/u);
 });
 test("managed Git metadata ignores inherited global execution hooks and workspace config", async () => {
@@ -62,6 +63,11 @@ test("managed Git metadata ignores inherited global execution hooks and workspac
       GIT_CONFIG_GLOBAL: "/example/untrusted",
       GIT_CONFIG_KEY_0: "core.fsmonitor",
       GIT_CONFIG_VALUE_0: "fixture-program",
+      CODEX_ROLLOUT_TRACE_ROOT: "/example/untrusted-trace",
+      OPENAI_IDENTITY_TOKEN_SOURCE: "spiffe",
+      OPENAI_SPIFFE_AUDIENCE: "fictional-audience",
+      OPENAI_SPIFFE_ID: "fictional-identity",
+      SPIFFE_ENDPOINT_SOCKET: "/example/untrusted-identity-socket",
     },
     "/example/codex",
     "darwin",
@@ -77,6 +83,14 @@ test("managed Git metadata ignores inherited global execution hooks and workspac
     GIT_CEILING_DIRECTORIES: "/example/workspace",
   });
   expect(env.GIT_CONFIG_KEY_0).toBeUndefined();
+  for (const name of [
+    "CODEX_ROLLOUT_TRACE_ROOT",
+    "OPENAI_IDENTITY_TOKEN_SOURCE",
+    "OPENAI_SPIFFE_AUDIENCE",
+    "OPENAI_SPIFFE_ID",
+    "SPIFFE_ENDPOINT_SOCKET",
+  ])
+    expect(env[name]).toBeUndefined();
   const root = await realpath(await mkdtemp(join(tmpdir(), "omnesis-sdk-workspace-")));
   try {
     await expect(assertManagedCodexWorkspace(root)).resolves.toBeUndefined();
@@ -116,6 +130,7 @@ test("raw config refuses deep-merged MCP, notification commands and ignored shel
     { notify: ["fixture-program"] },
     { allow_login_shell: true },
     { project_doc_max_bytes: 1024 },
+    { web_search: "live" },
     { features: { ...MANAGED_CODEX_PROCESS_FEATURES, shell_snapshot: true } },
   ])
     expect(() =>
@@ -151,7 +166,7 @@ test("effective catalog independently recognizes every required flag across boun
       ? { data: data.slice(5), nextCursor: null }
       : { data: data.slice(0, 5), nextCursor: "fixture-next" },
   );
-  await assertManagedCodexEffectiveFeatures(request, "fixture-thread", "0.169.0");
+  await assertManagedCodexEffectiveFeatures(request, "fixture-thread", "0.171.0");
   expect(request).toHaveBeenLastCalledWith({
     cursor: "fixture-next",
     limit: 128,
@@ -172,14 +187,14 @@ test("an unsupported echoed flag, enabled flag, removed implementation or repeat
       assertManagedCodexEffectiveFeatures(
         async () => ({ data, nextCursor: null }),
         undefined,
-        "0.169.0",
+        "0.171.0",
       ),
     ).rejects.toThrow(/process policy/u);
   await expect(
     assertManagedCodexEffectiveFeatures(
       async () => ({ data: [], nextCursor: "fixture-repeat" }),
       undefined,
-      "0.169.0",
+      "0.171.0",
     ),
   ).rejects.toThrow(/process policy/u);
 });

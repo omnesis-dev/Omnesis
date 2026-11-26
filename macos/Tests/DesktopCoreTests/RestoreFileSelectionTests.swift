@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import Darwin
 @testable import DesktopCore
 import XCTest
 
@@ -10,9 +11,10 @@ final class RestoreFileSelectionTests: XCTestCase {
             .resolvingSymlinksInPath()
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: root) }
-        let archive = root.appendingPathComponent("selected.tar")
+        let canonicalRoot = try URL(fileURLWithPath: DesktopCanonicalPath.resolve(root.path), isDirectory: true)
+        let archive = canonicalRoot.appendingPathComponent("selected.tar")
         try Data("fictional selected archive".utf8).write(to: archive)
-        return (root, archive)
+        return (canonicalRoot, archive)
     }
 
     func testCapturesExactFileIdentityWithoutCopyingOriginal() throws {
@@ -35,6 +37,31 @@ final class RestoreFileSelectionTests: XCTestCase {
         XCTAssertThrowsError(try DesktopRestoreFileSelection.read(link))
         XCTAssertThrowsError(try DesktopRestoreFileSelection.read(root))
         XCTAssertThrowsError(try DesktopRestoreFileSelection.read(archive, maxBytes: 1))
+    }
+
+    func testSelectedPathMatchesTheSidecarPOSIXIdentityAndRefusesAliasParents() throws {
+        let (root, archive) = try fixture()
+        let selected = try DesktopRestoreFileSelection.read(archive)
+        XCTAssertEqual(selected.path, try DesktopCanonicalPath.resolve(archive.path))
+        let alias = root.appendingPathComponent("folder-alias")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: root)
+        XCTAssertThrowsError(try DesktopRestoreFileSelection.read(alias.appendingPathComponent("selected.tar")))
+    }
+
+    func testSignedPreEpochTimestampIsPreservedExactly() throws {
+        let (_, archive) = try fixture()
+        let times = [timespec(tv_sec: -1, tv_nsec: 500_000_000), timespec(tv_sec: -1, tv_nsec: 500_000_000)]
+        XCTAssertEqual(utimensat(AT_FDCWD, archive.path, times, 0), 0)
+        let selection = try DesktopRestoreFileSelection.read(archive)
+        XCTAssertEqual(selection.mtimeSeconds, "-1")
+        XCTAssertEqual(selection.mtimeNanoseconds, "500000000")
+    }
+
+    func testFIFOSelectionIsRefusedWithoutBlockingForAWriter() throws {
+        let (root, _) = try fixture()
+        let fifo = root.appendingPathComponent("named-pipe.tar")
+        XCTAssertEqual(mkfifo(fifo.path, 0o600), 0)
+        XCTAssertThrowsError(try DesktopRestoreFileSelection.read(fifo))
     }
 
     func testHardlinksCannotChangeMeaningAfterSelection() throws {

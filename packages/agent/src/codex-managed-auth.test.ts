@@ -24,6 +24,7 @@ import {
 } from "./codex-managed-auth.js";
 import { CodexAppServerRuntime, buildCodexEnv } from "./codex-app-server-backend.js";
 import { CodexRuntimePool } from "./codex-runtime-pool.js";
+import * as modelDiscovery from "./codex-managed-model-discovery.js";
 import { CODEX_RUNTIME_COMPAT } from "./codex-compat.js";
 
 const managed = {
@@ -54,6 +55,14 @@ describe("managed Codex credential boundaries", () => {
     expect(managedCodexArgs({}, input, "/example/state")).toEqual(input);
     expect(buildCodexEnv({ ...managed, RUST_LOG: "trace" }, "/example/home").RUST_LOG).toBe("off");
     expect(buildCodexEnv({}, "/example/home").RUST_LOG).toBeUndefined();
+    const trust = {
+      SSL_CERT_FILE: "/example/global.pem",
+      SSL_CERT_DIR: "/example/global-certs",
+      NODE_EXTRA_CA_CERTS: "/example/node.pem",
+    };
+    for (const key of Object.keys(trust))
+      expect(buildCodexEnv({ ...trust, ...managed }, "/example/home")[key]).toBeUndefined();
+    expect(buildCodexEnv(trust, "/example/home")).toMatchObject(trust);
   });
 
   test("canonical owned homes have distinct namespaces and aliases refuse before any account lookup", async () => {
@@ -82,6 +91,11 @@ describe("managed Codex credential boundaries", () => {
       await symlink(outside, alias, process.platform === "win32" ? "junction" : "dir");
       const log = join(base, "startup.jsonl");
       const runtime = new CodexAppServerRuntime({
+        resolveManagedCommand: async (info) => info,
+        managedCatalogPlatform: {
+          invocation: (command, args) => ({ command, args: [...args] }),
+          previousSha256: async () => null,
+        },
         codexHome: selected === "home" ? alias : join(base, "home"),
         workspaceDir: selected === "workspace" ? alias : join(base, "workspace"),
         stateHome: selected === "state" ? alias : join(base, "state"),
@@ -174,6 +188,11 @@ describe("managed Codex credential boundaries", () => {
     const workers = ["one", "two"].map(
       (id) =>
         new CodexAppServerRuntime({
+          resolveManagedCommand: async (info) => info,
+          managedCatalogPlatform: {
+            invocation: (command, args) => ({ command, args: [...args] }),
+            previousSha256: async () => null,
+          },
           codexHome: home,
           workspaceDir: join(root, "workspace", id),
           stateHome: join(root, "state", id),
@@ -184,7 +203,7 @@ describe("managed Codex credential boundaries", () => {
         }),
     );
     try {
-      await Promise.all(workers.map((worker) => worker.listModels()));
+      await Promise.all(workers.map((worker) => worker.verifyManagedCredentialPolicy()));
       const events = (await readFile(log, "utf8"))
         .trim()
         .split("\n")
@@ -208,4 +227,71 @@ describe("managed Codex credential boundaries", () => {
       await Promise.all(workers.map((worker) => worker.dispose()));
     }
   });
+});
+
+async function managedRuntimeFixture() {
+  const root = await fixture();
+  const script = fileURLToPath(
+    new URL("./test-fixtures/fake-codex-app-server.mjs", import.meta.url),
+  );
+  return {
+    root,
+    script,
+    options: {
+      codexHome: join(root, "owned-home"),
+      workspaceDir: join(root, "workspace"),
+      stateHome: join(root, "worker-state"),
+      command: process.execPath,
+      args: [script, "app-server", "--listen", "stdio://"],
+      versionArgs: [script, "--version"],
+      resolveManagedCommand: async (
+        info: import("./codex-app-server-backend.js").CodexRuntimeCommandInfo,
+      ) => info,
+      managedCatalogPlatform: {
+        invocation: (command: string, args: readonly string[]) => ({ command, args: [...args] }),
+        previousSha256: async () => null,
+      },
+      env: {
+        ...managed,
+        PATH: process.env.PATH,
+        HOME: root,
+        OMNESIS_CONFIG_DIR: join(root, "library"),
+        OMNESIS_SERVICE_INSTANCE: "desktop-" + "a".repeat(16),
+        OMNESIS_SECRET_SERVICE: "dev.omnesis.desktop." + "a".repeat(64),
+      },
+    },
+  };
+}
+
+test("unconfirmed private discovery cleanup fences runtime reuse and generation retirement", async () => {
+  const f = await managedRuntimeFixture();
+  const failed = Object.assign(new Error("Invented discovery cleanup uncertainty"), {
+    cleanupFailure: "fixture-unjoined-sdk",
+  });
+  const discovery = vi
+    .spyOn(modelDiscovery, "prepareManagedCodexModelCatalog")
+    .mockRejectedValueOnce(failed);
+  const runtime = new CodexAppServerRuntime(f.options);
+  try {
+    await expect(runtime.listModels()).rejects.toMatchObject({ cleanupFailure: failed });
+    await expect(runtime.probeRuntime()).rejects.toThrow(/cleanup/u);
+    await expect(runtime.dispose()).rejects.toThrow(/cleanup/u);
+    expect(discovery).toHaveBeenCalledTimes(1);
+  } finally {
+    discovery.mockRestore();
+    await runtime.dispose().catch(() => {});
+  }
+});
+
+test("a joined or cancelled policy probe does not masquerade as pending process cleanup", async () => {
+  const f = await managedRuntimeFixture();
+  const runtime = new CodexAppServerRuntime({
+    ...f.options,
+    env: { ...f.options.env, OMNESIS_FAKE_CODEX_SCENARIO: "managed-policy-refused" },
+  });
+  const verification = expect(runtime.verifyManagedCredentialPolicy()).rejects.toThrow(
+    /strict Keychain|disposed/u,
+  );
+  await expect(runtime.dispose()).resolves.toBeUndefined();
+  await verification;
 });

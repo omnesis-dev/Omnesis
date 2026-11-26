@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { link, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
@@ -17,6 +17,13 @@ async function directory() {
   const root = await realpath(await mkdtemp(join(tmpdir(), "omnesis-analytics-build-test-")));
   roots.push(root);
   return root;
+}
+function universalLibrary(cpus) {
+  const bytes = Buffer.alloc(8 + cpus.length * 20);
+  bytes.writeUInt32BE(0xcafebabe);
+  bytes.writeUInt32BE(cpus.length, 4);
+  cpus.forEach((cpu, index) => bytes.writeUInt32BE(cpu, 8 + index * 20));
+  return bytes;
 }
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const identity = {
@@ -139,58 +146,67 @@ test.skipIf(process.platform === "win32")(
   },
 );
 
-test("desktop staging replaces only the reviewed native binding and keeps upstream notices", async () => {
-  const { stageDesktopAnalytics } = await import("./stage-analytics.mjs");
-  const { readAnalyticsBuildPins } = await import("./analytics-sources.mjs");
-  const f = await cachedBuild();
-  f.record.sourcePinsSha256 = hash(JSON.stringify(await readAnalyticsBuildPins()));
-  await writeFile(join(f.root, "provenance.json"), JSON.stringify(f.record));
-  const target = await directory();
-  const binding = join(target, "node_modules/@duckdb/node-bindings-darwin-arm64");
-  const gateway = join(target, "packages/gateway");
-  await mkdir(binding, { recursive: true });
-  await mkdir(join(gateway, "duckdb-extensions"), { recursive: true });
-  await writeFile(
-    join(binding, "package.json"),
-    JSON.stringify({
-      name: "@duckdb/node-bindings-darwin-arm64",
-      version: "1.5.6-r.2",
-    }),
-  );
-  const original = Buffer.from(f.library);
-  original[31] = 42;
-  await writeFile(join(binding, "libduckdb.dylib"), original);
-  await writeFile(join(binding, "LICENSE"), "Original binding license");
-  await writeFile(
-    join(gateway, "duckdb-extensions/httpfs.duckdb_extension"),
-    "unsuitable packaged file",
-  );
-  const build = { directory: f.root, provenance: f.record };
-  await writeFile(
-    join(binding, "package.json"),
-    JSON.stringify({ name: "@duckdb/node-bindings-darwin-arm64", version: "1.5.6-r.1" }),
-  );
-  await expect(stageDesktopAnalytics({ target, architecture: "arm64", build })).rejects.toThrow(
-    "does not match the reviewed engine",
-  );
-  expect(await readFile(join(binding, "libduckdb.dylib"))).toEqual(original);
-  await writeFile(
-    join(binding, "package.json"),
-    JSON.stringify({ name: "@duckdb/node-bindings-darwin-arm64", version: "1.5.6-r.2" }),
-  );
-  await stageDesktopAnalytics({ target, architecture: "arm64", build });
-  expect(await readFile(join(binding, "libduckdb.dylib"))).toEqual(f.library);
-  expect(await readFile(join(binding, "LICENSE"), "utf8")).toBe("Original binding license");
-  expect(
-    await readFile(join(gateway, "desktop-analytics-notices/httpfs/LICENSE"), "utf8"),
-  ).toContain("Invented httpfs");
-  await expect(
-    readFile(join(gateway, "duckdb-extensions/httpfs.duckdb_extension")),
-  ).rejects.toMatchObject({ code: "ENOENT" });
-  expect(
-    JSON.parse(await readFile(join(gateway, "desktop-analytics.json"), "utf8")).librarySha256,
-  ).toBe(hash(f.library));
-});
+test.each(["thin", "universal-x64-first", "universal-arm64-first"])(
+  "desktop staging replaces the reviewed %s binding and keeps upstream notices",
+  async (shape) => {
+    const { stageDesktopAnalytics } = await import("./stage-analytics.mjs");
+    const { readAnalyticsBuildPins } = await import("./analytics-sources.mjs");
+    const f = await cachedBuild();
+    f.record.sourcePinsSha256 = hash(JSON.stringify(await readAnalyticsBuildPins()));
+    await writeFile(join(f.root, "provenance.json"), JSON.stringify(f.record));
+    const target = await directory();
+    const binding = join(target, "node_modules/@duckdb/node-bindings-darwin-arm64");
+    const gateway = join(target, "packages/gateway");
+    await mkdir(binding, { recursive: true });
+    await mkdir(join(gateway, "duckdb-extensions"), { recursive: true });
+    await writeFile(
+      join(binding, "package.json"),
+      JSON.stringify({
+        name: "@duckdb/node-bindings-darwin-arm64",
+        version: "1.5.6-r.2",
+      }),
+    );
+    const original =
+      shape === "thin"
+        ? Buffer.from(f.library)
+        : universalLibrary(
+            shape === "universal-x64-first" ? [0x01000007, 0x0100000c] : [0x0100000c, 0x01000007],
+          );
+    original[original.length - 1] = 42;
+    await writeFile(join(binding, "libduckdb.dylib"), original);
+    await writeFile(join(binding, "LICENSE"), "Original binding license");
+    await writeFile(
+      join(gateway, "duckdb-extensions/httpfs.duckdb_extension"),
+      "unsuitable packaged file",
+    );
+    const build = { directory: f.root, provenance: f.record };
+    await writeFile(
+      join(binding, "package.json"),
+      JSON.stringify({ name: "@duckdb/node-bindings-darwin-arm64", version: "1.5.6-r.1" }),
+    );
+    await expect(stageDesktopAnalytics({ target, architecture: "arm64", build })).rejects.toThrow(
+      "does not match the reviewed engine",
+    );
+    expect(await readFile(join(binding, "libduckdb.dylib"))).toEqual(original);
+    await writeFile(
+      join(binding, "package.json"),
+      JSON.stringify({ name: "@duckdb/node-bindings-darwin-arm64", version: "1.5.6-r.2" }),
+    );
+    await stageDesktopAnalytics({ target, architecture: "arm64", build });
+    expect(await readFile(join(binding, "libduckdb.dylib"))).toEqual(f.library);
+    expect(await readFile(join(f.root, "libduckdb.dylib"))).toEqual(f.library);
+    expect(await readFile(join(binding, "LICENSE"), "utf8")).toBe("Original binding license");
+    expect(
+      await readFile(join(gateway, "desktop-analytics-notices/httpfs/LICENSE"), "utf8"),
+    ).toContain("Invented httpfs");
+    await expect(
+      readFile(join(gateway, "duckdb-extensions/httpfs.duckdb_extension")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    expect(
+      JSON.parse(await readFile(join(gateway, "desktop-analytics.json"), "utf8")).librarySha256,
+    ).toBe(hash(f.library));
+  },
+);
 
 test("desktop staging refuses a different N-API engine version before replacing its code", async () => {
   const { stageDesktopAnalytics } = await import("./stage-analytics.mjs");
@@ -220,4 +236,81 @@ test("desktop staging refuses a different N-API engine version before replacing 
     }),
   ).rejects.toThrow("does not match");
   expect(await readFile(join(binding, "libduckdb.dylib"))).toEqual(f.library);
+});
+
+test.each([
+  ["wrong target", universalLibrary([0x01000007])],
+  ["duplicate target", universalLibrary([0x0100000c, 0x0100000c])],
+  ["unknown CPU", universalLibrary([0x0100000c, 0x0100000d])],
+  ["extra slice", universalLibrary([0x01000007, 0x0100000c, 0x0100000c])],
+  ["non Mach-O", Buffer.from("invented invalid native input")],
+])("desktop staging refuses %s without replacing input bytes", async (_name, original) => {
+  const { stageDesktopAnalytics } = await import("./stage-analytics.mjs");
+  const { readAnalyticsBuildPins } = await import("./analytics-sources.mjs");
+  const f = await cachedBuild();
+  f.record.sourcePinsSha256 = hash(JSON.stringify(await readAnalyticsBuildPins()));
+  await writeFile(join(f.root, "provenance.json"), JSON.stringify(f.record));
+  const target = await directory();
+  const binding = join(target, "node_modules/@duckdb/node-bindings-darwin-arm64");
+  await mkdir(binding, { recursive: true });
+  await writeFile(
+    join(binding, "package.json"),
+    JSON.stringify({
+      name: "@duckdb/node-bindings-darwin-arm64",
+      version: "1.5.6-r.2",
+    }),
+  );
+  const library = join(binding, "libduckdb.dylib");
+  await writeFile(library, original);
+  await expect(
+    stageDesktopAnalytics({
+      target,
+      architecture: "arm64",
+      build: { directory: f.root, provenance: f.record },
+    }),
+  ).rejects.toThrow("not an owned target library");
+  expect(await readFile(library)).toEqual(original);
+});
+
+test.skipIf(process.platform === "win32").each(["symlink", "hardlink"])(
+  "desktop staging refuses an upstream %s without touching its owner",
+  async (kind) => {
+    const { stageDesktopAnalytics } = await import("./stage-analytics.mjs");
+    const { readAnalyticsBuildPins } = await import("./analytics-sources.mjs");
+    const f = await cachedBuild();
+    f.record.sourcePinsSha256 = hash(JSON.stringify(await readAnalyticsBuildPins()));
+    await writeFile(join(f.root, "provenance.json"), JSON.stringify(f.record));
+    const target = await directory();
+    const binding = join(target, "node_modules/@duckdb/node-bindings-darwin-arm64");
+    await mkdir(binding, { recursive: true });
+    await writeFile(
+      join(binding, "package.json"),
+      JSON.stringify({ name: "@duckdb/node-bindings-darwin-arm64", version: "1.5.6-r.2" }),
+    );
+    const owner = join(target, "original-library");
+    const original = universalLibrary([0x01000007, 0x0100000c]);
+    await writeFile(owner, original);
+    await (kind === "symlink" ? symlink : link)(owner, join(binding, "libduckdb.dylib"));
+    await expect(
+      stageDesktopAnalytics({
+        target,
+        architecture: "arm64",
+        build: { directory: f.root, provenance: f.record },
+      }),
+    ).rejects.toThrow("not an owned target library");
+    expect(await readFile(owner)).toEqual(original);
+  },
+);
+
+test("a universal upstream input never authorizes a universal replacement engine", async () => {
+  const f = await cachedBuild();
+  const universal = universalLibrary([0x01000007, 0x0100000c]);
+  await writeFile(join(f.root, "libduckdb.dylib"), universal);
+  await writeFile(
+    join(f.root, "provenance.json"),
+    JSON.stringify({ ...f.record, librarySha256: hash(universal) }),
+  );
+  await expect(verifyDesktopAnalyticsBuild(f.root, identity)).rejects.toThrow(
+    "incomplete or changed",
+  );
 });

@@ -73,10 +73,12 @@ process.stdin.on("data", (value: Buffer) => {
       invalid = true;
     });
     worker.once("exit", (code) => {
-      const output = JSON.stringify(code === 0 && seen && !invalid ? result : { ok: false });
+      const output = JSON.stringify(
+        code === 0 && seen && !invalid ? result : { ok: false, failureCode: "worker-load-or-exit" },
+      );
       if (!output || Buffer.byteLength(output) > 64 * 1024) refuse();
       finished = true;
-      process.stdout.write(output, () => process.exit(code === 0 && !invalid ? 0 : 70));
+      process.stdout.write(output, () => process.exit(0));
     });
   }
 });

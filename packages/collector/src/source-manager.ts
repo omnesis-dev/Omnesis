@@ -318,6 +318,17 @@ export class SourceManager {
     return this._descriptors;
   }
 
+  /** Capability of the collecting engine, independent of the app or gateway's version. */
+  get publicationGuard(): "managed-v1" | undefined {
+    return this.engine.publicationGuard;
+  }
+
+  /** Configured permission checks must use the exact registered instance, never recreate it. */
+  getPermissionSource(sourceId: string): RegisteredSource | undefined {
+    return this.engine.registeredSources().find(({ source }) => String(source.id) === sourceId)
+      ?.source;
+  }
+
   getKnownUrlPatterns(): Array<{ regex: string }> {
     return collectKnownUrlPatterns(this._definitions);
   }

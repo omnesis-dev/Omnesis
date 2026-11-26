@@ -14,7 +14,7 @@ final class RuntimeArchiveCleanupTests: XCTestCase {
     override func setUpWithError() throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("omnesis-code-cleanup-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        root = root.resolvingSymlinksInPath()
+        root = try URL(fileURLWithPath: DesktopCanonicalPath.resolve(root.path), isDirectory: true)
     }
 
     override func tearDownWithError() throws {
@@ -23,7 +23,7 @@ final class RuntimeArchiveCleanupTests: XCTestCase {
 
     private func epoch(_ tag: String) throws -> (runtime: URL, archive: URL) {
         let manifest = try JSONSerialization.data(withJSONObject: [
-            "format": 1, "codeUsageProtocol": 1, "runtimeLauncher": "runtime-exec", "fixture": tag,
+            "format": 1, "codeUsageProtocol": 1, "processAuthorityProtocol": 3, "runtimeLauncher": "runtime-exec", "fixture": tag,
             "inventory": [["path": "node", "executable": true], ["path": "runtime-exec", "executable": true]],
         ], options: [.sortedKeys])
         let epoch = SHA256.hash(data: manifest).map { String(format: "%02x", $0) }.joined()

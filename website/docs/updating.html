@@ -174,6 +174,23 @@
           the library Mac under Settings → General.
         </p>
         <p>
+          Automatic recovery copies made for Mac app updates and library restores are separate from
+          personal backups and exports. Omnesis tracks up to sixteen verified automatic copies,
+          including copies retained after recovered update or restore attempts. Pinned copies count
+          toward that limit. The current operation's copy and a pending restore's recovery copy are
+          kept. At the limit, another update waits for reviewed cleanup instead of silently removing
+          a personal backup. Older copies whose ownership cannot be verified remain kept for review.
+          <strong>Settings → Backups → Automatic recovery copies on this Mac</strong> shows recorded
+          copies, when they were retained and their recorded size.
+          <strong>Always keep this copy</strong>
+          saves your keep preference. Clearing that preference does not remove the copy; copies
+          still needed for recovery stay protected. Unfinished and older unlisted copies remain
+          kept. Removing an eligible automatic copy requires a separate review and confirmation; the
+          app keeps copies that are still in use or whose ownership is uncertain. This does not
+          remove personal backups or exports. An interrupted cleanup can finish only against the
+          same original copy.
+        </p>
+        <p>
           For a data export, <strong>Save readable export</strong> offers a separate choice. After
           you approve saving private information without encryption, it downloads a TAR archive of
           JSON Lines or CSV files you can use outside Omnesis. Anyone with that saved archive can
@@ -264,6 +281,15 @@
           recovery of the previous library. Unsupported database versions and backups with
           uncheckpointed database sidecars are refused; create a completed online backup instead. A
           Mac that only collects cannot restore the library.
+        </p>
+        <p>
+          Imported recording history, when present, keeps its saved audio and transcripts unchanged.
+          Its background work stays paused until you review transcription, speaker models and audio
+          retention on the portal's recording review page. This review remains available with
+          Recordings off. A zero-day audio retention choice can delete old or failed audio
+          immediately after resuming. Pending audio needs a transcription model before the guided
+          review can resume it. Recording features remain experimental; see
+          <a href="experimental#recordings">Recording conversations</a>.
         </p>
         <h3 id="command-line-restore">From the command line</h3>
         <p>

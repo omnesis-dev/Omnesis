@@ -72,7 +72,7 @@ public enum DesktopApplicationArchiveOwnership {
     static func currentIdentity(_ directory: URL) throws -> Identity {
         var root = stat(), app = stat()
         let application = directory.appendingPathComponent("Omnesis.app", isDirectory: true)
-        guard directory.resolvingSymlinksInPath() == directory.standardizedFileURL,
+        guard (try? DesktopCanonicalPath.resolve(directory.path)) == directory.path,
               lstat(directory.path, &root) == 0, root.st_mode & S_IFMT == S_IFDIR,
               root.st_uid == getuid(), root.st_mode & 0o077 == 0,
               lstat(application.path, &app) == 0, app.st_mode & S_IFMT == S_IFDIR,

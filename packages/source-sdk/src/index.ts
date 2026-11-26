@@ -69,3 +69,6 @@ export * from "./gateway-client.js";
 export type { PendingStructuredPage, PrepareStructuredPage } from "./pending-source-page.js";
 export * from "./read-access.js";
 export * from "./read-access-tree.js";
+export * from "./read-access-roots.js";
+
+export type * from "./permissions.js";

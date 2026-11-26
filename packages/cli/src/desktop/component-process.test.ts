@@ -29,6 +29,17 @@ function deferred() {
 async function fixture() {
   const profile = desktopProfile(home);
   await mkdir(profile.configDir, { recursive: true, mode: 0o700 });
+  await mkdir(`${profile.configDir}.bootstrap`, { recursive: true, mode: 0o700 });
+  await writeFile(
+    join(`${profile.configDir}.bootstrap`, "process-authority.json"),
+    JSON.stringify({
+      version: 3,
+      owner: "omnesis-desktop",
+      instance: profile.instance,
+      secretService: profile.secretService,
+    }),
+    { mode: 0o600 },
+  );
   await writeFile(
     join(profile.configDir, "desktop-install.json"),
     JSON.stringify({

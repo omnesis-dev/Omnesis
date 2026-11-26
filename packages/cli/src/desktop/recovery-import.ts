@@ -6,6 +6,7 @@ import { lstat, open, realpath } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import {
   classifySecureMarker,
+  defaultSecretCommandRunner,
   inspectInstallRootKey,
   openRecoveryEnvelopeAsync,
   parseRecoveryEnvelope,
@@ -17,7 +18,7 @@ import {
   type SecureMarkerKind,
 } from "@omnesis/core";
 import { readDesktopInstall } from "./bootstrap.js";
-import { withDesktopPublication } from "./publication.js";
+import { withDesktopKeyRecoveryAdmission } from "./recovery-import-admission.js";
 import { desktopRootIdentity, sameDesktopRoot } from "./retirement.js";
 import type { DesktopProfile } from "./environment.js";
 
@@ -65,7 +66,7 @@ export class DesktopRecoveryImportService {
     const envelope = parseRecoveryEnvelope(rawEnvelope);
     if (!envelope) throw new Error("This is not a supported Omnesis recovery file.");
     signal.throwIfAborted();
-    return withDesktopPublication(this.profile, signal, async () => {
+    return withDesktopKeyRecoveryAdmission(this.profile, signal, async (admission) => {
       const install = await readDesktopInstall(this.profile);
       if (!install || install.phase !== "configured" || install.mode !== "home")
         throw new Error("Restore recovery protection on the Mac that owns this library.");
@@ -74,10 +75,24 @@ export class DesktopRecoveryImportService {
       const candidate = await openRecoveryEnvelopeAsync(envelope, recoveryCode);
       signal.throwIfAborted();
       const markers = await this.markers(candidate);
+      admission.assertKey(candidate);
+      const assertMutation = async () => {
+        await admission.assertCurrent();
+        const current = await this.markers(candidate);
+        if (current.some((value, index) => value !== markers[index]))
+          throw new Error("The library protection changed. Start recovery again.");
+      };
       const options = {
         backend: "macos-keychain" as const,
         configDir: this.profile.configDir,
         service: this.profile.secretService,
+        runCommand: async (...args: Parameters<typeof defaultSecretCommandRunner>) => {
+          if (args[1][0] === "add-generic-password") await assertMutation();
+          return defaultSecretCommandRunner(args[0], args[1], {
+            ...args[2],
+            keyRecovery: admission.context,
+          });
+        },
       };
       const state = await this.deps.inspect(options);
       if (!state.store.available || !state.store.secure || state.store.backend !== "macos-keychain")
@@ -98,17 +113,22 @@ export class DesktopRecoveryImportService {
       if (markers.some((value, index) => value !== currentMarkers[index]))
         throw new Error("The library protection changed. Start recovery again.");
       signal.throwIfAborted();
-      if (existing === null) await this.deps.insert(candidate, options);
+      if (existing === null) {
+        await assertMutation();
+        await this.deps.insert(candidate, options);
+      }
       // Insertion is the commit point. Finish the required-encryption mirrors
       // even if cancellation arrives afterward; never roll back a recovered key.
       if ((await this.deps.read(options)) !== candidate)
         throw new Error("The recovered Keychain entry could not be confirmed.");
       await this.markers(candidate);
       for (const kind of markerKinds) {
+        await assertMutation();
         await this.deps.mirror(kind, options);
         if ((await this.deps.readMirror(kind, options)) !== "required")
           throw new Error("Recovery needs another check. Keep your recovery file and retry.");
       }
+      await assertMutation();
       return {
         kind: "desktopRecoveryImport",
         status: existing === null ? "restored" : "already-available",
@@ -131,7 +151,10 @@ export class DesktopRecoveryImportService {
         throw new Error(
           "Restore the library's original protection files before recovering its key.",
         );
-      const file = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+      const file = await open(
+        path,
+        constants.O_RDONLY | constants.O_NONBLOCK | (constants.O_NOFOLLOW ?? 0),
+      );
       try {
         const info = await file.stat();
         if (

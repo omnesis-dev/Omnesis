@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./private-files": "./src/subpath/private-files.ts",
+    "./node-command": "./src/node-command.ts",
     "./protocol": "./src/subpath/protocol.ts",
     "./config": "./src/subpath/config.ts",
     "./sources": "./src/subpath/sources.ts",

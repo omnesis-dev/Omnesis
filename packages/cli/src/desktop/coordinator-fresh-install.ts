@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { z } from "zod";
+import { DesktopProcessAuthorityFailure } from "./process-authority-errors.js";
 import { DesktopRestoreFailure } from "./restore-errors.js";
 import { DesktopFreshInstallFailure } from "./fresh-install-errors.js";
 import { readDesktopGeneration, desktopProfileForGeneration } from "./generation.js";
@@ -41,7 +42,8 @@ export async function handleDesktopFreshInstall(
     return await service.commit(input.confirmationId, signal);
   } catch (error) {
     if (signal.aborted) signal.throwIfAborted();
-    if (error instanceof DesktopRestoreFailure) throw error;
+    if (error instanceof DesktopRestoreFailure || error instanceof DesktopProcessAuthorityFailure)
+      throw error;
     const generation = readDesktopGeneration(profile.configDir);
     if (
       generation &&

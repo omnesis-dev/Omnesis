@@ -141,6 +141,8 @@ import { PairingService } from "./http/services/PairingService.js";
 import { DeviceService } from "./http/services/DeviceService.js";
 import { PushRegistrationService } from "./http/services/PushRegistrationService.js";
 import { storageProtectionMiddleware } from "./http/middleware/storage-protection.js";
+import { hasPendingRecordingChunks } from "./recordings/restore-review.js";
+import { mountRecordingReviewRoutes } from "./http/routes/admin/recording-review.js";
 import { mountStatusRoutes, mountDbSizeRoute } from "./http/routes/status.js";
 import { mountPortalRoutes } from "./http/routes/portal.js";
 import { mountPortalHandoffRoutes } from "./http/routes/portal-handoff.js";
@@ -527,6 +529,10 @@ export function createServer(
     ) => void;
     /** Tells the voices of recorded conversations apart; null while that is off or not ready. */
     voiceSeparator?: () => import("./recordings/voices/voices.js").VoiceSeparator | null;
+    voiceSeparatorReady?: () => Promise<
+      import("./recordings/voices/loader.js").VoiceSeparatorReadiness
+    >;
+    voiceSeparatorRevision?: () => number;
     /** Replay-only settable briefs decision clock (backtest mirror). */
     briefsClock?: import("./brain/virtual-clock.js").MutableClock;
     /** The interest ledger, for the Debug → Cognition tab. Omitted ⇒ the tab's routes 404. */
@@ -1660,6 +1666,9 @@ export function createServer(
   });
   mountCaptureRoutes(app, captureRouting);
 
+  if (opts?.configStore)
+    mountRecordingReviewRoutes(app, opts.configStore, () => hasPendingRecordingChunks(db));
+
   // Status block 1: /health, /config, /admin/config*, /status
   mountStatusRoutes(app, {
     storageProtection: opts?.storageProtection,
@@ -2372,8 +2381,16 @@ export function createServer(
         ]),
       buildDocument: buildRecordingDocument,
       ...(opts.voiceSeparator ? { voices: opts.voiceSeparator } : {}),
+      ...(opts.voiceSeparatorReady ? { voicesReady: opts.voiceSeparatorReady } : {}),
+      ...(opts.voiceSeparatorRevision ? { voicesRevision: opts.voiceSeparatorRevision } : {}),
       // Read on every pass, so a changed retention applies without a restart.
       keepAudioDays: () => opts.configStore?.get().inference?.recordings?.keepAudioDays ?? 0,
+      ...(opts.configStore
+        ? {
+            reviewRequired: () =>
+              opts.configStore!.get().inference?.recordings?.restoreReviewRequired === true,
+          }
+        : {}),
       // Suggestions read the owner's calendars through the same time index
       // the portal's Calendar and the agent read.
       calendarEvents: calendarEventsFrom(

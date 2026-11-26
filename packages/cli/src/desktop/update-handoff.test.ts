@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { acquireGatewayLock } from "@omnesis/core";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { writeDesktopPrivateRecord } from "./private-record.js";
 import { withDesktopInstallLease } from "./bootstrap.js";
 import { desktopProfile } from "./environment.js";
 import { desktopRootIdentity } from "./retirement.js";
@@ -30,6 +31,14 @@ async function fixture() {
   homes.push(home);
   const profile = desktopProfile(home);
   await mkdir(profile.configDir, { recursive: true, mode: 0o700 });
+  await withDesktopInstallLease(profile, new AbortController().signal, () =>
+    writeDesktopPrivateRecord(profile, "process-authority.json", {
+      version: 3,
+      owner: "omnesis-desktop",
+      instance: profile.instance,
+      secretService: profile.secretService,
+    }),
+  );
   await writeFile(join(profile.configDir, "omnesis.db"), "invented sealed store bytes", {
     mode: 0o600,
   });

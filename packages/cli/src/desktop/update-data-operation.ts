@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { statfs } from "node:fs/promises";
 import { assertManagedDesktopDataAuthority } from "@omnesis/core";
+import {
+  desktopRestoreReserveBytes,
+  DESKTOP_RESTORE_ENTRY_HEADROOM_BYTES,
+} from "./restore-capacity.js";
 import { runDesktopDataOperation } from "./data-operation-channel.js";
 import { assertDesktopConfigSecretsProtected } from "./config-protection.js";
 import { withDesktopInstallLease } from "./bootstrap.js";
@@ -12,6 +17,8 @@ import { acquireDesktopRuntimeLeases } from "./runtime-leases.js";
 import { writeDesktopActiveRuntime } from "./update-active.js";
 import {
   createDesktopUpdateSnapshot,
+  MAX_MANIFEST_BYTES,
+  measureDesktopUpdateSnapshot,
   restoreDesktopUpdateSnapshot,
   verifyDesktopUpdateSnapshot,
 } from "./update-snapshot.js";
@@ -28,6 +35,8 @@ interface UpdateDataOperations {
   stop: typeof stopDesktopDaemon;
   reserve: typeof acquireDesktopRuntimeLeases;
   snapshot: typeof createDesktopUpdateSnapshot;
+  measure: typeof measureDesktopUpdateSnapshot;
+  available(profile: DesktopProfile): Promise<bigint>;
   restore: typeof restoreDesktopUpdateSnapshot;
   verify: typeof verifyDesktopUpdateSnapshot;
 }
@@ -36,6 +45,13 @@ const defaults: UpdateDataOperations = {
   stop: stopDesktopDaemon,
   reserve: acquireDesktopRuntimeLeases,
   snapshot: createDesktopUpdateSnapshot,
+  measure: measureDesktopUpdateSnapshot,
+  available: async (profile) => {
+    const disk = await statfs(profile.configDir, { bigint: true });
+    if (disk.bavail < 0n || disk.bsize <= 0n)
+      throw new Error("Update disk capacity is unavailable");
+    return disk.bavail * disk.bsize;
+  },
   restore: restoreDesktopUpdateSnapshot,
   verify: verifyDesktopUpdateSnapshot,
 };
@@ -59,6 +75,27 @@ export async function finishDesktopUpdateSnapshot(
       runtimeWaitMs: stopped ? 5_000 : 0,
     });
     try {
+      // Preview capacity can be stale after collection or unrelated disk use.
+      // Actual EX/store ownership fences this inventory through the first copied byte.
+      const inventory = await deps.measure(profile, signal);
+      const reserve = await desktopRestoreReserveBytes(profile);
+      const available = await deps.available(profile);
+      signal.throwIfAborted();
+      // Reuse restore's per-entry envelope/allocation bound, plus the actual
+      // manifest ceiling and the snapshot root/owner entries. Tiny files are not free.
+      const copyBytes =
+        inventory.bytes +
+        (inventory.entries + 2) * DESKTOP_RESTORE_ENTRY_HEADROOM_BYTES +
+        MAX_MANIFEST_BYTES;
+      if (
+        ![inventory.bytes, inventory.entries, copyBytes].every(
+          (value) => Number.isSafeInteger(value) && value >= 0,
+        ) ||
+        available < BigInt(copyBytes) + reserve
+      )
+        throw new Error(
+          "Free disk space for the recovery copy and library write reserve before updating",
+        );
       const backup = await deps.snapshot(profile, { operationId, leases, signal });
       await deps.verify(profile, { operationId, manifestSha256: backup.manifestSha256, signal });
       signal.throwIfAborted();

@@ -55,6 +55,7 @@ public enum DesktopRuntimeCache {
             throw Failure.invalidPayload
         }
         let bytes = try manifestBytes(source)
+        try DesktopProcessAuthorityManifest.require(bytes)
         let manifest = try JSONDecoder().decode(Manifest.self, from: bytes)
         try validate(manifest)
         let identity = digest(bytes)

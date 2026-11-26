@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import type { SourceInstance, SourceReadAccessResult } from "@omnesis/source-sdk";
 import { ownedProcessCleanupReceipt } from "@omnesis/core";
 import { CollectorOwnedWork } from "./owned-work.js";
+import type { SourceInstance, SourceReadAccessResult } from "@omnesis/source-sdk";
 
 export interface DoctorReadAccessSource {
   sourceId: string;
-  instance: Pick<SourceInstance, "probeReadAccess" | "probeLocalStores">;
+  instance: Pick<SourceInstance, "probeReadAccess" | "probeLocalStores" | "probePermissionAccess">;
 }
 
 type AccessEntry = SourceReadAccessResult & { sourceId: string };
@@ -25,6 +25,7 @@ export class DoctorReadAccess {
   constructor(
     private readonly budgets = { probeMs: PROBE_TIMEOUT_MS, scanMs: SCAN_TIMEOUT_MS },
     changed?: () => void,
+    private readonly purpose: "coverage" | "permissions" = "coverage",
   ) {
     this.work = new CollectorOwnedWork(changed);
   }
@@ -32,6 +33,11 @@ export class DoctorReadAccess {
   cleanupFailure(): unknown | undefined {
     return this.work.cleanupFailure();
   }
+  /** Pending means physical provider work, including a timed-out caller's late handles. */
+  hasPending(instance: DoctorReadAccessSource["instance"]): boolean {
+    return this.work.has(instance);
+  }
+
   close(): Promise<void> {
     const joined = this.work.close();
     this.stopping.abort();
@@ -89,7 +95,11 @@ export class DoctorReadAccess {
     ) {
       return { status: "unavailable" };
     }
-    if (!instance.probeReadAccess) return { status: "unsupported" };
+    const probe =
+      this.purpose === "permissions"
+        ? (instance.probePermissionAccess ?? instance.probeReadAccess)
+        : instance.probeReadAccess;
+    if (!probe) return { status: "unsupported" };
     const controller = new AbortController();
     const probeSignal = AbortSignal.any([signal, controller.signal]);
     let onAbort: () => void = () => {};
@@ -103,7 +113,7 @@ export class DoctorReadAccess {
       .run(instance, async () => {
         probeSignal.throwIfAborted();
         if (performance.now() >= deadline) return { status: "unavailable" as const };
-        return instance.probeReadAccess!({ signal: probeSignal });
+        return probe.call(instance, { signal: probeSignal });
       })
       .catch((error: unknown): SourceReadAccessResult => {
         if (ownedProcessCleanupReceipt(error) !== undefined) throw error;

@@ -108,6 +108,31 @@ final class DesktopArtifactDownloadTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: destination), ArtifactFixtureProtocol.bytes)
     }
 
+    func testCleanUnknownLengthTruncationDoesNotSaveAValidLookingTarPrefix() async throws {
+        let (api, artifact, destination) = try fixture()
+        let root = destination.deletingLastPathComponent()
+        try Data(repeating: 65, count: 1300).write(to: root.appendingPathComponent("fixture.txt"))
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+        process.arguments = ["-cf", root.appendingPathComponent("fixture.tar").path, "-C", root.path, "fixture.txt"]
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+        let complete = try Data(contentsOf: root.appendingPathComponent("fixture.tar"))
+        ArtifactFixtureProtocol.bytes = Data(complete.prefix(1024))
+        do {
+            try await DesktopArtifactDownloader().save(artifact, api: api, destination: destination) { _ in }
+            XCTFail("A clean unknown-length EOF before TAR completion must not save a copy")
+        } catch {}
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+        ArtifactFixtureProtocol.bytes = complete
+        try await DesktopArtifactDownloader().save(artifact, api: api, destination: destination) { _ in }
+        XCTAssertEqual(try Data(contentsOf: destination), complete)
+    }
+
     func testRefusedAndInterruptedDownloadsNeverLeaveSavedCopy() async throws {
         for failedStream in [false, true] {
             let (api, artifact, destination) = try fixture()

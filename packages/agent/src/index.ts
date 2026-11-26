@@ -357,3 +357,7 @@ export { CitationReads } from "./tools/citation-reads.js";
 
 export { invokeToolHandle } from "./invoke-tool.js";
 export { markActivity, setActivityMarker, type ActivityMarker } from "./activity.js";
+
+export { resolveManagedCodexNativeCommand } from "./codex-managed-native-command.js";
+
+export { MANAGED_CODEX_CONVERSATION_REFUSAL } from "./codex-managed-process.js";

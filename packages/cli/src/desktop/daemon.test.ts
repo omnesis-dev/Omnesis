@@ -55,6 +55,10 @@ async function fixture(mode: "home" | "joined" = "home") {
     pairingStamp = "first-pairing";
   const release = vi.fn();
   const deps = {
+    restartIdentity: vi.fn(async () => ({
+      deviceId: "00000000-0000-4000-8000-000000000004",
+      fingerprint: "fictional-fingerprint",
+    })),
     watchProtection: vi.fn(
       async (_profile, signal: AbortSignal) =>
         new Promise<void>((resolve) => {
@@ -64,6 +68,7 @@ async function fixture(mode: "home" | "joined" = "home") {
     ),
     remoteProtection: vi.fn<NonNullable<Dependencies["remoteProtection"]>>(async () => "encrypted"),
     mayStartEpoch: vi.fn(async () => true),
+    epochBlocked: vi.fn(async () => false),
     claimEpoch: vi.fn(async () => true),
     restoreBlocked: vi.fn(async () => false),
     readInstall: vi.fn(async () => ({
@@ -93,6 +98,7 @@ async function fixture(mode: "home" | "joined" = "home") {
     spawn: vi.fn((component, env) => {
       const exit = deferred<DesktopChildExit>();
       const child: DesktopOwnedChild = {
+        collectorReady: Promise.resolve("00000000-0000-4000-8000-000000000004"),
         exited: exit.promise,
         kill: (signal) => {
           kills.push(`${component}:${signal}`);
@@ -183,7 +189,8 @@ async function fixture(mode: "home" | "joined" = "home") {
     setStamp: (value: string) => {
       pairingStamp = value;
     },
-    run: () => runDesktopDaemon(profile, { signal: controller.signal, onEvent }, deps),
+    run: (onOwned?: () => void | Promise<void>) =>
+      runDesktopDaemon(profile, { signal: controller.signal, onEvent, onOwned }, deps),
   };
 }
 
@@ -465,4 +472,117 @@ test("explicit restore starts only its bound gateway and waits for verified comp
   expect(f.deps.spawn).toHaveBeenLastCalledWith("collector", expect.any(Object));
   f.controller.abort();
   await run;
+});
+
+test.each(["home", "joined"] as const)(
+  "%s collector-only restart preserves gateway and uses existing paired identity",
+  async (mode) => {
+    const f = await fixture(mode);
+    f.setLinked(true);
+    const run = f.run();
+    await f.event("collector", "starting");
+    const request = f.deps.control.mock.calls[0]![1].restartCollector!;
+    const pending = request(AbortSignal.timeout(2000));
+    await vi.waitFor(() =>
+      expect(f.deps.restartIdentity.mock.calls.length).toBeGreaterThanOrEqual(1),
+    );
+    if (mode === "home") (await f.nextWait()).resolve();
+    const result = await pending;
+    expect(result).toMatchObject({
+      kind: "desktopCollectorRestart",
+      status: "ready",
+      permissionRecheckRequired: true,
+    });
+    expect(f.kills).toEqual(["collector:SIGTERM"]);
+    expect(f.children.filter((child) => child.component === "gateway")).toHaveLength(
+      mode === "home" ? 1 : 0,
+    );
+    expect(f.children.filter((child) => child.component === "collector")).toHaveLength(2);
+    expect(f.children.at(-1)!.env.OMNESIS_DESKTOP_COLLECTOR_RESTART).toBe("1");
+    f.controller.abort();
+    await run;
+  },
+);
+
+test("restart admission failure leaves the gateway and owned collector running", async () => {
+  const f = await fixture("home");
+  f.setLinked(true);
+  const run = f.run();
+  await f.event("collector", "starting");
+  f.deps.restartIdentity.mockRejectedValue(new Error("blocked"));
+  await expect(
+    f.deps.control.mock.calls[0]![1].restartCollector!(AbortSignal.timeout(1000)),
+  ).rejects.toThrow("blocked");
+  expect(f.kills).toEqual([]);
+  expect(f.children).toHaveLength(2);
+  f.controller.abort();
+  await run;
+});
+
+test("collector replacement cannot spawn until the exact old child has exited", async () => {
+  const f = await fixture("home");
+  f.setLinked(true);
+  const run = f.run();
+  await f.event("collector", "starting");
+  const prior = f.children[1]!;
+  const kill = vi.fn();
+  prior.child.kill = kill;
+  const pending = f.deps.control.mock.calls[0]![1].restartCollector!(AbortSignal.timeout(2000));
+  await vi.waitFor(() => expect(f.deps.restartIdentity).toHaveBeenCalledOnce());
+  (await f.nextWait()).resolve();
+  await vi.waitFor(() => expect(kill).toHaveBeenCalledWith("SIGTERM"));
+  expect(f.children).toHaveLength(2);
+  prior.exit();
+  expect(await pending).toMatchObject({ status: "ready" });
+  expect(f.children).toHaveLength(3);
+  f.controller.abort();
+  await run;
+});
+
+test("ownership readiness waits for private control admission and never acknowledges a competing owner", async () => {
+  const f = await fixture();
+  const ready = vi.fn();
+  const gate = deferred<void>();
+  const original = f.deps.control.getMockImplementation()!;
+  f.deps.control.mockImplementation(async (...args) => {
+    await gate.promise;
+    return original(...args);
+  });
+  const running = f.run(ready);
+  await vi.waitFor(() => expect(f.deps.control).toHaveBeenCalledOnce());
+  expect(ready).not.toHaveBeenCalled();
+  expect(f.children).toEqual([]);
+  gate.resolve();
+  await f.event("gateway", "starting");
+  expect(ready).toHaveBeenCalledOnce();
+  f.controller.abort();
+  await running;
+  const second = await fixture();
+  second.deps.claimEpoch.mockResolvedValue(false);
+  const unclaimed = vi.fn();
+  expect(await second.run(unclaimed)).toBe("stopped");
+  expect(unclaimed).not.toHaveBeenCalled();
+});
+test("control listener failure cannot announce ready or spawn components", async () => {
+  const f = await fixture();
+  f.deps.control.mockRejectedValue(new Error("Invented control refusal"));
+  const ready = vi.fn();
+  await expect(f.run(ready)).rejects.toThrow("control refusal");
+  expect(ready).not.toHaveBeenCalled();
+  expect(f.children).toEqual([]);
+  expect(f.release).toHaveBeenCalledOnce();
+});
+
+test("a lifecycle intent arriving during control setup prevents readiness and all component launches", async () => {
+  const f = await fixture();
+  const original = f.deps.control.getMockImplementation()!;
+  f.deps.control.mockImplementation(async (...args) => {
+    f.deps.epochBlocked.mockResolvedValue(true);
+    return original(...args);
+  });
+  const ready = vi.fn();
+  expect(await f.run(ready)).toBe("stopped");
+  expect(ready).not.toHaveBeenCalled();
+  expect(f.children).toEqual([]);
+  expect(f.release).toHaveBeenCalledOnce();
 });

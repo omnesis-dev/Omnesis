@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { assertDesktopProcessAuthority } from "./process-authority.js";
 import { withDesktopInstallLease } from "./bootstrap.js";
 import { stopDesktopDaemon } from "./daemon-control.js";
 import { desktopRestoreBlocked } from "./restore-intent.js";
@@ -34,6 +35,7 @@ export async function recoverDesktopUpdate(
   const session = await acquireDesktopRestoreSessionLease(profile, options.signal);
   try {
     const requested = await withDesktopInstallLease(profile, options.signal, async () => {
+      await assertDesktopProcessAuthority(profile);
       if ((await readDesktopRetirement(profile)) || (await desktopRestoreBlocked(profile)))
         throw new Error("Finish pending removal or backup restore before update recovery");
       let state = await readDesktopUpdateState(profile);

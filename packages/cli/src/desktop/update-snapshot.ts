@@ -27,10 +27,11 @@ import {
   CODEX_RUNTIME_STORE_DIR,
 } from "@omnesis/core";
 import { assertDesktopRuntimeLeases, type DesktopRuntimeLeases } from "./runtime-leases.js";
+import { writeDesktopSnapshotOwner } from "./snapshot-owner.js";
 import type { DesktopProfile } from "./environment.js";
 
 const MAX_ENTRIES = 200_000;
-const MAX_MANIFEST_BYTES = 32 * 1024 ** 2;
+export const MAX_MANIFEST_BYTES = 32 * 1024 ** 2;
 const excludedRoots = new Set([
   "backups",
   "models",
@@ -213,6 +214,7 @@ export async function createDesktopUpdateSnapshot(
   let bytes = 0;
 
   try {
+    await writeDesktopSnapshotOwner(profile, options.operationId, pending);
     await mkdir(join(pending, "files"), { mode: 0o700 });
     await walkSnapshot(profile, options.signal, async (candidate) => {
       const source = join(profile.configDir, candidate.path),
@@ -249,6 +251,15 @@ export async function createDesktopUpdateSnapshot(
       throw new Error("The desktop recovery inventory is too large");
     await atomicWriteFile(join(pending, "snapshot.json"), manifest, { mode: 0o600 });
     await rename(pending, target);
+    const directory = await open(
+      parent,
+      constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+    );
+    try {
+      await directory.sync();
+    } finally {
+      await directory.close();
+    }
     return { manifestSha256: hash(Buffer.from(manifest)), bytes };
   } finally {
     await rm(pending, { recursive: true, force: true });

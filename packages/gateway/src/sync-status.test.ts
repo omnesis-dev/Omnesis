@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, test, expect } from "vitest";
-import { SourceId, DeviceId } from "@omnesis/types";
+import { SourceId, DeviceId, type SyncRemediation } from "@omnesis/types";
 import {
   SyncStatusRegistry,
   deriveDisplayStatus,
@@ -923,6 +923,82 @@ const REMEDY = {
 };
 
 describe("deriveDisplayStatus — remediation", () => {
+  const scoped: SyncRemediation = {
+    ...REMEDY,
+    access: {
+      status: "denied",
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      scopeDigest: "a".repeat(64),
+      target: "unverified",
+    },
+  };
+  test("a live retry retains typed access loss with a content-free error until actual completion", () => {
+    const out = deriveDisplayStatus(
+      src,
+      inMem("syncing", { remediation: scoped, errorMessage: "invented-private-error-detail" }),
+      persisted({}),
+      { enabled: true },
+    );
+    expect(out).toMatchObject({
+      state: "syncing",
+      remediation: scoped,
+      errorMessage: "Collection access is blocked on this computer",
+      erroredAt: scoped.access!.checkedAt,
+    });
+    expect(JSON.stringify(out)).not.toContain("invented-private-error-detail");
+    const completed = deriveDisplayStatus(
+      src,
+      inMem("completed"),
+      persisted({ last_synced_at: "2026-01-02T00:00:00Z" }),
+      { enabled: true },
+    );
+    expect(completed.remediation).toBeUndefined();
+    expect(completed.errorMessage).toBeUndefined();
+  });
+  test("a restart retry retains only the same member's still-persisted typed access refusal", () => {
+    const row = persisted({
+      device_id: dev,
+      last_error: "invented-private-error-detail",
+      errored_at: "2026-01-01T00:00:00Z",
+      last_error_remediation: JSON.stringify(scoped),
+    });
+    expect(deriveDisplayStatus(src, inMem("syncing"), row, { enabled: true }).remediation).toEqual(
+      scoped,
+    );
+    expect(
+      deriveDisplayStatus(
+        src,
+        inMem("syncing"),
+        { ...row, device_id: "22222222-2222-4222-8222-222222222222" },
+        { enabled: true },
+      ).remediation,
+    ).toBeUndefined();
+    expect(
+      deriveDisplayStatus(
+        src,
+        inMem("syncing"),
+        { ...row, last_error: null, errored_at: null },
+        { enabled: true },
+      ).remediation,
+    ).toBeUndefined();
+  });
+  test("a new run does not inherit unrelated stale errors or legacy remedies", () => {
+    const out = deriveDisplayStatus(
+      src,
+      inMem("syncing", { remediation: REMEDY, errorMessage: "invented-old-error" }),
+      persisted({
+        device_id: dev,
+        last_error: "invented-old-error",
+        errored_at: "2026-01-01T00:00:00Z",
+        last_error_remediation: JSON.stringify(REMEDY),
+      }),
+      { enabled: true },
+    );
+    expect(out.state).toBe("syncing");
+    expect(out.remediation).toBeUndefined();
+    expect(out.errorMessage).toBeUndefined();
+  });
+
   test("a live error carries the remedy it was reported with", () => {
     const out = deriveDisplayStatus(
       src,

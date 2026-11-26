@@ -21,7 +21,7 @@ public enum DesktopApplicationArchive {
         -> URL {
         try Task.checkCancellation()
         guard validEpoch(epoch), application.pathExtension == "app",
-              application.resolvingSymlinksInPath() == application.standardizedFileURL
+              (try? DesktopCanonicalPath.resolve(application.path)) == application.path
         else { throw DesktopRuntimeCache.Failure.invalidPayload }
         try privateDirectory(root, create: true)
         try privateDirectory(publicationRoot, create: true)
@@ -108,6 +108,9 @@ public enum DesktopApplicationArchive {
     }
 
     private static func privateDirectory(_ directory: URL, create: Bool) throws {
+        guard (try? DesktopCanonicalPath.resolve(directory.path, allowMissing: create)) == directory.path else {
+            throw DesktopRuntimeCache.Failure.unsafeCache
+        }
         if create { try FileManager.default.createDirectory(
             at: directory,
             withIntermediateDirectories: true,
@@ -115,6 +118,6 @@ public enum DesktopApplicationArchive {
         ) }
         var info = stat()
         guard lstat(directory.path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR, info.st_uid == getuid(), info.st_mode & 0o077 == 0,
-              directory.resolvingSymlinksInPath() == directory.standardizedFileURL else { throw DesktopRuntimeCache.Failure.unsafeCache }
+              (try? DesktopCanonicalPath.resolve(directory.path)) == directory.path else { throw DesktopRuntimeCache.Failure.unsafeCache }
     }
 }

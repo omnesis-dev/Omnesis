@@ -4,7 +4,9 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { DesktopFreshInstallFailure } from "./fresh-install-errors.js";
+import { DesktopProcessAuthorityFailure } from "./process-authority-errors.js";
 import { DesktopRestoreFailure } from "./restore-errors.js";
+import { DesktopSnapshotRetentionFailure } from "./snapshot-retention-errors.js";
 import type { Readable, Writable } from "node:stream";
 
 const MAX_FRAME_BYTES = 1024 * 1024;
@@ -20,6 +22,7 @@ const requestSchema = z
       "connect",
       "stop",
       "restart",
+      "restartCollector",
       "openPortal",
       "respond",
       "cancel",
@@ -39,6 +42,12 @@ const requestSchema = z
       "recoveryPrepare",
       "recoveryCommit",
       "recoveryCancel",
+      "recoveryCopies",
+      "recoveryCopyPin",
+      "recoveryCopyPreview",
+      "recoveryCopyRemove",
+      "recoveryCopyRetry",
+      "recoveryCopyCancel",
       "updateStatus",
       "updateCheck",
       "updateDownload",
@@ -252,6 +261,7 @@ export async function runDesktopProtocol(options: {
         const known =
           error instanceof ProtocolFailure ||
           error instanceof DesktopRestoreFailure ||
+          error instanceof DesktopProcessAuthorityFailure ||
           error instanceof DesktopFreshInstallFailure
             ? error
             : new ProtocolFailure("INVALID_RESPONSE", "The interaction response was invalid.");
@@ -293,7 +303,9 @@ export async function runDesktopProtocol(options: {
           ? cancelled()
           : error instanceof ProtocolFailure ||
               error instanceof DesktopRestoreFailure ||
-              error instanceof DesktopFreshInstallFailure
+              error instanceof DesktopProcessAuthorityFailure ||
+              error instanceof DesktopFreshInstallFailure ||
+              error instanceof DesktopSnapshotRetentionFailure
             ? error
             : new ProtocolFailure("OPERATION_FAILED", "The desktop operation could not finish.");
         await failure(request.id, known.code, known.message);

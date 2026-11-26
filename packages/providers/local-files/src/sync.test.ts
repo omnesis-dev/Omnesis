@@ -501,6 +501,7 @@ describe("local-files sync", () => {
     let blindCursor: LocalFilesSyncCursor;
     try {
       const second = await instance.sync(cursor);
+      expect(second.permissionDenied).toBe(true);
       expect(second.presentExternalIds).toBeUndefined();
       expect(second.presentClaims).toBeUndefined();
       blindCursor = second.cursor as LocalFilesSyncCursor;

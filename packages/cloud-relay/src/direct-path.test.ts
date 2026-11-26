@@ -252,3 +252,35 @@ test("only the connector's explicit aborted-I/O error is a deadline fallback, ne
     deadlineFailure(controller.signal, Object.assign(new Error("aborted"), { code: "ABORT_ERR" })),
   ).toBe(true);
 });
+
+test.each(["EACCES", "EPERM"])(
+  "refused optional LAN socket %s preserves strict canonical verification",
+  async (code) => {
+    const options = { ...base(), tlsSpkiFingerprint: "b".repeat(64) };
+    const refusal = Object.assign(new Error("Local socket refused"), { code });
+    const stream = new PassThrough();
+    const connect = vi
+      .fn<typeof connectOrigin>()
+      .mockRejectedValueOnce(refusal)
+      .mockResolvedValue(stream);
+    expect(await connectPreferredGateway(options, connect)).toBe(stream);
+    expect(connect.mock.calls[1]).toEqual([
+      options.origin,
+      options.certificate,
+      options.signal,
+      false,
+      options.fingerprint,
+      undefined,
+      undefined,
+      options.tlsSpkiFingerprint,
+    ]);
+    const canonical = Object.assign(new Error("Canonical socket refused"), { code });
+    const strict = vi
+      .fn<typeof connectOrigin>()
+      .mockRejectedValueOnce(refusal)
+      .mockRejectedValueOnce(canonical);
+    await expect(connectPreferredGateway(options, strict)).rejects.toBe(canonical);
+    expect(strict).toHaveBeenCalledTimes(2);
+    expect(connectivityFailure(refusal)).toBe(false);
+  },
+);

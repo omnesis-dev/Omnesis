@@ -38,6 +38,7 @@ export default defineStructuredSource<SyncCursor>({
   name: "Web Pages",
   description: "Web pages captured by the Omnesis browser extension",
   provider: { id: "web", name: "Web" },
+  permissionRequirements: [],
   authType: "local",
   unitName: "web pages",
   // Headline count = the document (page) total, not the small `page_visits`

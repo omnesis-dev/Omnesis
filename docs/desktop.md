@@ -150,6 +150,44 @@ registration approval or disabled background items, rather than silently
 replacing a headless service definition. Service registration, crash recovery,
 app termination and login restart require packaged-app qualification.
 
+The managed macOS launch contract uses the verified native background helper as
+the daemon's sole parent. Portable controllers use a fixed native start client;
+a native failure cannot fall back to detached Node. The daemon verifies its
+captured scope, epoch and lifetime pipe through a fixed native signed-parent
+check before admission, then announces ownership only after its runtime lease,
+intent checks and private control listener are ready. That frame does not prove
+gateway health, collector authentication or source permissions. Closing the
+helper's lifetime pipe aborts and drains the exact owned children. Restore
+startup forwards only its existing activation tuple after destructive leases
+have been released. Ordinary source/Linux adapters retain their explicit launch
+path. Signed packaged launch and TCC attribution need their own qualification;
+this transport contract alone does not identify an FDA permission target.
+
+An authenticated helper with a different owned runtime or installation generation
+leaves setup incomplete while the data-free controller remains available for
+recovery. Explicit setup, connection or update handoff can replace that binding
+only after the portable lifecycle policy validates its durable update or completed
+erase records and releases destructive leases. The native handoff drains the
+exact verified helper before starting and checking its replacement. Ordinary
+status, start and restart operations never perform an implicit rebind, and a
+missing or unauthenticated helper is not evidence authorizing replacement.
+
+The runtime code epoch and the watched installed application are separate identities.
+Normal replacement follows the actual signed Main application's process ancestry;
+retained rollback code preserves the prior helper's verified application object
+through the existing authenticated control endpoint. An archived helper stays
+metadata-only until the exact signed rebind client attaches that object. File
+identity and canonical Trash resolution prevent a different copy or path alias
+from becoming uninstall authority. Registration is followed by a coordinated
+object/path/epoch check before the helper admits a daemon; obsolete registration
+callbacks cannot alter the replacement. An explicit same-code origin repair may
+recover an idle authenticated helper only after portable ownership/intent checks,
+verified installed-Main provenance and kernel proof that any prior handoff client
+has exited. A matching scope and epoch alone do not prove origin attachment. A retained rollback may serve recovered data
+while still requiring installation of that recovered version: an enabled login
+item alone does not prove the next login will run it. Signed origin handoff,
+Finder replacement, Trash and login behavior still require packaged qualification.
+
 Updates to the native app and bundled daemons must move together. The existing
 source/npm/Docker updater in `packages/cli/src/update/` is the reference for
 compatibility preflight, locking, draining and migration backup; it is not a
@@ -185,6 +223,20 @@ recovery intent. Packaged Finder callbacks, service registration and final Trash
 interaction still require native qualification.
 
 ## Resource defaults and remediation
+
+Home setup requires current storage-growth admission from the gateway's existing
+storage-pressure policy. A blocked, expired or unavailable measurement leaves
+setup incomplete and points to Storage settings; a warning alone does not block
+setup. Existing library reads remain available. Joined clients do not treat the
+home library's storage measurement as evidence about their own collection volume.
+
+The home app also checks the encrypted remote route independently of account
+sign-in. Its tunnel, certificate and bounded public-route probe must be current;
+an account link alone does not complete this prerequisite. Managed installations
+refresh that probe periodically, while ordinary headless installations retain
+their existing cadence. Expired or failed evidence leaves remote setup incomplete
+without disabling local library reads. This check does not confirm that an
+external assistant has connected or authorized tools.
 
 The existing embedder in `packages/gateway/src/indexer/embedder.ts` runs
 `node-llama-cpp` in-process and supports Apple Metal. The registry's default
@@ -224,12 +276,18 @@ its filesystem and Keychain credential namespaces can be independently verified.
 The registry reports the existing backend reason, and the factory refuses forced
 assignments without probing the global CLI or login. Anthropic API keys remain an
 explicit alternative. The dedicated Codex home remains separate from the user's CLI home.
-Managed Codex conversations currently refuse before creating a vendor thread:
-model metadata can expose patch or code-mode tools independently of the verified
-shell feature flags. API-key backends remain available. Subscription conversations
-require an owned, validated model catalog and adversarial tool-metadata verification
-before this fence can be removed; a fallback-model diagnostic does not establish
-that property for the selectable model catalog.
+Managed Codex discovery runs the pinned native executable directly: the npm JavaScript
+wrapper uses Node execve, which discards ownership descriptors. A short discovery
+process holds both the library's data-use lease and its exclusive catalog lease.
+After physical exit, the runtime validates actual vendor publication against its
+pre-start digest witness, preserves every public model's instructions, context and
+reasoning metadata, and removes native patch/code-mode tool selectors. No account
+identity metadata enters the derived catalog. Conversation workers restart with an
+immutable private static catalog; file hashes, effective controls and exact selected
+model membership are checked before a thread starts. Missing, changed, unknown or
+unsupported metadata refuses the turn rather than selecting a fallback model.
+Installer compatibility probes use a separate scratch home and a metadata-only
+client that cannot supply selectable models or create conversation threads.
 
 The app bundles a private npm for managed runtime installation, rather than
 requiring a host npm install.
@@ -268,6 +326,15 @@ operating system's certificate store. The launcher strips inherited trust/preloa
 settings, including `NODE_USE_SYSTEM_CA`, `NODE_EXTRA_CA_CERTS`, `NODE_OPTIONS`
 and OpenSSL certificate-path overrides. Gateway peer pins and SAS verification
 still apply independently; ordinary headless Node launch policy is unchanged.
+Only newly claimed empty managed installations receive a generation-bound v3
+process-authority certificate. Existing uncertified incarnations are never upgraded
+by observing process absence. Every runtime launch and updater/rollback candidate
+requires sealed `processAuthorityProtocol: 3`; older unknown code and old cleanup
+receipts remain retained. An explicit fresh generation can rotate its certificate
+only after the matching completed erase receipt and new empty claim are verified.
+Filesystem identities shared with Node and Rust use POSIX realpath, preserving
+`/private/var` rather than Foundation's display aliases.
+
 Owned external interpreters also retain a lease. The native `--gc-remove` operation
 refuses current, in-use and legacy epochs and pending application-launch reservations.
 It removes a runtime and its verified, privately owned full-app archive together,
@@ -279,8 +346,32 @@ The explicit `updateCleanupPreview` / `updateCleanup` bridge commands bind confi
 to the current code inventory. Cleanup requires a ready protected library and a verified
 completed update. It retains the active/current runtime, the previous verified app and
 any restore activation epoch; the native adapter rechecks actual live consumers at deletion.
-Recovery snapshots and personal backups are retained separately. Historical snapshot
-retention and the complete signed native replacement flow still require integration and proof.
+Recovery snapshots and personal backups are retained separately. The external private
+`code-retention.json` ledger records at most sixteen fully verified automatic recovery
+copies, including recovered update and library-restore attempts, before another journal can replace their
+operation binding. A restore records the actual backup runtime epoch and version before
+creating its protective copy; absent legacy evidence remains unknown and kept. Both
+operation kinds share admission before any daemon stop. Each entry binds the profile, library root, manifest and snapshot
+inode. `recoveryCopies` and `recoveryCopyPin` expose only bounded metadata and explicit
+pin choices; unregistered or unavailable copies are kept rather than adopted by name.
+An interrupted stage has a durable ownership marker before any payload is copied.
+Empty pre-marker drafts can be removed only with nonrecursive directory removal;
+nonempty uncertain stages block journal replacement.
+
+Snapshot data reclamation remains gated on the fixed native host's actual same-PID
+install ownership and reacquired DATA/publication reservations. A redundant older copy
+can be reclaimed while its application runs only after a newer same-epoch copy verifies;
+the last copy for an older epoch additionally requires native usage-absence proof,
+including separate refusal for untracked legacy incarnations. A free old code lease
+alone does not prove that a legacy subprocess has stopped.
+`recoveryCopyPreview` binds a separate cleanup confirmation to the reviewed copy.
+`recoveryCopyRemove` and `recoveryCopyRetry` enter the fixed native host; a durable
+global reservation protects the code epoch across Node's descriptor-closing execve.
+The host reestablishes code and DATA usage before taking publication EX, validates
+the same live install owner, and retains those reservations through physical deletion.
+`recoveryCopyCancel` clears only a planned cleanup after its known native reservation
+has been released. Interrupted deletion can only retry the same original inode.
+The complete signed native replacement flow still requires integration and proof.
 The private npm launcher enters the guarded cached Node. Recipients need no compiler, Git, Node or npm.
 Native modules and executables must match the target macOS architecture.
 
@@ -311,6 +402,10 @@ Node's JIT entitlements do not apply to the whole application. The distribution
 script does not publish or upload a release. Signing identity and notarization
 credentials are supplied separately through the developer's local identity and
 Keychain profile.
+The distribution command requires Release build metadata from both the native
+application and its background helper before signing or archiving anything.
+Debug builds permit development runtime overrides and remain development and QA
+inputs. Build the Release configuration before creating a distribution package.
 
 Mac App Store distribution is a separate qualification boundary. The store's
 sandbox and review requirements constrain arbitrary local-file providers,
@@ -328,6 +423,11 @@ Node archive pins come from the
 [official release checksums](https://nodejs.org/download/release/v24.21.0/SHASUMS256.txt).
 
 ## Verification matrix
+
+Desktop permission-wire and managed SDK/authority producer changes select the
+Darwin logic and application fixtures explicitly. This includes the scoped
+permission schema/service and fixed native command builders; unrelated gateway
+wire changes and global Linux validation inputs do not reserve desktop runners.
 
 | Requirement                | Evidence needed                                                                                                                                                  |
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -349,3 +449,34 @@ prebuilt fixture trees. It proves assembly invariants, not that native modules
 load or that macOS accepts the packaged app. Native build success does not
 prove the onboarding or service lifecycle. Each row needs evidence at its own
 scope before the application can be considered complete.
+
+### Collector-only permission recovery
+
+Source-permission observations distinguish access evidence from publication
+protection. Optional `publicationGuard: "managed-v1"` comes from the actual
+collecting engine using the guarded runner; the gateway never synthesizes it for
+an older or ordinary headless collector. It is advertised only for declared
+blocking requirements that the selected runner enforces; unknown, empty and
+nonblocking declarations cannot authorize a trial. Configured sources also need
+the blocking declaration on their actual registered instance. An inconclusive access check can offer a
+local collection trial only with that fresh capability, and never after a known
+denial. Rechecking before source creation must still confirm the capability.
+A trial does not complete the permission prerequisite.
+
+The version-one private bridge accepts `restartCollector` with empty parameters.
+The owned daemon control socket binds the request to the current installation
+instance and serializes it through the existing collector supervisor. The old
+handle must exit before a replacement starts; the gateway and interactive client
+transport stay intact in both home and joined modes. Generation, process authority,
+retirement, restore/update admission, protected storage and saved pairing are
+rechecked. A restrictive startup option prevents self-pairing throughout this
+restart and subsequent retries in the same supervisor.
+
+A successful reply is `{kind:"desktopCollectorRestart",status:"ready",deviceId,
+permissionRecheckRequired:true}`. It requires a validated authenticated gateway
+hello received over the new child's owned IPC channel and the same persisted
+collector identity/credential after restart. Spawn, a prior connection's online
+status and socket acknowledgement do not satisfy readiness. Failures expose only
+bounded safe diagnostics. Cancellation drains the bridge operation but may follow
+an already completed restart; native presentation must refresh the local source's
+fresh permission evidence and must never translate this receipt into a grant.

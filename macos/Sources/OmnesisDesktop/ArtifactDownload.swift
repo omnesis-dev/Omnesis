@@ -58,11 +58,13 @@ actor DesktopArtifactDownloader {
             var chunk = Data()
             chunk.reserveCapacity(65536)
             var received: Int64 = 0
+            var archive = DesktopTarCompletion()
             let clock = ContinuousClock()
             var lastProgress = clock.now
             for try await byte in bytes {
                 chunk.append(byte)
                 if chunk.count == 65536 {
+                    try archive.append(chunk)
                     try file.append(chunk)
                     received += Int64(chunk.count)
                     chunk.removeAll(keepingCapacity: true)
@@ -73,13 +75,15 @@ actor DesktopArtifactDownloader {
                 }
             }
             try Task.checkCancellation()
-            if !chunk.isEmpty { try file.append(chunk)
+            if !chunk.isEmpty { try archive.append(chunk)
+                try file.append(chunk)
                 received += Int64(chunk.count)
             }
             guard received >= 1024,
                   response.expectedContentLength < 0 || received == response.expectedContentLength else {
                 throw DesktopAPIError.message("The download was incomplete. No backup was saved.")
             }
+            try archive.finish()
             try file.finish()
             progress(received)
         } catch {

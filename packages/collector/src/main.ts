@@ -402,7 +402,7 @@ export type CollectorTokenResolution =
 export async function resolveCollectorToken(
   gatewayUrl: string,
   configDir: string,
-  opts: { selfPairRetryDelaysMs?: readonly number[] } = {},
+  opts: { selfPairRetryDelaysMs?: readonly number[]; allowSelfPair?: boolean } = {},
 ): Promise<CollectorTokenResolution> {
   const persisted = readCollectorPairingState(configDir);
   // The name this collector last paired as is the identity the gateway knows
@@ -438,6 +438,8 @@ export async function resolveCollectorToken(
     }
     existingWasRefused = verdict === "needs-pairing";
   }
+
+  if (opts.allowSelfPair === false) return { outcome: "needs-pairing" };
 
   // Find a bootstrap/admin token to self-pair with. OMNESIS_TOKEN env var
   // takes priority (remote collectors where the token file isn't local),
@@ -707,7 +709,9 @@ export async function main() {
 
   let resolved: CollectorTokenResolution;
   try {
-    resolved = await resolveCollectorToken(gatewayUrl, configDir);
+    resolved = await resolveCollectorToken(gatewayUrl, configDir, {
+      allowSelfPair: process.env.OMNESIS_DESKTOP_COLLECTOR_RESTART !== "1",
+    });
   } catch (err) {
     ownedShutdown.observeFailure(err);
     log.error(toErrorMessage(err));
@@ -766,7 +770,11 @@ export async function main() {
   gateway.setOcrRequestTimeoutMs(ocrTimeoutMsFromConfig(unifiedConfig));
   const config = toLegacyConfig(unifiedConfig);
 
-  const engine = new SyncEngine(gateway, { ingestionContext });
+  const engine = new SyncEngine(gateway, {
+    ingestionContext,
+    enforceReadAccess: process.env.OMNESIS_DESKTOP_MANAGED === "1",
+  });
+  ownedShutdown.attach(engine.permissionAccess);
   // Voice notes are transcribed through the gateway. Image / scanned-PDF OCR is
   // additionally gated by the live config assignment so "OCR disabled" never
   // turns into a sync-time call to /inference/ocr.
@@ -836,6 +844,11 @@ export async function main() {
   const wsClient = new GatewayWsClient(gatewayUrl, token, {
     heartbeatTimeoutMs: wsHeartbeatTimeoutMs(),
     onSocketError: retrustOnCertError,
+    onAuthenticated: (identity) => {
+      if (process.env.OMNESIS_DESKTOP_MANAGED === "1" && process.connected && process.send) {
+        process.send({ type: "desktop-collector-ready", deviceId: identity.deviceId }, () => {});
+      }
+    },
     capabilities: {
       sourceContract: SOURCE_CONTRACT_WIRE_RANGE,
       hostname: collectorHostname(),
@@ -847,6 +860,7 @@ export async function main() {
       hostableSourceTypes: manager.getDescriptors().map((d) => d.id),
       syncLease: true,
       deviceDoctor: true,
+      sourcePermissions: true,
       ...(process.env.OMNESIS_REQUIRE_ENCRYPTED_STORAGE === "1"
         ? { requiresEncryptedStorage: true as const }
         : {}),
@@ -1165,9 +1179,9 @@ export async function main() {
         // Take the same route a fresh boot would: on the gateway host the
         // bootstrap admin token is still there and reclaims the revoked row,
         // so the two paths cannot disagree about what a revoke means here.
-        const recovered = await resolveCollectorToken(gatewayUrl, configDir).catch(
-          () => ({ outcome: "needs-pairing" }) as CollectorTokenResolution,
-        );
+        const recovered = await resolveCollectorToken(gatewayUrl, configDir, {
+          allowSelfPair: process.env.OMNESIS_DESKTOP_COLLECTOR_RESTART !== "1",
+        }).catch(() => ({ outcome: "needs-pairing" }) as CollectorTokenResolution);
         if (recovered.outcome === "token") {
           log.info("Re-paired with the gateway — restarting to pick up the new credential");
           await new Promise<void>((resolve) => process.stderr.write("", () => resolve()));

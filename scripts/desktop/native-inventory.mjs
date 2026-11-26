@@ -72,7 +72,7 @@ export async function inventoryBundle(root, architecture) {
           const bytes = header.subarray(0, bytesRead);
           if (bytes.length >= 4 && bytes.readUInt32BE(0) === 0x7f454c46)
             throw new Error(`Non-macOS ELF binary in ${local}`);
-          if (/\.(?:exe|dll|so)$/u.test(name))
+          if (/\.(?:exe|dll)$/u.test(name))
             throw new Error(`Non-macOS native artifact in ${local}`);
           architectures = machoArchitectures(bytes);
         } finally {
@@ -80,7 +80,7 @@ export async function inventoryBundle(root, architecture) {
         }
         if (architectures && !architectures.includes(architecture))
           throw new Error(`Wrong native architecture in ${local}: ${architectures.join(", ")}`);
-        if (/\.(?:node|dylib)$/u.test(name) && !architectures)
+        if (/\.(?:node|dylib|so)$/u.test(name) && !architectures)
           throw new Error(`Non-macOS native module in ${local}`);
         records.push({
           path: local,

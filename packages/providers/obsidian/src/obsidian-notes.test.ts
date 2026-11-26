@@ -365,6 +365,7 @@ describe("ObsidianNotesSource", () => {
       chmodSync(archiveDir, 0o000);
       try {
         const r2 = await instance.sync(r1.cursor);
+        expect(r2.permissionDenied).toBe(true);
         // Nothing is tombstoned: a tombstone deletes on the spot, with no
         // corroboration and no deadline, so an unreadable folder must not
         // produce one.

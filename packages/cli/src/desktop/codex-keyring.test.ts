@@ -2,7 +2,10 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { realpathSync } from "node:fs";
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
+import { mkdtemp, mkdir, open, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
@@ -71,3 +74,68 @@ describe("desktop Codex credential retirement", () => {
     }
   });
 });
+
+test.skipIf(process.platform === "win32")(
+  "the default Keychain purge runner forwards actual inherited EX descriptor7 through its native adapter",
+  async () => {
+    const root = await mkdtemp(join(realpathSync(tmpdir()), "omnesis-codex-authority-fixture-"));
+    const profile = desktopProfile(root);
+    await mkdir(`${profile.configDir}.bootstrap`, { recursive: true, mode: 0o700 });
+    const lock = await open(
+      join(`${profile.configDir}.bootstrap`, `.data-use-${profile.secretService.slice(-64)}.lock`),
+      "wx+",
+      0o600,
+    );
+    const stat = await lock.stat({ bigint: true });
+    const operationId = "00000000-0000-4000-8000-000000000001";
+    const scope = { format: 1, ...profile };
+    const log = join(root, "observed");
+    try {
+      await writeFile(join(root, "package.json"), '{"type":"module"}');
+      // Explicit OS fixture: validate the real descriptor and fixed native argv; never contact Keychain.
+      await writeFile(
+        join(root, "runtime-exec"),
+        `#!${process.execPath}\nimport assert from 'node:assert/strict';import{fstatSync,appendFileSync}from'node:fs';
+      const args=process.argv.slice(2);assert.deepEqual(args.slice(0,3),['--data-inherit','erase',${JSON.stringify(operationId)}]);
+      assert.deepEqual(JSON.parse(Buffer.from(args[3],'base64url')),${JSON.stringify(scope)});
+      assert.deepEqual(args.slice(4,6),['--external','/usr/bin/security']);
+      assert.ok(['delete-generic-password','find-generic-password'].includes(args[6]));assert.ok(!args.includes('-w'));
+      const stat=fstatSync(7,{bigint:true});assert.equal(stat.dev.toString(),${JSON.stringify(stat.dev.toString())});assert.equal(stat.ino.toString(),${JSON.stringify(stat.ino.toString())});
+      appendFileSync(${JSON.stringify(log)},'descriptor-retained\\n');process.exit(44);`,
+        { mode: 0o700 },
+      );
+      const module = new URL("./codex-keyring.ts", import.meta.url).href;
+      const source = `const node=await import('@omnesis/core/node-command');
+      node.installManagedRuntimeLauncher({root:${JSON.stringify(root)},launcher:${JSON.stringify(join(root, "runtime-exec"))},preload:${JSON.stringify(join(root, "packages/core/dist/managed-runtime-bootstrap.js"))},
+      data:{format:1,scope:${JSON.stringify(scope)},lease:{device:${JSON.stringify(stat.dev.toString())},inode:${JSON.stringify(stat.ino.toString())}},exclusive:{purpose:'erase',operationId:${JSON.stringify(operationId)}}}});
+      const {purgeDesktopCodexKeyring}=await import(${JSON.stringify(module)});await purgeDesktopCodexKeyring(${JSON.stringify(profile)});`;
+      const preload = createRequire(import.meta.url).resolve("tsx/esm");
+      const child = spawn(
+        process.execPath,
+        ["--import", pathToFileURL(preload).href, "--input-type=module", "-e", source],
+        {
+          env: { PATH: process.env.PATH, HOME: root },
+          stdio: ["ignore", "pipe", "pipe", "ignore", "ignore", "ignore", "ignore", lock.fd],
+        },
+      );
+      const errors = child.stderr,
+        output = child.stdout;
+      if (!errors || !output) throw new Error("The fixture process has no output pipes");
+      let stderr = "";
+      errors.setEncoding("utf8");
+      errors.on("data", (part) => {
+        stderr += part;
+      });
+      output.resume();
+      const exit = await new Promise<number | null>((resolve, reject) => {
+        child.once("error", reject);
+        child.once("close", resolve);
+      });
+      expect(exit, stderr).toBe(0);
+      expect((await readFile(log, "utf8")).trim().split("\n")).toHaveLength(4);
+    } finally {
+      await lock.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);

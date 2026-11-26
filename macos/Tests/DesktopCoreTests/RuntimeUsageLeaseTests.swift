@@ -18,7 +18,7 @@ final class RuntimeUsageLeaseTests: XCTestCase {
     override func setUpWithError() throws {
         home = FileManager.default.temporaryDirectory.appendingPathComponent("omnesis-usage-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        home = home.resolvingSymlinksInPath()
+        home = try URL(fileURLWithPath: DesktopCanonicalPath.resolve(home.path), isDirectory: true)
         try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     }
 
@@ -99,13 +99,25 @@ final class RuntimeUsageLeaseTests: XCTestCase {
         return node
     }
 
-    private func fixture(tag: String, usageProtocol: Bool = true) throws -> URL {
+    func testUnknownProcessAuthorityPayloadCannotLaunch() throws {
+        for version in [nil, 1, 2, 4] as [Int?] {
+            let runtime = try fixture(tag: "unknown-process-ownership", processProtocol: version)
+            XCTAssertThrowsError(try DesktopRuntimeUsageLease.acquire(runtime: runtime))
+            XCTAssertThrowsError(try DesktopRuntimeUsageLease.reserveLegacyDataConsumers(cache: cache))
+            XCTAssertFalse(try DesktopRuntimeUsageLease.removeReclaimableRuntime(
+                cache: cache, epoch: runtime.lastPathComponent, currentEpoch: String(repeating: "f", count: 64)
+            ))
+            XCTAssertTrue(FileManager.default.fileExists(atPath: runtime.path))
+        }
+    }
+
+    private func fixture(tag: String, usageProtocol: Bool = true, processProtocol: Int? = 3) throws -> URL {
         let source = home.appendingPathComponent("stage-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: source.appendingPathComponent("packages/core/dist"), withIntermediateDirectories: true)
         try FileManager.default.copyItem(at: builtTool(), to: source.appendingPathComponent("runtime-exec"))
         try FileManager.default.copyItem(at: hostNode(), to: source.appendingPathComponent("node"))
         try Data(
-            "import {fileURLToPath} from 'node:url';Object.defineProperty(process,'execPath',{value:fileURLToPath(new URL('../../../runtime-exec',import.meta.url)),writable:false,configurable:false});\n"
+            "import{writeSync}from'node:fs';if(process.env.OMNESIS_TEST_READY_STAGES==='1')writeSync(2,'fixture-stage:preload-enter\\n');import {fileURLToPath} from 'node:url';Object.defineProperty(process,'execPath',{value:fileURLToPath(new URL('../../../runtime-exec',import.meta.url)),writable:false,configurable:false});\n"
                 .utf8
         )
         .write(to: source.appendingPathComponent("packages/core/dist/managed-runtime-bootstrap.js"))
@@ -117,6 +129,7 @@ final class RuntimeUsageLeaseTests: XCTestCase {
         if usageProtocol { manifest["codeUsageProtocol"] = 1
             manifest["runtimeLauncher"] = "runtime-exec"
         }
+        if let processProtocol { manifest["processAuthorityProtocol"] = processProtocol }
         let data = try JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys])
         try data.write(to: source.appendingPathComponent("desktop-runtime.json"))
         let epoch = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
@@ -152,13 +165,18 @@ final class RuntimeUsageLeaseTests: XCTestCase {
         let errors: Pipe
         let capture: Capture
         let diagnostics: Capture
+        let readinessStage: String
+        let diagnosticTarget: DesktopReadinessFailureDiagnostic.Target?
     }
 
-    private func start(runtime: URL, arguments: [String]) throws -> Running {
+    private func start(runtime: URL, arguments: [String], readinessStage: String = "other") throws -> Running {
         let process = Process(), input = Pipe(), output = Pipe(), errors = Pipe()
         let capture = Capture(), diagnostics = Capture()
         process.executableURL = runtime.appendingPathComponent("runtime-exec")
         process.arguments = arguments
+        if readinessStage != "other" {
+            process.environment = ProcessInfo.processInfo.environment.merging(["OMNESIS_TEST_READY_STAGES": "1"]) { _, value in value }
+        }
         process.currentDirectoryURL = runtime
         process.standardInput = input
         process.standardOutput = output
@@ -167,7 +185,59 @@ final class RuntimeUsageLeaseTests: XCTestCase {
         errors.fileHandleForReading.readabilityHandler = { diagnostics.append($0.availableData) }
         try process.run()
         startedEpochs.insert(runtime.lastPathComponent)
-        return Running(process: process, input: input, output: output, errors: errors, capture: capture, diagnostics: diagnostics)
+        return Running(
+            process: process,
+            input: input,
+            output: output,
+            errors: errors,
+            capture: capture,
+            diagnostics: diagnostics,
+            readinessStage: readinessStage,
+            diagnosticTarget: .init(process: process, runtime: runtime)
+        )
+    }
+
+    /// Failure-only metadata for this exact owned child; no path, PID, body or raw log is published.
+    private func readinessDiagnostics(_ running: Running) -> String {
+        var executable = [CChar](repeating: 0, count: 4096)
+        let inspected = proc_pidpath(running.process.processIdentifier, &executable, UInt32(executable.count)) > 0
+        let image: String
+        if inspected, let expected = running.process.executableURL {
+            let actual = String(cString: executable)
+            image = actual == expected.path ? "runtime-exec" :
+                actual == expected.deletingLastPathComponent().appendingPathComponent("node").path ? "node" : "other"
+        } else { image = "unavailable" }
+        func pipeState(_ handle: FileHandle) -> String {
+            var descriptor = pollfd(fd: handle.fileDescriptor, events: Int16(POLLIN), revents: 0)
+            let result = Darwin.poll(&descriptor, 1, 0)
+            return "poll=\(result),readable=\(descriptor.revents & Int16(POLLIN) != 0),hangup=\(descriptor.revents & Int16(POLLHUP) != 0),error=\(descriptor.revents & Int16(POLLERR) != 0)"
+        }
+        var allowed: Set = [
+            "preload-enter", "controller-script-enter", "controller-ready-written", "exclusive-host-enter",
+            "exclusive-ready-written", "scrub-enter", "scrub-complete", "catalog-parent-enter", "catalog-child-spawned",
+            "catalog-socket-observed", "catalog-ready-written", "fork-parent-enter", "fork-child-spawned",
+            "fork-child-enter", "fork-child-sent", "fork-parent-message", "fork-ready-written",
+        ]
+        for mode in [
+            "key-recovery",
+            "background-start",
+            "background-daemon",
+            "background-retire",
+            "verify-background-owner",
+            "verify-background-retirement",
+            "background-binding",
+            "background-rebind",
+        ] {
+            allowed.insert("scrub-before---" + mode)
+            allowed.insert("scrub-after---" + mode)
+        }
+        let stages = running.diagnostics.text.split(separator: "\n").compactMap { line -> String? in
+            let prefix = "fixture-stage:"
+            guard line.hasPrefix(prefix) else { return nil }
+            let stage = String(line.dropFirst(prefix.count))
+            return allowed.contains(stage) ? stage : nil
+        }.suffix(24).joined(separator: ",")
+        return "image=\(image); stdoutBytes=\(running.capture.text.utf8.count); stderrBytes=\(running.diagnostics.text.utf8.count); stdout[\(pipeState(running.output.fileHandleForReading))]; stderr[\(pipeState(running.errors.fileHandleForReading))]; stages=\(stages); nativeRefusal=\(running.diagnostics.text.contains("The managed runtime lease could not be established"))"
     }
 
     private func waitReady(_ running: Running) async throws {
@@ -177,9 +247,14 @@ final class RuntimeUsageLeaseTests: XCTestCase {
         }
         guard running.capture.ready else {
             let status = running.process.isRunning ? "running" : String(running.process.terminationStatus)
-            let detail = "fixture readiness failed (" + status + "): " + running.diagnostics.text
+            let detail = "fixture readiness failed (" + status + "); stage=" + running.readinessStage + "; " + readinessDiagnostics(running)
+            let observation = await DesktopReadinessFailureDiagnostic
+                .collect(target: running.diagnosticTarget) { [capture = running.capture] in
+                    capture.ready
+                }
             stop(running)
-            throw FixtureFailure.detail(detail)
+            // A late marker is diagnostic only; the original readiness failure is preserved.
+            throw FixtureFailure.detail(detail + "; " + observation)
         }
     }
 
@@ -308,12 +383,12 @@ final class RuntimeUsageLeaseTests: XCTestCase {
         let runtime = try fixture(tag: "node-compatible")
         let entry = home.appendingPathComponent("invented-fork-child.cjs")
         try Data(
-            "if(!process.execArgv.includes('--use-system-ca'))process.exit(2);process.send({ready:true});process.once('message',()=>process.exit(0));setTimeout(()=>process.exit(1),5000);"
+            "require('node:fs').writeSync(2,'fixture-stage:fork-child-enter\\n');if(!process.execArgv.includes('--use-system-ca'))process.exit(2);process.send({ready:true},()=>require('node:fs').writeSync(2,'fixture-stage:fork-child-sent\\n'));process.once('message',()=>process.exit(0));setTimeout(()=>process.exit(1),5000);"
                 .utf8
         )
         .write(to: entry)
-        let code = "if(!process.execArgv.includes('--use-system-ca'))process.exit(2);const child=require('node:child_process').fork(\(String(reflecting: entry.path)),[],{stdio:['ignore','ignore','ignore','ipc']});child.once('message',()=>process.stdout.write('ready'));process.stdin.once('data',()=>child.send('stop'));child.once('exit',code=>process.exit(code));process.stdin.resume();"
-        let child = try start(runtime: runtime, arguments: ["-e", code])
+        let code = "require('node:fs').writeSync(2,'fixture-stage:fork-parent-enter\\n');if(!process.execArgv.includes('--use-system-ca'))process.exit(2);const child=require('node:child_process').fork(\(String(reflecting: entry.path)),[],{stdio:['ignore','ignore',2,'ipc']});child.once('spawn',()=>process.stderr.write('fixture-stage:fork-child-spawned\\n'));child.once('message',()=>{process.stderr.write('fixture-stage:fork-parent-message\\n');process.stdout.write('ready',()=>process.stderr.write('fixture-stage:fork-ready-written\\n'))});process.stdin.once('data',()=>child.send('stop'));child.once('exit',code=>process.exit(code));process.stdin.resume();"
+        let child = try start(runtime: runtime, arguments: ["-e", code], readinessStage: "fork-parent")
         defer { stop(child) }
         try await waitReady(child)
         try child.input.fileHandleForWriting.write(contentsOf: Data("stop\n".utf8))

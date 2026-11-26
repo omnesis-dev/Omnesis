@@ -48,7 +48,7 @@ export async function restartDesktopHome(
   signal.throwIfAborted();
   const stopped = await operations.blocked();
   if (stopped) return stopped;
-  await operations.startDaemon(profile);
+  await operations.startDaemon(profile, undefined, signal);
   await operations.waitForHome(signal);
   return operations.status(signal);
 }

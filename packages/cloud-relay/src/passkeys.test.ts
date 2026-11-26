@@ -333,12 +333,18 @@ test("removing a sign-in removes every stored countersignature that names it, an
     const first = await add("Passkey 1"),
       second = await add("Passkey 2"),
       third = await add("Passkey 3");
-    expect(countersigners()).toEqual([first, second, third]);
+    // Creation timestamps can tie; the listing then orders by random credential id.
+    expect(countersigners().sort()).toEqual([first, second, third].sort());
     // Removing the first passkey takes the two countersignatures that name it.
     accounts.removePasskey(accountId, first, ["google"], account.version);
     account = { accountId, version: accounts.sessionVersion(accountId)! };
     expect(countersigners()).toEqual([]);
-    expect(accounts.passkeyKeys(accountId).map((key) => key.id)).toEqual([second, third]);
+    expect(
+      accounts
+        .passkeyKeys(accountId)
+        .map((key) => key.id)
+        .sort(),
+    ).toEqual([second, third].sort());
     // One that names Google and the two left; unlinking Google takes it too.
     const fourth = await add("Passkey 4");
     expect(countersigners()).toEqual([fourth]);

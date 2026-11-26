@@ -56,4 +56,94 @@ final class UpdateInstallerTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: updates.appendingPathComponent("mounts").path))
         XCTAssertEqual(try Data(contentsOf: artifact), bytes)
     }
+
+    private func ownedHome() throws -> URL {
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("update-generation-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let home = try URL(fileURLWithPath: DesktopCanonicalPath.resolve(temporary.path), isDirectory: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: home) }
+        return home
+    }
+
+    private func publish(_ value: [String: Any], path: URL) throws {
+        try FileManager.default.createDirectory(
+            at: path.deletingLastPathComponent(),
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let file = try PrivateSaveFile(url: path)
+        try file.append(JSONSerialization.data(withJSONObject: value))
+        try file.finish()
+    }
+
+    private func rotateGeneration(home: URL, previous: DesktopBackgroundManagedProfile) throws -> DesktopBackgroundManagedProfile {
+        try publish([
+            "version": 1, "owner": "omnesis-desktop", "configIdentity": previous.binding.configDirHash,
+            "generation": UUID().uuidString.lowercased(),
+            "previous": [
+                "instance": previous.instance,
+                "secretService": previous.secretService,
+                "retirementId": UUID().uuidString.lowercased(),
+            ],
+        ], path: URL(fileURLWithPath: previous.configDir + ".bootstrap/generation.json"))
+        return try DesktopBackgroundManagedProfile.current(home: home)
+    }
+
+    private func activeRecord(_ profile: DesktopBackgroundManagedProfile) -> [String: Any] {
+        [
+            "format": 1,
+            "owner": "omnesis-desktop",
+            "instance": profile.instance,
+            "secretService": profile.secretService,
+            "epoch": String(repeating: "a", count: 64),
+            "productVersion": "1.2.3",
+        ]
+    }
+
+    private func installer(home: URL) -> DesktopUpdateInstaller {
+        DesktopUpdateInstaller(
+            application: home.appendingPathComponent("Omnesis.app"),
+            runtime: home.appendingPathComponent(String(repeating: "b", count: 64)),
+            home: home
+        )
+    }
+
+    func testActiveRuntimeAcceptsOriginalInstallationNamespace() async throws {
+        let home = try ownedHome()
+        let profile = try DesktopBackgroundManagedProfile.current(home: home)
+        try publish(activeRecord(profile), path: URL(fileURLWithPath: profile.configDir + ".bootstrap/active-runtime.json"))
+        let actual = try await installer(home: home).activeRuntime()
+        XCTAssertEqual(actual.epoch, String(repeating: "a", count: 64))
+        XCTAssertEqual(actual.version, "1.2.3")
+    }
+
+    func testActiveRuntimeAcceptsFreshGenerationNamespace() async throws {
+        let home = try ownedHome()
+        let previous = try DesktopBackgroundManagedProfile.current(home: home)
+        let profile = try rotateGeneration(home: home, previous: previous)
+        XCTAssertNotEqual(profile.instance, previous.instance)
+        try publish(activeRecord(profile), path: URL(fileURLWithPath: profile.configDir + ".bootstrap/active-runtime.json"))
+        let actual = try await installer(home: home).activeRuntime()
+        XCTAssertEqual(actual.epoch, String(repeating: "a", count: 64))
+        XCTAssertEqual(actual.version, "1.2.3")
+    }
+
+    func testActiveRuntimeRefusesPreviousGenerationAndAnotherOwnedHome() async throws {
+        let home = try ownedHome()
+        let previous = try DesktopBackgroundManagedProfile.current(home: home)
+        try publish(activeRecord(previous), path: URL(fileURLWithPath: previous.configDir + ".bootstrap/active-runtime.json"))
+        _ = try rotateGeneration(home: home, previous: previous)
+        do {
+            _ = try await installer(home: home).activeRuntime()
+            XCTFail("An earlier generation cannot authorize this installation's update")
+        } catch {}
+        let otherHome = try ownedHome()
+        let other = try DesktopBackgroundManagedProfile.current(home: otherHome)
+        let current = try DesktopBackgroundManagedProfile.current(home: home)
+        try publish(activeRecord(current), path: URL(fileURLWithPath: other.configDir + ".bootstrap/active-runtime.json"))
+        do {
+            _ = try await installer(home: otherHome).activeRuntime()
+            XCTFail("Another home cannot authorize this installation's update")
+        } catch {}
+    }
 }

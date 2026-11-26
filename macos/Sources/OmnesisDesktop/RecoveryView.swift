@@ -45,7 +45,7 @@ struct DesktopRecoveryView: View {
                     guard let importFile else { return }
                     store.command("recoveryImport", params: ["envelope": importFile, "recoveryCode": .string(importCode)])
                     importCode = ""
-                }.buttonStyle(.borderedProminent).disabled(importFile == nil || importCode.isEmpty || importCode.count > 512 || store.busy)
+                }.buttonStyle(DesktopButtonStyle(primary: true)).disabled(importFile == nil || importCode.isEmpty || importCode.count > 512 || store.busy)
                 Button("Back") { importCode = ""
                     importing = false
                 }.disabled(store.busy)
@@ -70,7 +70,7 @@ struct DesktopRecoveryView: View {
                         return
                     }
                     store.command("recoveryCommit", params: ["draftId": .string(draft.draftId)])
-                }.buttonStyle(.borderedProminent).disabled(!fileSaved || !codeSaved || !keptSeparately || store.busy)
+                }.buttonStyle(DesktopButtonStyle(primary: true)).disabled(!fileSaved || !codeSaved || !keptSeparately || store.busy)
             } else if let status = store.recoveryStatus {
                 if status.available {
                     Text(
@@ -83,7 +83,7 @@ struct DesktopRecoveryView: View {
                         Text(
                             "Future backups will include the new recovery file. Keep older codes for older backups. Replacement does not invalidate recovery files or codes you saved before."
                         )
-                        .font(.callout).foregroundStyle(.secondary)
+                        .font(.callout).foregroundStyle(DesktopTheme.secondary)
                     }
                     Button("Restore access with a recovery file…") {
                         store.recoveryImportOutcome = nil
@@ -99,7 +99,7 @@ struct DesktopRecoveryView: View {
                     if let name = store.state.homeName { LabeledContent("Library Mac", value: name) }
                 }
             } else { ProgressView("Checking recovery protection…") }
-            if let message = error ?? store.failure { Text(message).foregroundStyle(.red) }
+            if let message = error ?? store.failure { Text(message).foregroundStyle(DesktopTheme.danger) }
             HStack {
                 Spacer()
                 Button(store.recoverySaved ? "Done" : "Cancel") {
@@ -107,9 +107,9 @@ struct DesktopRecoveryView: View {
                     importCode = ""
                     cancel()
                     dismiss()
-                }.disabled(store.busy && !importing)
+                }.disabled(store.busy && !importing).keyboardShortcut(.cancelAction)
             }
-        }.padding(24).frame(width: 520)
+        }.buttonStyle(DesktopButtonStyle()).padding(24).frame(width: 520)
             .interactiveDismissDisabled(store.busy)
             .task(id: store.recoveryDraft?.draftId) {
                 guard let draft = store.recoveryDraft else { return }

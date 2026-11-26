@@ -8,7 +8,13 @@ import { atomicWriteFile } from "@omnesis/core";
 import { assertDesktopProfileGeneration } from "./generation.js";
 import type { DesktopProfile } from "./environment.js";
 
-type RecordName = "update.json" | "active-runtime.json" | "restore.json";
+type RecordName =
+  | "update.json"
+  | "active-runtime.json"
+  | "restore.json"
+  | "code-retention.json"
+  | "process-authority.json"
+  | "retirement.json";
 const limit = 16_384;
 export async function readDesktopPrivateRecord<T>(
   profile: DesktopProfile,

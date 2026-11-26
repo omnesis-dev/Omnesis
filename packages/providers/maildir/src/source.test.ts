@@ -1017,6 +1017,22 @@ describe("attachments", () => {
   });
 });
 
+test("observed denied mailbox listing reports permission loss independently of root readability", async () => {
+  const inbox = folder("INBOX");
+  const archive = folder("Archive");
+  deliverMessage(inbox, "fixture-inbox", message());
+  deliverMessage(archive, "fixture-archive", message({ messageId: "archive@example.org" }));
+  const source = makeSource();
+  const denied = join(archive, "cur");
+  deniedFixturePaths.add(denied);
+  try {
+    expect((await source.sync(null)).permissionDenied).toBe(true);
+  } finally {
+    deniedFixturePaths.delete(denied);
+  }
+  expect((await source.sync(null)).permissionDenied).toBeUndefined();
+});
+
 describe("gaps withhold the snapshot", () => {
   test.skipIf(isRoot)(
     "an unreadable folder keeps its messages and withholds deletions",

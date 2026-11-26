@@ -102,6 +102,7 @@ export function buildTelegramProvider(
 ): ProviderDefinition<TelegramProvider> {
   return defineProvider<TelegramProvider>({
     provider: { id: TELEGRAM_PROVIDER_ID, name: "Telegram" },
+    permissionRequirements: [],
     authType: "qr",
     // Exclusive, because the other modes cannot work: the archive is local to
     // its host and the cursor is bound to that archive's storeId, so a

@@ -16,6 +16,10 @@ import {
   storageEncryptionRequired,
 } from "@omnesis/core";
 import { desktopJournalPath, recommendDesktopResources, type DesktopProfile } from "./profile.js";
+import {
+  assertDesktopProcessAuthority,
+  certifyFreshDesktopProcessAuthority,
+} from "./process-authority.js";
 import { assertDesktopMutationAllowed } from "./update-admission.js";
 
 const installSchema = z
@@ -28,6 +32,7 @@ const installSchema = z
     embedder: z.string().nullable(),
     memoryLimitMb: z.number().int().min(256),
     phase: z.enum(["claimed", "protected", "configured"]),
+    processAuthorityVersion: z.literal(3).optional(),
   })
   .strict();
 
@@ -98,9 +103,13 @@ async function prepareLockedInstall(
       embedder: options.mode === "home" ? resources.embedder.id : null,
       memoryLimitMb: resources.memoryLimitMb,
       phase: "claimed",
+      processAuthorityVersion: 3,
     };
     await atomicWriteFile(journalPath, JSON.stringify(journal), { mode: 0o600 });
   }
+  if (journal.phase === "claimed" && journal.processAuthorityVersion === 3)
+    await certifyFreshDesktopProcessAuthority(profile, journal);
+  await assertDesktopProcessAuthority(profile);
   if (journal.mode !== options.mode) {
     throw new Error(
       "This Mac already has a different role; changing the library's home is unavailable",

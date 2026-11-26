@@ -66,6 +66,11 @@ test("managed runtime refuses unisolated model metadata before emitting or persi
   const temporary = join(root, "temporary");
   await mkdir(temporary, { mode: 0o700 });
   const runtime = new CodexAppServerRuntime({
+    resolveManagedCommand: async (info) => info,
+    managedCatalogPlatform: {
+      invocation: (command, args) => ({ command, args: [...args] }),
+      previousSha256: async () => null,
+    },
     codexHome: join(root, "owned-home"),
     workspaceDir: join(root, "workspace"),
     stateHome: join(root, "worker-state"),

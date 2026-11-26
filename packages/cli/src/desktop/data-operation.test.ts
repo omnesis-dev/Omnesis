@@ -169,3 +169,18 @@ test("cancellation joins the exact owned host even when it ignores graceful stop
   controller.abort();
   await rejected;
 }, 10_000);
+
+test("metadata-only hosts enforce their smaller frame limit before accepting any body", async () => {
+  const input = new PassThrough(),
+    read = readDesktopDataFrame(input, signal(), 64 * 1024);
+  const result = expect(read).rejects.toThrow("invalid"),
+    header = Buffer.alloc(4);
+  header.writeUInt32BE(64 * 1024 + 1);
+  input.write(header);
+  await result;
+  input.destroy();
+  for (const invalid of [0, -1, Number.NaN, DESKTOP_DATA_INPUT_LIMIT + 1])
+    await expect(readDesktopDataFrame(new PassThrough(), signal(), invalid)).rejects.toThrow(
+      "invalid",
+    );
+});

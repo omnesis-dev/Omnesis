@@ -105,6 +105,33 @@ afterAll(async () => {
 });
 
 describe("GatewayWsClient", () => {
+  test("authenticated callback receives only the validated hello identity", async () => {
+    const identities: unknown[] = [];
+    const client = new GatewayWsClient(`http://localhost:${PORT}`, API_KEY, {
+      onAuthenticated: (identity) => identities.push(identity),
+    });
+    expect(identities).toEqual([]);
+    client.connect();
+    await waitForCondition(() => identities.length === 1);
+    expect(identities).toEqual([HELLO_RESPONSE]);
+    client.disconnect();
+    await waitForCondition(() => connectedSockets.size === 0);
+  });
+
+  test("rejected hello never emits collector readiness", async () => {
+    helloBehavior = "reject";
+    const identities: unknown[] = [];
+    const client = new GatewayWsClient(`http://localhost:${PORT}`, API_KEY, {
+      onAuthenticated: (identity) => identities.push(identity),
+    });
+    client.connect();
+    await waitForCondition(() => helloCount > 0);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(identities).toEqual([]);
+    client.disconnect();
+    await waitForCondition(() => connectedSockets.size === 0);
+  });
+
   test("connects with upgrade token and sends tokenless hello", async () => {
     const client = new GatewayWsClient(`http://localhost:${PORT}`, API_KEY);
     client.connect();

@@ -8,6 +8,8 @@ import { join } from "node:path";
 import { beforeEach, afterEach, expect, test, vi } from "vitest";
 import { CAPABILITY_ROLES } from "@omnesis/core";
 import { desktopProfile, type DesktopProfile } from "./environment.js";
+import { acquireDesktopRuntimeLeases } from "./runtime-leases.js";
+import { createDesktopUpdateSnapshot, desktopUpdateSnapshotPath } from "./update-snapshot.js";
 import { desktopRootIdentity } from "./retirement.js";
 import {
   writeDesktopRestoreIntent,
@@ -46,25 +48,50 @@ beforeEach(async () => {
   home = await realpath(await mkdtemp(join(tmpdir(), "omnesis-restore-start-")));
   profile = desktopProfile(home);
   await mkdir(profile.configDir, { recursive: true, mode: 0o700 });
-  await mkdir(`${profile.configDir}.bootstrap`, { mode: 0o700 });
+  await mkdir(`${profile.configDir}.bootstrap`, { recursive: true, mode: 0o700 });
+  await writeFile(
+    join(`${profile.configDir}.bootstrap`, "process-authority.json"),
+    JSON.stringify({
+      version: 3,
+      owner: "omnesis-desktop",
+      instance: profile.instance,
+      secretService: profile.secretService,
+    }),
+    { mode: 0o600 },
+  );
   root = (await desktopRootIdentity(profile))!;
   seams.captureKey = "1".repeat(64);
   const config = JSON.stringify({
     inference: { assignments: Object.fromEntries(CAPABILITY_ROLES.map((role) => [role, null])) },
   });
   await writeFile(join(profile.configDir, "omnesis.json"), config, { mode: 0o600 });
+  const operationId = randomUUID(),
+    leases = await acquireDesktopRuntimeLeases(profile, {
+      expectedRoot: root,
+      signal: new AbortController().signal,
+    });
+  let backup;
+  try {
+    backup = await createDesktopUpdateSnapshot(profile, {
+      operationId,
+      leases,
+      signal: new AbortController().signal,
+    });
+  } finally {
+    leases.release();
+  }
   await writeDesktopRestoreIntent(profile, {
     version: 1,
     owner: "omnesis-desktop",
     instance: profile.instance,
     secretService: profile.secretService,
-    operationId: randomUUID(),
+    operationId,
     phase: "committed",
     root,
     targetKeyDigest: "1".repeat(64),
     archiveSha256: "3".repeat(64),
     archiveBytes: 1024,
-    backup: { manifestSha256: "4".repeat(64), bytes: 4096 },
+    backup,
     verification: {
       schemaVersion: 321,
       documents: 4,
@@ -235,3 +262,50 @@ test("a changed protected root refuses activation before starting any child", as
   expect(operations.startDaemon).not.toHaveBeenCalled();
   expect((await readDesktopRestoreIntent(profile))?.phase).toBe("committed");
 });
+
+test("a missing or corrupted protective copy prevents a complete startup outcome", async () => {
+  const intent = (await readDesktopRestoreIntent(profile))!;
+  await writeFile(
+    join(desktopUpdateSnapshotPath(profile, intent.operationId), "snapshot.json"),
+    "invalid retained inventory",
+  );
+  await expect(
+    startCommittedDesktopRestore(profile, new AbortController().signal, operations),
+  ).rejects.toThrow();
+  expect((await readDesktopRestoreIntent(profile))?.phase).not.toBe("complete");
+  expect(await desktopRestoreBlocked(profile)).toBe(true);
+});
+
+test.each([false, true])(
+  "protected reconnect checks the durable recording review gate (%s)",
+  async (gate) => {
+    const config = JSON.stringify({
+      inference: {
+        assignments: Object.fromEntries(CAPABILITY_ROLES.map((role) => [role, null])),
+        recordings: { restoreReviewRequired: gate },
+      },
+    });
+    await writeFile(join(profile.configDir, "omnesis.json"), config, { mode: 0o600 });
+    const record = (await readDesktopRestoreIntent(profile))!;
+    await writeDesktopRestoreIntent(profile, {
+      ...record,
+      verification: {
+        ...record.verification!,
+        recordings: 1,
+        configDigest: createHash("sha256").update(config).digest("hex"),
+      },
+    });
+    const request = operations.request;
+    operations.request = vi.fn(async (...args) =>
+      args[1] === "/admin/config" ? { config: JSON.parse(config) } : request(...args),
+    );
+    const pending = startCommittedDesktopRestore(profile, new AbortController().signal, operations);
+    if (gate) {
+      expect(await pending).toBe(true);
+      expect((await readDesktopRestoreIntent(profile))?.phase).toBe("complete");
+    } else {
+      await expect(pending).rejects.toThrow("protected startup has not been verified");
+      expect((await readDesktopRestoreIntent(profile))?.phase).not.toBe("complete");
+    }
+  },
+);

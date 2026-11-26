@@ -246,6 +246,39 @@
           </p>
         </div>
 
+        <h2 id="mac-server">Keep a Mac gateway available</h2>
+        <p>
+          A desktop Mac that stays powered on, such as a Mac mini, is a useful home for your
+          library. Other devices can reach the gateway only while this Mac is awake, online and
+          running Omnesis. Configuring system sleep is a prerequisite for using the Mac as a
+          gateway. Its display can turn off and its screen can stay locked. After restarting the
+          Mac, sign in to macOS so its user services can start.
+        </p>
+        <ul>
+          <li>
+            <strong>Desktop Mac:</strong> open System Settings → Energy, then turn on
+            <em>Prevent automatic sleeping when the display is off</em>. On macOS 14, the pane is
+            called Energy Saver.
+          </li>
+          <li>
+            <strong>MacBook:</strong> connect its power adapter, then open System Settings → Battery
+            → Options and turn on
+            <em>Prevent automatic sleeping on power adapter when the display is off</em>. Keep the
+            lid open unless you use Apple's supported external-display setup.
+          </li>
+        </ul>
+        <p>
+          See
+          <a href="https://support.apple.com/guide/mac-help/mchle41a6ccd/mac"
+            >Apple's sleep and wake settings</a
+          >
+          for the options available on your Mac. Starting Omnesis at login does not change these
+          settings, and <em>Wake for network access</em> alone does not keep its connection
+          available. The same applies when the gateway runs in Docker on a Mac: the macOS host must
+          stay awake. These steps are unnecessary for a Mac that only joins a gateway elsewhere; its
+          own collection pauses while it sleeps.
+        </p>
+
         <h2 id="guided-install">Guided install with an agent</h2>
         <p>
           If you have a coding agent with terminal access on the computer where you want to begin,
@@ -645,6 +678,10 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
 
         <h2 id="first-run">First run</h2>
         <p>
+          If this is a Mac gateway, configure its <a href="#mac-server">sleep settings</a> so your
+          other devices can reach it. The display can turn off and the screen can stay locked.
+        </p>
+        <p>
           The installer may ask up to six questions. It reads the answers from your terminal, not
           from standard input, because under <code>curl … | sh</code> standard input is the script
           itself. Each has a flag, so an unattended install can answer in advance.
@@ -850,6 +887,10 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
         </p>
 
         <h2 id="docker">Docker</h2>
+        <p>
+          A gateway container on a Mac still needs its macOS host to stay awake. Follow the
+          <a href="#mac-server">Mac server steps</a>, and keep Docker running.
+        </p>
         <p>
           The Docker install is the same installer with a flag. The gateway and the collector run as
           containers from published images tagged by release:
@@ -1548,6 +1589,11 @@ Share /Users/maya/Documents/Vault with the collector, read-only? [Y/n]</pre>
         </ul>
 
         <h2 id="from-source">From source</h2>
+        <p>
+          When this Mac will run the gateway, configure its
+          <a href="#mac-server">sleep settings</a> as well as starting Omnesis. A Mac running only a
+          collector or client does not need to stay awake for a gateway elsewhere.
+        </p>
         <p>
           For development, use the Node version recorded in <code>.nvmrc</code>. Source builds
           require Node 24.16 or newer within Node 24, or Node 26.1 or newer. On macOS or Linux, run

@@ -696,6 +696,19 @@
           and follow the law where you record.
         </p>
 
+        <p>
+          A library restore preserves recording history and pauses all recording background work for
+          review, including audio deletion, transcription and document processing. Review the
+          current transcription model, speaker setting and audio retention in the portal before
+          resuming. Selecting local speakers can download voice models. Retention of zero days can
+          remove old or failed audio immediately; it does not promise to keep audio until
+          transcription succeeds. Unrelated configuration updates preserve this pause. An advanced
+          administrator can explicitly acknowledge these choices by setting
+          <code>inference.recordings.restoreReviewRequired</code> to <code>false</code> through the
+          configuration API. Omitting the field from an older API configuration replacement does not
+          acknowledge review.
+        </p>
+
         <h2 id="brain">Omnesis Brain</h2>
         <p>
           Brain is a background agent. It reads your records as they arrive, and on a schedule,

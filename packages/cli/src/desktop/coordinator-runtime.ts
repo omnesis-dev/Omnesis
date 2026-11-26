@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { spawn } from "node:child_process";
 import { hostname, totalmem } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -12,7 +11,6 @@ import {
   tokenFingerprint,
   readSecretTextFile,
   writeSecretTextFile,
-  resolveSubprocessEntry,
   secretFileEncryptionRequired,
   storageEncryptionRequired,
 } from "@omnesis/core";
@@ -25,20 +23,19 @@ import { prepareDesktopInstall, readDesktopInstall } from "./bootstrap.js";
 import { desktopSearchModel } from "./search-model.js";
 import { previewDesktopRemoval, removeDesktopInstall, resumeRetiredDesktop } from "./removal.js";
 import { readDesktopRetirement } from "./retirement.js";
-import { stopDesktopDaemon } from "./daemon-control.js";
+import { restartDesktopCollector, stopDesktopDaemon } from "./daemon-control.js";
 import { prepareDesktopRuntime } from "./runtime-state.js";
 import { readDesktopConnection, requestDesktopGateway } from "./gateway-access.js";
 import { desktopEnvironment, type DesktopProfile } from "./environment.js";
+import { startDesktopBackgroundDaemon } from "./background-start.js";
+import { prepareDesktopBackgroundHandoff } from "./background-rebind.js";
 import { discoverDesktopHomes } from "./discovery.js";
 import { enrollDesktopRole, type DesktopPairing } from "./enrollment.js";
 import { connectDesktopAccount } from "./account-connect.js";
 import { withDesktopPublication, publishDesktopHint } from "./publication.js";
 import { desktopUpdateBlocked } from "./update-admission.js";
 import { readDesktopRemoteProtection } from "./remote-protection.js";
-import {
-  desktopRestoreActivationArguments,
-  type DesktopRestoreActivation,
-} from "./restore-start-arguments.js";
+import { type DesktopRestoreActivation } from "./restore-start-arguments.js";
 
 export interface DesktopSessionTransport {
   url: string;
@@ -46,6 +43,7 @@ export interface DesktopSessionTransport {
   close(): Promise<void>;
 }
 export interface CoordinatorDependencies {
+  backgroundHandoff: typeof prepareDesktopBackgroundHandoff;
   remoteProtection: typeof readDesktopRemoteProtection;
   updateBlocked: typeof desktopUpdateBlocked;
   publish: typeof withDesktopPublication;
@@ -64,8 +62,13 @@ export interface CoordinatorDependencies {
   saveToken: typeof writeSecretTextFile;
   protected(profile: DesktopProfile): Promise<boolean>;
   localCollectorDeviceId(profile: DesktopProfile): Promise<string | undefined>;
-  startDaemon(profile: DesktopProfile, restoreActivation?: DesktopRestoreActivation): Promise<void>;
+  startDaemon(
+    profile: DesktopProfile,
+    restoreActivation?: DesktopRestoreActivation,
+    signal?: AbortSignal,
+  ): Promise<void>;
   stopDaemon: typeof stopDesktopDaemon;
+  restartCollector: typeof restartDesktopCollector;
   readRetirement: typeof readDesktopRetirement;
   resumeRetirement: typeof resumeRetiredDesktop;
   removalPreview: typeof previewDesktopRemoval;
@@ -82,6 +85,7 @@ export interface CoordinatorDependencies {
   sleep(signal: AbortSignal): Promise<void>;
 }
 export const desktopCoordinatorDefaults: CoordinatorDependencies = {
+  backgroundHandoff: prepareDesktopBackgroundHandoff,
   remoteProtection: readDesktopRemoteProtection,
   updateBlocked: desktopUpdateBlocked,
   publish: withDesktopPublication,
@@ -128,28 +132,12 @@ export const desktopCoordinatorDefaults: CoordinatorDependencies = {
     return z.string().uuid().safeParse(state.deviceId).success ? state.deviceId : undefined;
   },
   stopDaemon: stopDesktopDaemon,
+  restartCollector: restartDesktopCollector,
   readRetirement: readDesktopRetirement,
   resumeRetirement: resumeRetiredDesktop,
   removalPreview: previewDesktopRemoval,
   removeInstall: removeDesktopInstall,
-  startDaemon: async (profile, restoreActivation) => {
-    const entry = resolveSubprocessEntry("../index.ts", import.meta.url);
-    const env = desktopEnvironment(profile);
-    const child = spawn(
-      entry.command,
-      [...entry.args, "desktop", "daemon", ...desktopRestoreActivationArguments(restoreActivation)],
-      {
-        env,
-        detached: true,
-        stdio: "ignore",
-      },
-    );
-    await new Promise<void>((resolve, reject) => {
-      child.once("spawn", resolve);
-      child.once("error", reject);
-    });
-    child.unref();
-  },
+  startDaemon: startDesktopBackgroundDaemon,
   startTransport: async (profile) => {
     const { runRelayCommand } = await import("@omnesis/cloud-relay/runtime");
     const transport = await runRelayCommand(

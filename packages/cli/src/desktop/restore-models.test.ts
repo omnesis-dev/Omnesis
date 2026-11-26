@@ -9,6 +9,7 @@ import { desktopProfile } from "./environment.js";
 import {
   readDesktopRestoreReview,
   pauseDesktopRestoreProcessing,
+  desktopRestoreRecordingsPaused,
   desktopRestoreDeletionPaused,
 } from "./restore-review.js";
 
@@ -88,4 +89,36 @@ test("optional previous-choice projection is bounded below the private bridge fr
   expect(Buffer.byteLength(serialized)).toBeGreaterThan(512 * 1024);
   expect(await readDesktopRestoreReview(profile, { read: async () => serialized })).toBeUndefined();
   expect(serialized).toBe(JSON.stringify(large));
+});
+
+test("only actual restored recordings require review, and an existing review choice is retained", () => {
+  const config = omnesisConfigSchema.parse({ inference: { recordings: { keepAudioDays: 14 } } });
+  expect(
+    pauseDesktopRestoreProcessing(config, 0).config.inference?.recordings?.restoreReviewRequired,
+  ).toBeUndefined();
+  const paused = pauseDesktopRestoreProcessing(config, 1).config;
+  expect(paused.inference?.recordings).toMatchObject({
+    keepAudioDays: 14,
+    restoreReviewRequired: true,
+  });
+  expect(
+    pauseDesktopRestoreProcessing(paused, 0).config.inference?.recordings?.restoreReviewRequired,
+  ).toBe(true);
+});
+
+test("protected reconnect requires the recording review gate when actual imported sessions exist", () => {
+  expect(desktopRestoreRecordingsPaused({}, 1)).toBe(false);
+  expect(desktopRestoreRecordingsPaused({}, 0)).toBe(true);
+  expect(
+    desktopRestoreRecordingsPaused(
+      { inference: { recordings: { restoreReviewRequired: true } } },
+      1,
+    ),
+  ).toBe(true);
+  expect(
+    desktopRestoreRecordingsPaused(
+      { inference: { recordings: { restoreReviewRequired: false } } },
+      1,
+    ),
+  ).toBe(false);
 });

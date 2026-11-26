@@ -529,6 +529,8 @@ export interface DeviceCapability {
   syncLease?: boolean;
   /** Accepts correlated collector-local health-check commands. */
   deviceDoctor?: true;
+  /** Answers bounded source.permission capability probes without reading records. */
+  sourcePermissions?: true;
   /** First-party external-agent integration delivery contract. */
   agentIntegration?: {
     harness: "openclaw" | "hermes";

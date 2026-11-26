@@ -46,6 +46,16 @@ export function connectivityFailure(error: unknown): boolean {
   );
 }
 
+/** A refused optional LAN socket does not authorize or prevent the canonical route. */
+export function localNetworkRefused(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error.code === "EACCES" || error.code === "EPERM")
+  );
+}
+
 export function deadlineFailure(signal: AbortSignal, error: unknown): boolean {
   return signal.aborted && error instanceof Error && "code" in error && error.code === "ABORT_ERR";
 }
@@ -108,7 +118,12 @@ export async function connectPreferredGateway(
       options.signal.throwIfAborted();
       // A local per-candidate deadline is a reachability timeout, never a certificate error.
       if (error instanceof GatewayTlsIdentityRefused) options.onRefusedHint?.(candidate);
-      else if (!connectivityFailure(error) && !deadlineFailure(dialing.signal, error)) throw error;
+      else if (
+        !connectivityFailure(error) &&
+        !localNetworkRefused(error) &&
+        !deadlineFailure(dialing.signal, error)
+      )
+        throw error;
     } finally {
       expiry.removeEventListener("abort", expire);
     }

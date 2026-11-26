@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { isDesktopNativeContract } from "./desktop-native-inputs.mjs";
+
 const e2eRoot = "packages/collector/src/e2e";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -8,7 +10,10 @@ import picomatch from "picomatch";
 
 export const bundles = {
   "desktop-account": { kind: "e2e", tests: ["desktop-account.e2e.test.ts"] },
-  "desktop-runtime": { kind: "e2e", tests: ["desktop-runtime.e2e.test.ts"] },
+  "desktop-runtime": {
+    kind: "e2e",
+    tests: ["desktop-runtime.e2e.test.ts", "desktop-restore.e2e.test.ts"],
+  },
   "source-lifecycle": {
     kind: "e2e",
     tests: [
@@ -291,12 +296,14 @@ const areas = [
       p.startsWith("packages/cli/src/desktop/") ||
       p === "packages/cli/src/commands/desktop.ts" ||
       p.startsWith("packages/collector/src/e2e/desktop-runtime") ||
+      p.startsWith("packages/collector/src/e2e/desktop-restore") ||
       p.startsWith("packages/collector/src/e2e/desktop-account") ||
       p.startsWith("scripts/desktop/test-account") ||
       p === "scripts/desktop/account-test.Dockerfile",
     bundles: ["desktop-runtime", "desktop-account"],
   },
   { test: (p) => p.startsWith("macos/"), bundles: ["macos-logic", "macos-test"] },
+  { test: isDesktopNativeContract, bundles: ["macos-logic", "macos-test"] },
   {
     test: (p) =>
       /^scripts\/desktop\/(?:native-check(?:\.test)?|prepare-node-test-fixture|node-test-fixture\.test)\.mjs$/.test(

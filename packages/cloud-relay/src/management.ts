@@ -87,7 +87,14 @@ export interface CloudRelayManagementStatus {
     lastRenewedAt?: string;
     lastError?: CloudRelayManagementError;
   };
-  publicMcp: { ready: boolean; url?: string; lastError?: "public-endpoint-unreachable" };
+  publicMcp: {
+    ready: boolean;
+    url?: string;
+    lastError?: "public-endpoint-unreachable";
+    /** Actual public-route probe completion and expiry, Unix milliseconds; not assistant usage. */
+    checkedAt?: number;
+    validUntil?: number;
+  };
   google: {
     configured: boolean;
     linked?: boolean;

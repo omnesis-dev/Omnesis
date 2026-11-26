@@ -78,6 +78,7 @@ struct DesktopBackupsView: View {
                 if artifacts.isEmpty { Text("No completed backups or exports are available.").foregroundStyle(.secondary) }
                 Button("Refresh list") { Task { await refresh() } }.disabled(loading || saving != nil)
             }
+            DesktopRecoveryCopiesSection()
             if let saving {
                 ProgressView(
                     "Saving \(saving.kind)… \(ByteCountFormatter.string(fromByteCount: downloadedBytes, countStyle: .file)) downloaded"
@@ -88,7 +89,7 @@ struct DesktopBackupsView: View {
                 Label("Copy saved on this Mac", systemImage: "checkmark")
                 Button("Show saved copy in Finder") { NSWorkspace.shared.activateFileViewerSelecting([savedURL]) }
             }
-            if let error { Text(error).foregroundStyle(.red) }
+            if let error { Text(error).foregroundStyle(DesktopTheme.danger) }
         }.formStyle(.grouped)
             .task { await refresh() }
             .task(id: backupStatus?.running == true || exportStatus?.running == true) {
@@ -118,7 +119,7 @@ struct DesktopBackupsView: View {
 
     @ViewBuilder private func generation(_ status: GenerationStatus?, label: String) -> some View {
         if status?.running == true { ProgressView("\(label) is being created on your library Mac…") }
-        else if let result = status?.lastResult, !result.ok { Text(result.error ?? "\(label) could not finish.").foregroundStyle(.red) }
+        else if let result = status?.lastResult, !result.ok { Text(result.error ?? "\(label) could not finish.").foregroundStyle(DesktopTheme.danger) }
     }
 
     private func refresh() async {

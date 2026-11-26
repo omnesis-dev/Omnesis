@@ -5,7 +5,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { z } from "zod";
 import { SCOPE_ADMIN } from "@omnesis/core";
-import { desktopRestoreDeletionPaused } from "./restore-review.js";
+import { registerVerifiedDesktopRestoreSnapshot } from "./snapshot-retention.js";
+import { assertDesktopProcessAuthority } from "./process-authority.js";
+import { desktopRestoreDeletionPaused, desktopRestoreRecordingsPaused } from "./restore-review.js";
 import { desktopRestoreModelsPaused } from "./restore-models.js";
 import { readDesktopRestoreFile } from "./restore-files.js";
 import { withDesktopRestoreOperationLease } from "./restore-owner.js";
@@ -37,6 +39,7 @@ export async function startCommittedDesktopRestore(
 ): Promise<boolean> {
   const record = await readDesktopRestoreIntent(profile);
   if (!record || !["committed", "starting"].includes(record.phase)) return false;
+  await assertDesktopProcessAuthority(profile);
   return withDesktopRestoreOperationLease(profile, signal, async () => {
     const retirement = await readDesktopRetirement(profile);
     if (retirement?.mode === "keep-data" && retirement.phase === "complete")
@@ -91,7 +94,7 @@ export async function startCommittedDesktopRestore(
     });
     const activeSignal = AbortSignal.any([signal, AbortSignal.timeout(180_000)]);
     try {
-      await operations.startDaemon(profile, attempt.authorization);
+      await operations.startDaemon(profile, attempt.authorization, activeSignal);
       for (;;) {
         activeSignal.throwIfAborted();
         try {
@@ -152,7 +155,8 @@ export async function startCommittedDesktopRestore(
         .parse(await operations.request(profile, "/admin/config", { signal: activeSignal }));
       if (
         !desktopRestoreModelsPaused(config.config) ||
-        !desktopRestoreDeletionPaused(config.config)
+        !desktopRestoreDeletionPaused(config.config) ||
+        !desktopRestoreRecordingsPaused(config.config, attempt.verification.recordings ?? 0)
       )
         throw new Error("Review model assignments before processing restored data");
       if (
@@ -183,11 +187,13 @@ export async function startCommittedDesktopRestore(
             current.targetKeyDigest !== protection.identity().keyDigest
           )
             throw new Error("The library protection changed during verification");
-          await writeDesktopRestoreIntent(profile, {
+          const complete = {
             ...current,
-            phase: "complete",
+            phase: "complete" as const,
             verification: { ...attempt.verification, verifiedAt: new Date().toISOString() },
-          });
+          };
+          await registerVerifiedDesktopRestoreSnapshot(profile, complete, activeSignal);
+          await writeDesktopRestoreIntent(profile, complete);
         } finally {
           protection.close();
         }

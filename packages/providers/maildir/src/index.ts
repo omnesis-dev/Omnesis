@@ -8,6 +8,7 @@ import { resolveAttachmentConfig } from "@omnesis/core";
 import {
   config as configSchema,
   defineSource,
+  probeRootReadAccess,
   expandHostPath,
   type SourceInstance,
 } from "@omnesis/source-sdk";
@@ -35,6 +36,21 @@ export default defineSource({
     "Email a mail tool such as mbsync or offlineimap, or Thunderbird's file-per-message store, keeps on this machine as a Maildir",
   provider: { id: "maildir", name: "Maildir" },
   authType: "local",
+  permissionRequirements: [
+    {
+      id: "selected-maildir",
+      kind: "selected-folder",
+      summary: "Allow access to the selected mail folder",
+      scope: "Selected mail source root",
+      blocking: true,
+      actions: [{ kind: "choose-folder" }, { kind: "retry-access" }],
+    },
+  ],
+  async probePermissionAccess({ params, signal }) {
+    return params.path
+      ? probeRootReadAccess({ signal, roots: [{ path: expandHostPath(params.path) }] })
+      : { status: "unavailable" };
+  },
   unitName: "emails",
   icon: maildirIcon,
   contract: {
@@ -156,6 +172,8 @@ export default defineSource({
       sync: (cursor, opts) => source.sync(cursor, opts),
       onResync: () => source.onResync(),
       dispose: () => source.dispose(),
+      probePermissionAccess: ({ signal }) =>
+        probeRootReadAccess({ signal, roots: [{ path: root }] }),
       probeReadAccess: ({ signal }) => probeMaildirReadAccess(root, signal),
       // Every change a mail tool makes is a file appearing, moving between
       // `new` and `cur`, being renamed with new flags or, for Thunderbird,

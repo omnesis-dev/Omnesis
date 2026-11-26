@@ -159,6 +159,7 @@ function RecordingList({ recordings }) {
           <span class="privacy-conversation-main">
             <strong>${recording.title}</strong>
             <span>${formatRecordedTime(recording.durationMs)} · ${chunkSummary(recording)}</span>
+            ${recording.reviewRequired === true && html`<small class="watch-indicator">Automatic work paused after restore</small>`}
             ${speakers
               ? html`<span class="watch-row-indicators">
                   <span class="watch-indicator">${speakers}</span>
@@ -656,6 +657,7 @@ function RecordingDetail({ id }) {
           Started ${formatPrivacyDate(Date.parse(recording.startedAt))} ·
           ${" "}${formatRecordedTime(recording.durationMs)} · ${chunkSummary(recording)}
         </p>
+        ${recording.reviewRequired === true && html`<small class="watch-indicator">Automatic work paused after restore</small>`}
       </div>
       <span class=${`privacy-item-status ${stateClass(recording.state)}`}>
         ${recordingStateLabel(recording.state)}

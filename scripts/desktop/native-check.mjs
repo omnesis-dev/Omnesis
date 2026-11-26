@@ -7,10 +7,12 @@ import { mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { prepareNodeTestFixture } from "./prepare-node-test-fixture.mjs";
+import { prepareCodexBackendTestFixture } from "./codex-backend-test-fixture.mjs";
 import { prepareCodexKeychainTestFixture } from "./prepare-codex-keychain-test-fixture.mjs";
 import { prepareAnalyticsNativeFixture } from "./analytics-native-fixture.mjs";
 import { fileURLToPath } from "node:url";
 import { isEntryScript } from "../lib/is-entry-script.mjs";
+import { preparePackageFixture } from "./package-fixture.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -22,10 +24,21 @@ export function nativeCheckOptions(args, env = process.env) {
   const [lane, ...flags] = args;
   if (
     !["logic", "test"].includes(lane) ||
-    flags.some((flag) => flag !== "--build-only") ||
-    (flags.length && (lane !== "test" || flags.length !== 1))
+    flags.some((flag) => !["--build-only", "--hosted-only", "--package"].includes(flag)) ||
+    (flags.length &&
+      (lane !== "test" ||
+        (flags.length !== 1 &&
+          !(
+            flags.length === 2 &&
+            new Set(flags).size === 2 &&
+            flags.includes("--build-only") &&
+            flags.includes("--package")
+          )))) ||
+    (flags.includes("--package") && !flags.includes("--build-only"))
   ) {
-    throw new Error("Usage: native-check.mjs <logic|test> [--build-only]");
+    throw new Error(
+      "Usage: native-check.mjs <logic|test> [--build-only [--package]|--hosted-only]",
+    );
   }
   const host = env.OMNESIS_EPIC_MACOS_HOST;
   if (!host || !/^[A-Za-z0-9][A-Za-z0-9._@:-]*$/.test(host)) {
@@ -42,26 +55,41 @@ export function nativeCheckOptions(args, env = process.env) {
     worktree,
     lane,
     buildOnly: flags.includes("--build-only"),
+    hostedOnly: flags.includes("--hosted-only"),
+    package: flags.includes("--package"),
     output: env.OMNESIS_MACOS_TEST_OUT,
   };
 }
 
 const claim = `set -eu
 python3 - "$1" <<'PY'
-import os, pathlib, sys
+import os, pathlib, stat, sys
 p = pathlib.Path(sys.argv[1])
 if str(p.resolve()) != str(p) or p == pathlib.Path.home() or str(p) == '/' or '_work' in p.parts:
     raise SystemExit('Refusing an unsafe desktop scratch directory')
 if (p / '.omnesis-primary').exists() or (p / '.git').exists():
     raise SystemExit('A checkout cannot be a desktop build scratch directory')
 marker = p / '.omnesis-desktop-scratch'
-if p.exists() and any(p.iterdir()) and (not marker.is_file() or marker.read_text() != 'desktop-native-v1\\n'):
-    raise SystemExit('Existing directory is not owned by desktop native checks')
-p.mkdir(mode=0o700, parents=True, exist_ok=True)
-if p.stat().st_uid != os.getuid() or p.stat().st_mode & 0o077:
+if p.exists() and (p.stat().st_uid != os.getuid() or p.stat().st_mode & 0o077):
     raise SystemExit('Desktop scratch directory must be private and owned by this user')
-marker.write_text('desktop-native-v1\\n')
-for name in ('macos', 'ios', 'evidence'):
+if marker.exists() or marker.is_symlink():
+    fd = os.open(marker, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.getuid() or os.read(fd, 64) != b'desktop-native-v1\\n':
+            raise SystemExit('Existing directory is not owned by desktop native checks')
+    finally:
+        os.close(fd)
+elif p.exists() and any(p.iterdir()):
+    raise SystemExit('Existing directory is not owned by desktop native checks')
+else:
+    p.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        os.write(fd, b'desktop-native-v1\\n')
+    finally:
+        os.close(fd)
+for name in ('macos', 'ios', 'evidence', 'package-source', 'package-cache'):
     if (p / name).is_symlink():
         raise SystemExit('Desktop scratch subdirectories cannot be symbolic links')
     (p / name).mkdir(mode=0o700, exist_ok=True)
@@ -77,7 +105,11 @@ else
   cd macos
   xcodegen generate
   action=test
-  if [ "$3" = yes ]; then action=build; fi
+  configuration=Debug
+  if [ "$3" = yes ]; then
+    action=build
+    configuration=Release
+  fi
   signing_allowed=YES
   signing_required=YES
   signing_identity=-
@@ -110,19 +142,28 @@ PYSCREEN
   trap collect_screenshots EXIT
   desktop_xcodebuild() {
     xcodebuild -project OmnesisDesktop.xcodeproj -scheme OmnesisDesktop \\
-    -configuration Debug -destination 'platform=macOS' -derivedDataPath build \\
+    -configuration "$configuration" -destination 'platform=macOS' -derivedDataPath build \\
+    -parallel-testing-enabled NO \\
     CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM='' \\
     CODE_SIGN_IDENTITY="$signing_identity" CODE_SIGNING_REQUIRED="$signing_required" \\
     CODE_SIGNING_ALLOWED="$signing_allowed" CODE_SIGN_INJECT_BASE_ENTITLEMENTS=YES "$@"
   }
   if [ "$action" = build ]; then
     desktop_xcodebuild -resultBundlePath "$result" build
-    .node-fixture/node .analytics-build-fixture/scripts/desktop/build-analytics.mjs \\
-      --cache "$PWD/../evidence/desktop-analytics" --sources "$PWD/.analytics-build-fixture/sources"
+    # Package preparation builds, verifies and qualifies the engine in its actual runtime stage.
+    if [ "$5" != yes ]; then
+      .node-fixture/node .analytics-build-fixture/scripts/desktop/build-analytics.mjs \\
+        --cache "$PWD/../evidence/desktop-analytics" --sources "$PWD/.analytics-build-fixture/sources"
+    fi
   else
     desktop_xcodebuild build-for-testing
     .node-fixture/node Tests/Support/normalize-test-runner-signature.mjs --products "$PWD/build/Build/Products/Debug"
-    desktop_xcodebuild -resultBundlePath "$result" test-without-building
+    if [ "$4" = yes ]; then
+      printf '%s\\n' 'Scope: hosted application integration; external UI runner is a separate check'
+      desktop_xcodebuild -resultBundlePath "$result" -only-testing:OmnesisDesktopTests test-without-building
+    else
+      desktop_xcodebuild -resultBundlePath "$result" test-without-building
+    fi
   fi
 fi
 `;
@@ -152,7 +193,11 @@ export async function prepareNativeNodeFixture(
 
 export async function prepareNativeCodexFixture(
   options,
-  { run = spawnSync, prepare = prepareCodexKeychainTestFixture } = {},
+  {
+    run = spawnSync,
+    prepare = prepareCodexKeychainTestFixture,
+    prepareBackend = prepareCodexBackendTestFixture,
+  } = {},
   sourceRoot = root,
 ) {
   const result = run("ssh", [options.host, "uname -sm"], {
@@ -164,11 +209,13 @@ export async function prepareNativeCodexFixture(
   const match =
     result.status === 0 ? /^Darwin (arm64|x86_64)$/.exec(String(result.stdout).trim()) : null;
   if (!match) throw new Error("The native Codex test architecture could not be determined");
-  return prepare({
+  const sdk = await prepare({
     architecture: match[1] === "arm64" ? "arm64" : "x64",
     output: join(sourceRoot, "macos/.codex-keychain-fixture"),
     cache: join(homedir(), ".cache", "omnesis-codex-keychain-test"),
   });
+  await prepareBackend({ output: join(sourceRoot, "macos/.codex-backend-fixture") });
+  return sdk;
 }
 
 export function runNativeCheck(options, run = spawnSync, sourceRoot = root) {
@@ -201,17 +248,39 @@ export function runNativeCheck(options, run = spawnSync, sourceRoot = root) {
     ".DS_Store",
   ];
   for (const directory of options.lane === "logic" ? ["macos"] : ["macos", "ios"]) {
+    process.stdout.write(`Synchronizing native build inputs: ${directory}\n`);
     exec("rsync", [
       "-a",
+      "--protocol=29",
+      "--numeric-ids",
       "--delete",
       ...exclusions.flatMap((value) => ["--exclude", value]),
       `${join(sourceRoot, directory)}/`,
       `${options.host}:${shellArgument(join(options.worktree, directory) + "/")}`,
     ]);
   }
+  if (options.package) {
+    process.stdout.write("Extracting verified public package build fixture\n");
+    remote(
+      `set -eu\ncd "$1"\nexec macos/.node-fixture/node macos/.package-build-fixture/extract.mjs --fixture macos/.package-build-fixture --out package-source/source\n`,
+      [options.worktree],
+    );
+  }
   let failure;
   try {
-    remote(check, [options.worktree, options.lane, options.buildOnly ? "yes" : "no"]);
+    remote(check, [
+      options.worktree,
+      options.lane,
+      options.buildOnly ? "yes" : "no",
+      options.hostedOnly ? "yes" : "no",
+      options.package ? "yes" : "no",
+    ]);
+    if (options.package) {
+      remote(
+        `set -eu\ncd "$1"\nexec macos/.node-fixture/node package-source/source/scripts/desktop/native-package.mjs --scratch "$PWD"\n`,
+        [options.worktree],
+      );
+    }
   } catch (error) {
     failure = error;
   }
@@ -240,6 +309,11 @@ if (isEntryScript(import.meta.url)) {
       await prepareAnalyticsNativeFixture({
         output: join(root, "macos/.analytics-build-fixture"),
         cache: join(homedir(), ".cache", "omnesis-desktop-analytics-sources"),
+      });
+    if (options.package)
+      await preparePackageFixture({
+        source: root,
+        output: join(root, "macos/.package-build-fixture"),
       });
     runNativeCheck(options);
   } catch (error) {

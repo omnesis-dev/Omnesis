@@ -101,6 +101,18 @@ posixTest("a claimed scratch cannot redirect source sync through a symbolic link
   expect(readFileSync(join(unrelated, "keep.txt"), "utf8")).toBe("unrelated data");
 });
 
+posixTest("scratch ownership markers are never followed or rewritten through aliases", () => {
+  const { options, root } = fixture();
+  mkdirSync(options.worktree, { mode: 0o700 });
+  const unrelated = join(root, "unrelated-marker");
+  writeFileSync(unrelated, "desktop-native-v1\n");
+  symlinkSync(unrelated, join(options.worktree, ".omnesis-desktop-scratch"));
+  const calls = [];
+  expect(() => runNativeCheck(options, runner(calls))).toThrow(/ssh failed/);
+  expect(calls).toHaveLength(1);
+  expect(readFileSync(unrelated, "utf8")).toBe("desktop-native-v1\n");
+});
+
 posixTest(
   "application checks sync shared Swift client code and keep build-only signing disabled",
   () => {
@@ -113,6 +125,8 @@ posixTest(
       'if [ "$action" = build ]; then\n    signing_allowed=NO',
     );
     expect(calls.at(-1).options.input).toContain('CODE_SIGN_IDENTITY="$signing_identity"');
+    expect(calls.at(-1).options.input).toContain("configuration=Release");
+    expect(calls.at(-1).options.input).toContain('-configuration "$configuration"');
   },
 );
 
@@ -124,6 +138,7 @@ posixTest("UI tests use ad-hoc Debug signing without a paid team identity", () =
   expect(script).toContain("signing_allowed=YES\n  signing_required=YES\n  signing_identity=-");
   expect(script).toContain("CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=''");
   expect(script).toContain("CODE_SIGN_INJECT_BASE_ENTITLEMENTS=YES");
+  expect(script).toContain("-parallel-testing-enabled NO");
   expect(script).toContain("--inspect-products");
   expect(script).toContain("test-runner-signature-after.json");
   expect(script.indexOf("desktop_xcodebuild build-for-testing")).toBeLessThan(
@@ -182,5 +197,139 @@ posixTest(
     expect(spawnSync("bash", ["-n", "-c", script], { encoding: "utf8" }).status).toBe(0);
     expect(script).toContain("trap collect_screenshots EXIT");
     expect(script).toContain('exit "$status"');
+  },
+);
+
+test("hosted-only diagnosis is an explicit mutually exclusive test scope", () => {
+  const env = {
+    OMNESIS_EPIC_MACOS_HOST: "fixture",
+    OMNESIS_EPIC_MACOS_DESKTOP_WORKTREE: "/tmp/fixture-native",
+  };
+  expect(nativeCheckOptions(["test", "--hosted-only"], env)).toMatchObject({
+    hostedOnly: true,
+    buildOnly: false,
+  });
+  expect(() => nativeCheckOptions(["logic", "--hosted-only"], env)).toThrow("Usage");
+  expect(() => nativeCheckOptions(["test", "--hosted-only", "--build-only"], env)).toThrow("Usage");
+});
+
+test("whole-package qualification requires the explicit Release build scope", () => {
+  const env = {
+    OMNESIS_EPIC_MACOS_HOST: "fixture",
+    OMNESIS_EPIC_MACOS_DESKTOP_WORKTREE: "/tmp/fixture-native",
+  };
+  expect(nativeCheckOptions(["test", "--build-only", "--package"], env)).toMatchObject({
+    package: true,
+    buildOnly: true,
+    hostedOnly: false,
+  });
+  for (const args of [
+    ["test", "--package"],
+    ["logic", "--package"],
+    ["test", "--hosted-only", "--package"],
+    ["test", "--build-only", "--package", "--package"],
+  ])
+    expect(() => nativeCheckOptions(args, env)).toThrow("Usage");
+});
+
+posixTest("package checks transfer the normalized fixture and extract before building", () => {
+  const { options } = fixture();
+  const calls = [];
+  runNativeCheck({ ...options, lane: "test", buildOnly: true, package: true }, runner(calls));
+  expect(calls.filter((call) => call.command === "rsync")).toHaveLength(2);
+  const extraction = calls.findIndex((call) =>
+    call.options.input?.includes("extract.mjs --fixture"),
+  );
+  const build = calls.findIndex((call) => call.options.input?.includes("swift test"));
+  expect(extraction).toBeGreaterThan(0);
+  expect(extraction).toBeLessThan(build);
+  expect(calls.at(-1).options.input).toContain(
+    "package-source/source/scripts/desktop/native-package.mjs",
+  );
+});
+
+posixTest(
+  "hosted-only execution records its scope and leaves the full UI runner as default",
+  () => {
+    const { options } = fixture();
+    const calls = [];
+    runNativeCheck({ ...options, lane: "test", hostedOnly: true }, runner(calls));
+    const script = calls.at(-1).options.input;
+    expect(calls.at(-1).args[1]).toMatch(/'no' 'yes' 'no'$/u);
+    expect(script).toContain('if [ "$4" = yes ]; then');
+    expect(script).toContain("-only-testing:OmnesisDesktopTests test-without-building");
+    expect(script).toContain(
+      'else\n      desktop_xcodebuild -resultBundlePath "$result" test-without-building',
+    );
+  },
+);
+
+posixTest.each([false, true])(
+  "emitted Release shell runs analytics once through the selected package path (%s)",
+  (packageMode) => {
+    const { options, root } = fixture();
+    const calls = [];
+    runNativeCheck(
+      { ...options, lane: "test", buildOnly: true, package: packageMode },
+      runner(calls),
+    );
+    const tools = join(root, "owned-tools.sh"),
+      log = join(root, "commands.log");
+    writeFileSync(
+      tools,
+      `xcodegen() { printf 'generate\\n' >> "$FIXTURE_LOG"; }
+xcodebuild() { printf 'xcode:%s\\n' "$*" >> "$FIXTURE_LOG"; }
+python3() { return 0; }
+`,
+      { mode: 0o600 },
+    );
+    const node = join(options.worktree, "macos/.node-fixture/node");
+    mkdirSync(join(options.worktree, "macos/.node-fixture"), { recursive: true, mode: 0o700 });
+    writeFileSync(
+      node,
+      `#!/bin/sh
+case "$1" in
+  *build-analytics.mjs) printf 'analytics\\n' >> "$FIXTURE_LOG" ;;
+  *native-package.mjs) printf 'package\\n' >> "$FIXTURE_LOG" ;;
+  *) exit 99 ;;
+esac
+`,
+      { mode: 0o700 },
+    );
+    const env = { PATH: "/usr/bin:/bin", HOME: root, BASH_ENV: tools, FIXTURE_LOG: log };
+    const check = calls.find(
+      (call) => call.command === "ssh" && call.options.input?.includes("swift test --package-path"),
+    );
+    expect(check).toBeDefined();
+    expect(check.args[1].endsWith(shellArgument(packageMode ? "yes" : "no"))).toBe(true);
+    const result = spawnSync("bash", ["-c", check.args[1]], {
+      env,
+      input: check.options.input,
+      encoding: "utf8",
+      timeout: 10000,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    const packageCall = calls.find(
+      (call) =>
+        call.command === "ssh" &&
+        call.options.input?.includes(
+          "exec macos/.node-fixture/node package-source/source/scripts/desktop/native-package.mjs",
+        ),
+    );
+    if (packageMode) {
+      expect(packageCall).toBeDefined();
+      const packaged = spawnSync("bash", ["-c", packageCall.args[1]], {
+        env,
+        input: packageCall.options.input,
+        encoding: "utf8",
+        timeout: 10000,
+      });
+      expect(packaged.status, packaged.stderr).toBe(0);
+    } else expect(packageCall).toBeUndefined();
+    const commands = readFileSync(log, "utf8").trim().split("\n");
+    expect(commands[0]).toBe("generate");
+    expect(commands[1]).toContain("-configuration Release");
+    expect(commands[1]).toContain(" build");
+    expect(commands.slice(2)).toEqual([packageMode ? "package" : "analytics"]);
   },
 );

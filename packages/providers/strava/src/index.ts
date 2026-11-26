@@ -76,6 +76,7 @@ export function verifyStravaAthlete(
 
 export default defineProvider<StravaContext>({
   provider: { id: "strava", name: "Strava" },
+  permissionRequirements: [],
   authType: "oauth",
   credentials: stravaCredentialsSpec,
 

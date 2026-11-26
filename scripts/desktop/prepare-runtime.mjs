@@ -21,7 +21,12 @@ import {
 } from "../runtime/stage-runtime.mjs";
 import { acquireNodeArchive, extractNodeArchive, NODE_RUNTIME } from "./node-runtime.mjs";
 import { inventoryBundle, machoArchitectures } from "./native-inventory.mjs";
-import { copyNodeTools, copyProductionDependencies } from "./runtime-assets.mjs";
+import {
+  assertRuntimeDependencyLinks,
+  createRuntimeDependencyPlan,
+  copyNodeTools,
+  copyProductionDependencies,
+} from "./runtime-assets.mjs";
 import { stageCodexNotices } from "./codex-notices.mjs";
 import { buildDesktopAnalytics } from "./build-analytics.mjs";
 import { stageDesktopAnalytics } from "./stage-analytics.mjs";
@@ -104,15 +109,25 @@ export async function prepareRuntime({
       stdio: "inherit",
     });
     const entries = localRuntimeClosure(["omnesis"]);
+    const dependencyPlan = createRuntimeDependencyPlan(
+      input,
+      entries,
+      JSON.parse(readFileSync(join(input, "package-lock.json"), "utf8")),
+    );
     if (build) compileRuntimeClosure(entries);
     const staged = stageRuntime(target, entries);
     ownsTarget = true;
-    copyProductionDependencies(join(input, "node_modules"), join(target, "node_modules"));
+    copyProductionDependencies(
+      join(input, "node_modules"),
+      join(target, "node_modules"),
+      dependencyPlan,
+    );
     for (const entry of entries) {
       const source = join(input, entry.dir, "node_modules");
       if (existsSync(source))
-        copyProductionDependencies(source, join(target, entry.dir, "node_modules"));
+        copyProductionDependencies(source, join(target, entry.dir, "node_modules"), dependencyPlan);
     }
+    assertRuntimeDependencyLinks(target, dependencyPlan);
     stageCodexNotices({
       target,
       architecture,
@@ -143,6 +158,7 @@ export async function prepareRuntime({
           nodeVersion: NODE_RUNTIME.version,
           codeUsageProtocol: 1,
           dataUsageProtocol: 1,
+          processAuthorityProtocol: 3,
           runtimeLauncher: "runtime-exec",
           ...staged,
           inventory,

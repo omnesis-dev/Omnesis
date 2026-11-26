@@ -93,7 +93,6 @@ targets:
     platform: macOS
     sources:
       - path: Tests/OmnesisDesktopTests
-      - path: Tests/DesktopCoreTests/CodexKeychainTests.swift
     dependencies:
       - target: OmnesisDesktop
       - package: DesktopCore
@@ -123,5 +122,7 @@ schemes:
         OmnesisBackground: all
     test:
       targets:
-        - OmnesisDesktopTests
-        - OmnesisDesktopUITests
+        - name: OmnesisDesktopTests
+          parallelizable: false
+        - name: OmnesisDesktopUITests
+          parallelizable: false

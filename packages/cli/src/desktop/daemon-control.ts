@@ -5,6 +5,8 @@ import { createHash } from "node:crypto";
 import { createConnection, createServer, type Socket } from "node:net";
 import { chmod, lstat, mkdir, rm, rmdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { z } from "zod";
+import type { DesktopCollectorRestartResult } from "./collector-restart.js";
 import type { DesktopProfile } from "./environment.js";
 
 const CONTROL_TIMEOUT_MS = 80_000;
@@ -24,7 +26,11 @@ export function desktopDaemonSocket(profile: DesktopProfile): string {
 
 export async function startDesktopDaemonControl(
   profile: DesktopProfile,
-  options: { stop(): void; drained: Promise<void> },
+  options: {
+    stop(): void;
+    drained: Promise<void>;
+    restartCollector?(signal: AbortSignal): Promise<DesktopCollectorRestartResult>;
+  },
 ): Promise<{ close(): Promise<void> }> {
   const path = desktopDaemonSocket(profile);
   const directory = dirname(path);
@@ -57,12 +63,27 @@ export async function startDesktopDaemonControl(
     let bytes = Buffer.alloc(0);
     let accepted = false;
     socket.on("data", (chunk: Buffer) => {
-      if (accepted || bytes.length + chunk.length > STOP_COMMAND.length) {
+      if (accepted || bytes.length + chunk.length > 256) {
         socket.destroy();
         return;
       }
       bytes = Buffer.concat([bytes, chunk]);
       if (!bytes.includes(10)) return;
+      const restart =
+        JSON.stringify({ command: "restartCollector", instance: profile.instance }) + "\n";
+      if (bytes.toString("utf8") === restart && options.restartCollector && !stopping) {
+        accepted = true;
+        const abort = new AbortController();
+        socket.once("close", () => abort.abort());
+        const operation = AbortSignal.any([abort.signal, AbortSignal.timeout(CONTROL_TIMEOUT_MS)]);
+        void Promise.resolve()
+          .then(() => options.restartCollector!(operation))
+          .then(
+            (result) => socket.end(JSON.stringify(result) + "\n"),
+            () => socket.end('{"error":"COLLECTOR_RESTART_UNAVAILABLE"}\n'),
+          );
+        return;
+      }
       if (bytes.toString("utf8") !== STOP_COMMAND) {
         socket.destroy();
         return;
@@ -142,4 +163,49 @@ export async function stopDesktopDaemon(
 }
 function hasCode(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
+}
+
+const collectorRestartSchema = z
+  .object({
+    kind: z.literal("desktopCollectorRestart"),
+    status: z.literal("ready"),
+    deviceId: z.string().uuid(),
+    permissionRecheckRequired: z.literal(true),
+  })
+  .strict();
+
+/** No daemon start, pairing or gateway restart is implicit in this request. */
+export async function restartDesktopCollector(
+  profile: DesktopProfile,
+  signal: AbortSignal,
+): Promise<DesktopCollectorRestartResult> {
+  signal.throwIfAborted();
+  const operation = AbortSignal.any([signal, AbortSignal.timeout(CONTROL_TIMEOUT_MS)]);
+  return new Promise((resolve, reject) => {
+    const socket = createConnection({ path: desktopDaemonSocket(profile), signal: operation });
+    let response = Buffer.alloc(0);
+    socket.once("connect", () =>
+      socket.write(
+        JSON.stringify({ command: "restartCollector", instance: profile.instance }) + "\n",
+      ),
+    );
+    socket.on("data", (chunk: Buffer) => {
+      if (response.length + chunk.length > 512) {
+        socket.destroy(new Error("Invalid collector restart response"));
+        return;
+      }
+      response = Buffer.concat([response, chunk]);
+    });
+    socket.once("end", () => {
+      socket.destroy();
+      try {
+        resolve(collectorRestartSchema.parse(JSON.parse(response.toString("utf8"))));
+      } catch {
+        reject(new Error("The owned collector did not confirm readiness; check collection again"));
+      }
+    });
+    socket.once("error", () =>
+      reject(new Error("The owned collector could not be reached; check collection again")),
+    );
+  });
 }

@@ -1827,6 +1827,8 @@ export function deriveRecordCitationFields(
  * correspond to one table — see `TableWrite`.
  */
 export interface StructuredSyncResult<TCursor extends SyncCursor = SyncCursor> {
+  /** Actual read access refusal, distinct from incomplete/corrupt enumeration. */
+  permissionDenied?: true;
   /**
    * The analytics tables this page writes: one, several, or none.
    *

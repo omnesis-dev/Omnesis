@@ -23,7 +23,10 @@ import {
   planDesktopUpdate,
   type DesktopUpdateMetadata,
 } from "./update-plan.js";
-import { verifyDesktopUpdateSnapshot } from "./update-snapshot.js";
+import {
+  retainDesktopUpdateBeforeReplacement,
+  registerVerifiedDesktopSnapshot,
+} from "./snapshot-retention.js";
 import { recoverDesktopUpdate } from "./update-recovery.js";
 import { runDesktopUpdateDataOperation } from "./update-data-operation.js";
 import {
@@ -305,6 +308,7 @@ export class DesktopUpdateController {
       const prior = await readDesktopUpdateState(this.profile);
       if (prior && !["verified", "complete", "resumed"].includes(prior.phase))
         throw new Error("Finish the pending update recovery first");
+      await retainDesktopUpdateBeforeReplacement(this.profile, prior, context.signal);
       if (release && current.active.epoch !== current.epoch)
         throw new Error("The active application changed");
       if (
@@ -439,13 +443,9 @@ export class DesktopUpdateController {
         throw new Error("The replacement application has not claimed and opened this library");
       if (!state.backup || !sameDesktopRoot(await desktopRootIdentity(this.profile), state.root))
         throw new Error("The replacement library or its recovery snapshot is unavailable");
-      await verifyDesktopUpdateSnapshot(this.profile, {
-        operationId: state.operationId,
-        manifestSha256: state.backup.manifestSha256,
-        signal,
-      });
-      signal.throwIfAborted();
       const complete = { ...state, phase: "complete" as const };
+      await registerVerifiedDesktopSnapshot(this.profile, complete, signal);
+      signal.throwIfAborted();
       await writeDesktopUpdateState(this.profile, complete);
       return this.result(complete);
     });

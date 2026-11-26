@@ -14,8 +14,8 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const CODEX_NOTICE_SOURCE = Object.freeze({
-  version: "0.169.0",
-  commit: "d32063f96c2dff1dc96af839b3952abb6acfeda4",
+  version: "0.171.0",
+  commit: "ccf9be8cc458bd6b8336fe84d68d8893f2691a5e",
   LICENSE: "d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc",
   NOTICE: "9d71575ecfd9a843fc1677b0efb08053c6ba9fd686a0de1a6f5382fd3c220915",
 });

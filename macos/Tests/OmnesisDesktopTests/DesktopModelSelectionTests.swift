@@ -40,6 +40,23 @@ final class DesktopModelSelectionTests: XCTestCase {
         XCTAssertEqual(DesktopModelSelection.choices(for: "embedder", overview: overview).map(\.id), ["saved-api/embed"])
     }
 
+    func testSavedSubscriptionCatalogDoesNotOverrideAdvertisedUnavailability() {
+        for status in ["unreachable", "probing", "ok"] {
+            let overview = ModelsOverview(assignmentDisplays: [:], capabilities: [], inference: InferenceOverview(
+                backends: [:],
+                codex: CodexBackendStatus(
+                    configured: true, status: status, loggedIn: true,
+                    runtime: CodexRuntimeStatus(supported: true), models: ["fictional-chat"],
+                    modelRoles: ["fictional-chat": ["agent"]]
+                ), assignments: [:]
+            ), catalog: [], installed: [])
+            XCTAssertEqual(
+                DesktopModelSelection.choices(for: "agent", overview: overview).map(\.id),
+                status == "ok" ? ["codex/fictional-chat"] : []
+            )
+        }
+    }
+
     func testOnlyActuallyInstalledLocalCatalogModelsCanBeReenabledWithoutDownloadingAnything() throws {
         let overview = ModelsOverview(
             assignmentDisplays: [:],

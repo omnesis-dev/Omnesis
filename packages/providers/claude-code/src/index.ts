@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import {
   defineSource,
+  probeRootReadAccess,
   config as configSchema,
   expandHostPath,
   type SourceInstance,
@@ -495,6 +496,25 @@ export default defineSource({
   name: "Claude Code Sessions",
   description: "Coding-agent conversations saved by Claude Code",
   provider: { id: "claude-code", name: "Claude Code" },
+  permissionRequirements: [
+    {
+      id: "conversation-folders",
+      kind: "selected-folder",
+      summary: "Allow access to selected conversation folders",
+      scope: "Selected conversation source roots",
+      blocking: true,
+      actions: [{ kind: "choose-folder" }, { kind: "retry-access" }],
+    },
+  ],
+  probePermissionAccess: ({ params, signal }) =>
+    probeRootReadAccess({
+      signal,
+      roots: [
+        {
+          path: sessionsPath(params.sessionsPath ? expandHostPath(params.sessionsPath) : undefined),
+        },
+      ],
+    }),
   authType: "local",
   unitName: "conversation days",
   primaryCount: "documents",

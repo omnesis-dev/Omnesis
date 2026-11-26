@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { desktopProfile } from "./environment.js";
 import {
+  restartDesktopCollector,
   desktopDaemonSocket,
   startDesktopDaemonControl,
   stopDesktopDaemon,
@@ -37,6 +38,51 @@ afterEach(async () => {
 });
 
 describe.skipIf(process.platform === "win32")("private desktop daemon control", () => {
+  test("collector-only request waits for readiness and cannot stop the daemon", async () => {
+    const profile = desktopProfile(home);
+    const requested = deferred(),
+      ready = deferred();
+    const stop = vi.fn();
+    control = await startDesktopDaemonControl(profile, {
+      stop,
+      drained: Promise.resolve(),
+      restartCollector: async () => {
+        requested.resolve();
+        await ready.promise;
+        return {
+          kind: "desktopCollectorRestart",
+          status: "ready",
+          deviceId: "00000000-0000-4000-8000-000000000004",
+          permissionRecheckRequired: true,
+        };
+      },
+    });
+    let done = false;
+    const pending = restartDesktopCollector(profile, signal()).then((result) => {
+      done = true;
+      return result;
+    });
+    await requested.promise;
+    expect(done).toBe(false);
+    ready.resolve();
+    expect(await pending).toMatchObject({ status: "ready", permissionRecheckRequired: true });
+    expect(stop).not.toHaveBeenCalled();
+  });
+
+  test("restart failure is bounded and does not expose callback errors", async () => {
+    const profile = desktopProfile(home);
+    control = await startDesktopDaemonControl(profile, {
+      stop: () => {},
+      drained: Promise.resolve(),
+      restartCollector: async () => {
+        throw new Error("fictional-private-detail");
+      },
+    });
+    await expect(restartDesktopCollector(profile, signal())).rejects.toThrow(
+      "did not confirm readiness",
+    );
+  });
+
   test("missing listener reports false without inspecting or signaling a recorded PID", async () => {
     expect(await stopDesktopDaemon(desktopProfile(home), signal())).toBe(false);
   });
@@ -124,3 +170,39 @@ describe.skipIf(process.platform === "win32")("private desktop daemon control", 
     expect(await readFile(target, "utf8")).toBe("unowned-target");
   });
 });
+
+test.skipIf(process.platform === "win32")(
+  "cancelled collector control waits cannot cancel another lifecycle or report ready",
+  async () => {
+    const profile = desktopProfile(home),
+      requested = deferred(),
+      cancelled = deferred();
+    const stop = vi.fn();
+    control = await startDesktopDaemonControl(profile, {
+      stop,
+      drained: Promise.resolve(),
+      restartCollector: async (operation) => {
+        requested.resolve();
+        await new Promise<void>((resolve) => {
+          operation.addEventListener(
+            "abort",
+            () => {
+              cancelled.resolve();
+              resolve();
+            },
+            { once: true },
+          );
+        });
+        throw new Error("interrupted");
+      },
+    });
+    const abort = new AbortController();
+    const pending = restartDesktopCollector(profile, abort.signal);
+    const rejected = expect(pending).rejects.toThrow("could not be reached");
+    await requested.promise;
+    abort.abort();
+    await rejected;
+    await cancelled.promise;
+    expect(stop).not.toHaveBeenCalled();
+  },
+);

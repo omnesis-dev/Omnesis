@@ -37,6 +37,7 @@ export type { GranolaNoteDetail } from "./types.js";
 
 export default defineProvider<GranolaContext>({
   provider: { id: "granola", name: "Granola" },
+  permissionRequirements: [],
   authType: "api-key",
   credentials: granolaCredentialsSpec,
 

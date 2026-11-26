@@ -113,6 +113,7 @@ export type {
 
 export default defineProvider<CoinbaseContext>({
   provider: { id: "coinbase", name: "Coinbase" },
+  permissionRequirements: [],
   authType: "api-key",
   credentials: coinbaseCredentialsSpec,
   broker: coinbaseBrokerSpec,

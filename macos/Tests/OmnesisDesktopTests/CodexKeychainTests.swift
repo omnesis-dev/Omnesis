@@ -4,6 +4,7 @@
 import CryptoKit
 import Darwin
 import Foundation
+import Security
 import XCTest
 
 final class CodexKeychainTests: XCTestCase {
@@ -51,27 +52,43 @@ final class CodexKeychainTests: XCTestCase {
         for home in [first, second] {
             try FileManager.default.createDirectory(at: home, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         }
-        let account = namespace(first), other = namespace(second)
+        // Match Rust std::fs::canonicalize using POSIX realpath, independently of URL normalization.
+        let firstCanonical = try canonicalPath(first)
+        XCTAssertEqual(try canonicalPath(URL(fileURLWithPath: firstCanonical)), firstCanonical)
+        let account = try namespace(first), other = try namespace(second)
         let service = ["Codex", "Auth"].joined(separator: " ")
-        func security(_ command: String, _ selected: String) throws -> Int32 {
-            try run(URL(fileURLWithPath: "/usr/bin/security"), [command, "-a", selected, "-s", service], home: root)
+        var explicitKeychainPath: String?
+        func security(_ command: String, _ selected: String, explicit: Bool = false) throws -> Int32 {
+            var arguments = [command, "-a", selected, "-s", service]
+            if explicit { try arguments.append(XCTUnwrap(explicitKeychainPath)) }
+            return try run(URL(fileURLWithPath: "/usr/bin/security"), arguments, home: root)
         }
+        var userKeychain: SecKeychain?
+        guard SecKeychainCopyDomainDefault(.user, &userKeychain) == errSecSuccess,
+              let selectedKeychain = userKeychain else { throw Failure.scopeUnavailable }
+        var pathBytes = [CChar](repeating: 0, count: 4096)
+        var pathLength = UInt32(pathBytes.count - 1)
+        guard SecKeychainGetPath(selectedKeychain, &pathLength, &pathBytes) == errSecSuccess else {
+            throw Failure.scopeUnavailable
+        }
+        explicitKeychainPath = String(cString: pathBytes)
+        func nativeMetadataStatus(_ selected: String) -> OSStatus {
+            var item: SecKeychainItem?
+            return service.withCString { serviceBytes in
+                selected.withCString { accountBytes in
+                    SecKeychainFindGenericPassword(
+                        selectedKeychain, UInt32(service.utf8.count), serviceBytes,
+                        UInt32(selected.utf8.count), accountBytes, nil, nil, &item
+                    )
+                }
+            }
+        }
+        guard nativeMetadataStatus(account) == errSecItemNotFound,
+              nativeMetadataStatus(other) == errSecItemNotFound else { throw Failure.scopeUnavailable }
         // Existing or unreadable scopes are never overwritten, adopted, or deleted.
         guard try security("find-generic-password", account) == 44,
               try security("find-generic-password", other) == 44 else { throw Failure.scopeUnavailable }
         XCTAssertNotEqual(account, other)
-        var mayHaveCreated = false
-        defer {
-            var absent = !mayHaveCreated
-            if mayHaveCreated {
-                do {
-                    let deleted = try security("delete-generic-password", account)
-                    if deleted == 0 || deleted == 44 { absent = try security("find-generic-password", account) == 44 }
-                } catch { absent = false }
-            }
-            if absent { try? FileManager.default.removeItem(at: root) }
-            else { XCTFail("The owned dummy Keychain scope could not be confirmed removed; its private fixture folder was retained.") }
-        }
         let policy = [
             "-c",
             "cli_auth_credentials_store=\"keyring\"",
@@ -84,6 +101,41 @@ final class CodexKeychainTests: XCTestCase {
             "-c",
             "otel.log_user_prompt=false",
         ]
+        var mayHaveCreated = false
+        defer {
+            var absent = !mayHaveCreated
+            if mayHaveCreated {
+                do {
+                    // Vendor status independently checks the same namespace used by its writer.
+                    // A security-tool not-found result alone cannot establish vendor absence.
+                    let loggedOut = try run(codex, ["logout"] + policy, home: first)
+                    let vendorAbsent = try run(codex, ["login", "status"] + policy, home: first) == 1
+                    let deleted = try security("delete-generic-password", account)
+                    let cliAbsent = try security("find-generic-password", account) == 44
+                    absent = loggedOut == 0 && vendorAbsent && (deleted == 0 || deleted == 44)
+                        && cliAbsent && nativeMetadataStatus(account) == errSecItemNotFound
+                } catch { absent = false }
+            }
+            if absent { try? FileManager.default.removeItem(at: root) }
+            else { XCTFail("The owned dummy Keychain scope could not be confirmed removed; its private fixture folder was retained.") }
+        }
+        let receipt = try JSONSerialization.data(withJSONObject: [
+            "format": 1, "owner": "omnesis-desktop-keychain-fixture", "phase": "cleanup-pending",
+            "home": firstCanonical, "account": account, "service": service,
+        ], options: [.sortedKeys])
+        let receiptURL = root.appendingPathComponent("cleanup-pending.json")
+        guard FileManager.default.createFile(
+            atPath: receiptURL.path,
+            contents: receipt,
+            attributes: [.posixPermissions: 0o600]
+        ) else { throw Failure.fixtureInvalid }
+        let receiptHandle = try FileHandle(forWritingTo: receiptURL)
+        try receiptHandle.synchronize()
+        try receiptHandle.close()
+        let directory = open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+        guard directory >= 0 else { throw Failure.fixtureInvalid }
+        defer { close(directory) }
+        guard fsync(directory) == 0 else { throw Failure.fixtureInvalid }
         let dummy = "omnesis-fixture-not-a-credential-" + UUID().uuidString
         mayHaveCreated = true
         // Upstream's pinned API-key path saves locally; authentication happens only on a later request.
@@ -91,7 +143,21 @@ final class CodexKeychainTests: XCTestCase {
         guard try run(codex, ["login", "--with-api-key"] + policy, home: first, input: dummy + "\n", classifyFailure: true) == 0 else {
             throw Failure.keychainRefused
         }
-        XCTAssertEqual(try security("find-generic-password", account), 0)
+        XCTAssertEqual(
+            nativeMetadataStatus(account),
+            errSecSuccess,
+            "The explicit User-domain metadata query must find the vendor-created account"
+        )
+        XCTAssertEqual(
+            try security("find-generic-password", account, explicit: true),
+            0,
+            "The security tool must find the same account in the explicit vendor User-domain keychain"
+        )
+        XCTAssertEqual(
+            try security("find-generic-password", account),
+            0,
+            "Default search must agree before it can authorize absence during removal"
+        )
         XCTAssertEqual(try security("find-generic-password", other), 44)
         XCTAssertEqual(try run(codex, ["login", "status"] + policy, home: first), 0)
         XCTAssertEqual(try run(codex, ["login", "status"] + policy, home: second), 1)
@@ -117,8 +183,15 @@ final class CodexKeychainTests: XCTestCase {
         XCTAssertEqual(try security("find-generic-password", other), 44)
     }
 
-    private func namespace(_ home: URL) -> String {
-        "cli|" + String(SHA256.hash(data: Data(home.resolvingSymlinksInPath().path.utf8))
+    private func canonicalPath(_ home: URL) throws -> String {
+        guard let canonical = realpath(home.path, nil) else { throw Failure.fixtureInvalid }
+        defer { free(canonical) }
+        return String(cString: canonical)
+    }
+
+    private func namespace(_ home: URL) throws -> String {
+        // Foundation may shorten /private/var back to /var; Rust hashes POSIX realpath.
+        try "cli|" + String(SHA256.hash(data: Data(canonicalPath(home).utf8))
             .map { String(format: "%02x", $0) }.joined().prefix(16))
     }
 

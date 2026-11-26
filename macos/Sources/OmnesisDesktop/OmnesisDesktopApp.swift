@@ -4,6 +4,10 @@
 import AppKit
 import SwiftUI
 
+enum DesktopWindowIdentity: String, Codable, Hashable {
+    case main
+}
+
 @main
 struct OmnesisDesktopApp: App {
     @NSApplicationDelegateAdaptor(DesktopApplicationDelegate.self) private var applicationDelegate
@@ -11,40 +15,43 @@ struct OmnesisDesktopApp: App {
     @Environment(\.openWindow) private var openWindow
 
     var body: some Scene {
-        WindowGroup("Omnesis", id: "main") {
+        WindowGroup("Omnesis", id: "main", for: DesktopWindowIdentity.self) { _ in
             DesktopRootView().environment(store).frame(minWidth: 860, minHeight: 600)
                 .onAppear { applicationDelegate.store = store }
-        }
-        .defaultSize(width: 1080, height: 740)
-        .commands {
-            CommandGroup(after: .appSettings) {
-                Button("Remove Omnesis from This Mac…") {
-                    store.removalPlan = nil
-                    store.removalOutcome = nil
-                    store.presentRemoval = true
-                    openWindow(id: "main")
-                    NSApp.activate(ignoringOtherApps: true)
-                }.disabled(store.busy)
+        } defaultValue: { .main }
+            .defaultSize(width: 1080, height: 740)
+            .commands {
+                CommandGroup(after: .appSettings) {
+                    Button("Remove Omnesis from This Mac…") {
+                        store.removalPlan = nil
+                        store.removalOutcome = nil
+                        store.presentRemoval = true
+                        openWindow(id: "main", value: DesktopWindowIdentity.main)
+                        NSApp.activate(ignoringOtherApps: true)
+                    }.disabled(store.busy)
+                }
+                CommandGroup(replacing: .newItem) {
+                    Button("New Conversation") {
+                        store.destination = .ask
+                        DesktopActionRouter.shared.newConversation = UUID()
+                        openWindow(id: "main", value: DesktopWindowIdentity.main)
+                    }.keyboardShortcut("n")
+                }
             }
-            CommandGroup(replacing: .newItem) {
-                Button("New Conversation") {
-                    store.destination = .ask
-                    DesktopActionRouter.shared.newConversation = UUID()
-                    openWindow(id: "main")
-                }.keyboardShortcut("n")
-            }
-        }
         Settings { DesktopSettingsView().environment(store).frame(width: 720, height: 640) }
         MenuBarExtra("Omnesis", image: "OmnesisMark") {
             VStack(alignment: .leading, spacing: 14) {
-                Label(store.state.statusLabel, systemImage: store.state.canOpenLibrary ? "checkmark.shield" : "clock")
+                Label(store.menuStatusLabel, systemImage: store.requiredSetupReady ? "checkmark.shield" : "checklist")
                     .font(.headline)
                 if let message = store.state.message { Text(message).font(.caption).foregroundStyle(.secondary) }
                 Divider()
                 menuButton("Ask Omnesis", destination: .ask)
                 menuButton("Search", destination: .search)
                 menuButton("Sources", destination: .sources)
-                Button("Open Omnesis") { openWindow(id: "main")
+                if store.state.canOpenLibrary, !store.requiredSetupReady {
+                    menuButton("Review setup", destination: .setup)
+                }
+                Button("Open Omnesis") { openWindow(id: "main", value: DesktopWindowIdentity.main)
                     NSApp.activate(ignoringOtherApps: true)
                 }
                 SettingsLink { Text("Settings…") }
@@ -57,7 +64,7 @@ struct OmnesisDesktopApp: App {
     private func menuButton(_ label: String, destination: DesktopStore.Destination) -> some View {
         Button(label) {
             store.destination = destination
-            openWindow(id: "main")
+            openWindow(id: "main", value: DesktopWindowIdentity.main)
             NSApp.activate(ignoringOtherApps: true)
         }.disabled(!store.state.canOpenLibrary)
     }
@@ -65,51 +72,137 @@ struct OmnesisDesktopApp: App {
 
 struct DesktopRootView: View {
     @Environment(DesktopStore.self) private var store
+    @Environment(\.desktopContrast) private var contrast
+    @State private var columns = NavigationSplitViewVisibility.all
+    @State private var hadVerifiedSetup = false
+    private var accessHealth: DesktopSourceHealthMonitor {
+        store.collectionHealth
+    }
+
+    private var accessIssues: [DesktopCollectionAccessIssue] {
+        DesktopCollectionAccessIssue.resolve(sources: store.sources, devices: store.devices, statuses: accessHealth.statuses)
+    }
+
     var body: some View {
         @Bindable var store = store
-        NavigationSplitView {
-            List(selection: $store.destination) {
-                ForEach(DesktopStore.Destination.allCases) { item in
-                    Label(item.rawValue, systemImage: item.symbol).tag(item)
-                        .disabled(!store.state.canOpenLibrary && item != .setup)
-                }
-            }.navigationTitle("Omnesis")
-                .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 280)
-                .safeAreaInset(edge: .bottom) {
-                    Label(store.state.statusLabel, systemImage: store.state.canOpenLibrary ? "checkmark.shield" : "clock")
-                        .font(.caption).foregroundStyle(.secondary).padding()
-                }
-        } detail: {
-            VStack(spacing: 0) {
-                if let failure = store.failure {
-                    HStack {
-                        Image(systemName: "exclamationmark.triangle")
-                        Text(failure).textSelection(.enabled)
-                        Spacer()
-                        Button("Retry") { store.start() }
-                    }.padding().background(.orange.opacity(0.12)).accessibilityIdentifier("runtime-error")
-                }
-                if store.state.canOpenLibrary {
-                    switch store.destination ?? .ask {
-                    case .ask: DesktopAskView()
-                    case .search: DesktopSearchView()
-                    case .sources: DesktopSourcesView()
-                    case .devices: DesktopDevicesView()
-                    case .assistants: DesktopAssistantsView()
-                    case .setup: DesktopSetupChecklist()
+        VStack(spacing: 0) {
+            prerequisiteBanners
+            Group {
+                if store.state.canOpenLibrary { libraryNavigation }
+                else {
+                    VStack(spacing: 0) {
+                        failureBanner
+                        DesktopOnboardingView()
                     }
-                } else {
-                    DesktopOnboardingView()
                 }
             }
         }
-        .sheet(isPresented: $store.presentRecovery) { DesktopRecoveryView().environment(store) }
-        .sheet(isPresented: $store.presentRemoval) { DesktopRemovalView().environment(store) }
-        .sheet(item: $store.interaction) { interaction in
+        .omnesisSheet(isPresented: $store.presentAccess, onDismiss: { store.accessFocus = nil }) { DesktopAccessCoach().environment(store) }
+        .omnesisSheet(isPresented: $store.presentRecovery) { DesktopRecoveryView().environment(store) }
+        .omnesisSheet(isPresented: $store.presentRemoval) { DesktopRemovalView().environment(store) }
+        .omnesisSheet(item: $store.interaction) { interaction in
             RuntimeInteractionView(interaction: interaction).environment(store)
         }
         .onChange(of: DesktopActionRouter.shared.newConversation) {
             store.destination = .ask
+        }
+        .onChange(of: store.requiredSetupReady) { if store.requiredSetupReady { hadVerifiedSetup = true } }
+        .omnesisTheme().omnesisWindowChrome()
+    }
+
+    private var prerequisiteBanners: some View {
+        VStack(spacing: 0) {
+            if store.state.canOpenLibrary, !store.requiredSetupReady, store.requiredSetupNeedsAction || !hadVerifiedSetup {
+                HStack {
+                    Label(
+                        store.requiredSetupNeedsAction ? "Required setup needs attention" : "Checking required settings",
+                        systemImage: "checklist"
+                    ).font(.callout.weight(.medium)).accessibilityIdentifier("required-setup-label")
+                    Spacer()
+                    Button("Review setup") { store.destination = .setup }.buttonStyle(DesktopButtonStyle())
+                        .accessibilityIdentifier("required-setup-review")
+                }.padding(.horizontal, 20).padding(.vertical, 10).background(DesktopTheme.panel)
+                    .accessibilityElement(children: .contain).accessibilityIdentifier("required-setup-banner")
+            }
+            if let issue = accessIssues.first {
+                HStack(spacing: 14) {
+                    Image(systemName: "lock.trianglebadge.exclamationmark")
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("\(issue.account) needs attention on \(issue.computer)").font(.callout.weight(.semibold))
+                        Text(accessHealth
+                            .failure == nil ?
+                            "Your indexed information is kept. Review the affected source and computer before collecting again." :
+                            "The last collection reported an access problem. Its current status could not be refreshed.")
+                            .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                    }
+                    Spacer()
+                    Button(issue.target == nil ? "Review sources" : "Review access") {
+                        if let target = issue.target { store.accessFocus = target
+                            store.presentAccess = true
+                        } else { store.destination = .sources }
+                    }.buttonStyle(DesktopButtonStyle())
+                }.padding(16).background(DesktopTheme.raised)
+            }
+        }
+    }
+
+    private var libraryNavigation: some View {
+        @Bindable var store = store
+        return NavigationSplitView(columnVisibility: $columns) {
+            VStack(alignment: .leading, spacing: 20) {
+                HStack(spacing: 12) {
+                    DesktopBrandMark(size: 30)
+                    Text("Omnesis").font(.system(size: 18, weight: .semibold)).accessibilityIdentifier("library-brand-title")
+                    Spacer()
+                }.padding(.horizontal, 20).padding(.top, 28)
+                List(selection: $store.destination) {
+                    ForEach(DesktopStore.Destination.allCases) { item in
+                        Label(item.rawValue, systemImage: item.symbol)
+                            .font(.system(size: 14, weight: .medium)).padding(.vertical, 5).tag(item)
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(store.destination == item ? DesktopTheme.selected : Color.clear)
+                            .overlay(alignment: .leading) {
+                                if store.destination == item {
+                                    Capsule().fill(DesktopTheme.primary).frame(
+                                        width: contrast == .increased ? 4 : 3,
+                                        height: contrast == .increased ? 22 : 16
+                                    )
+                                    .offset(x: -10)
+                                }
+                            }
+                    }
+                }.listStyle(.sidebar).scrollContentBackground(.hidden)
+                Label(store.state.statusLabel, systemImage: "checkmark.shield")
+                    .font(.caption.weight(.medium)).foregroundStyle(DesktopTheme.teal)
+                    .padding(.horizontal, 20).padding(.bottom, 24).frame(maxWidth: .infinity, alignment: .leading)
+            }.frame(maxHeight: .infinity)
+                .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 260)
+                .background(DesktopTheme.sidebar)
+        } detail: {
+            VStack(spacing: 0) {
+                failureBanner
+                switch store.destination ?? .ask {
+                case .ask: DesktopAskView()
+                case .search: DesktopSearchView()
+                case .sources: DesktopSourcesView()
+                case .devices: DesktopDevicesView()
+                case .assistants: DesktopAssistantsView()
+                case .setup: DesktopSetupChecklist()
+                }
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(DesktopTheme.canvas)
+        }.navigationSplitViewStyle(.balanced).navigationTitle("Omnesis")
+    }
+
+    @ViewBuilder
+    private var failureBanner: some View {
+        if let failure = store.failure {
+            HStack {
+                Image(systemName: "exclamationmark.triangle")
+                Text(failure).textSelection(.enabled)
+                Spacer()
+                Button("Retry") { store.start() }
+            }.padding().background(.orange.opacity(0.12)).accessibilityIdentifier("runtime-error")
         }
     }
 }

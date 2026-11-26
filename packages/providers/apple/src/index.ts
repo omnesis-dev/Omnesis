@@ -11,6 +11,7 @@ import {
   resolveAttachmentConfig,
 } from "@omnesis/core";
 import { defineProvider } from "@omnesis/source-sdk";
+import { appleStorePermissions } from "./permissions.js";
 import { unavailableStorePage } from "./store-unavailable.js";
 import { throwOnOpenFailure } from "./db-helpers/internal.js";
 import { AppleProvider } from "./provider.js";
@@ -28,6 +29,7 @@ import {
   REMINDERS_DIR,
   IMESSAGE_DB_PATH,
   CONTACTS_DB_PATH,
+  CONTACTS_DIR,
   CALENDAR_DB_PATH,
   CALL_LOG_DB_PATH,
   VOICEMAIL_DB_PATH,
@@ -239,6 +241,9 @@ export default defineProvider<AppleContext>({
   sources: [
     {
       id: "apple-notes",
+      ...appleStorePermissions("Selected Notes store", ({ signal }) =>
+        appleFileReadAccess(NOTES_DB_PATH)({ signal }),
+      ),
       name: "Apple Notes",
       description: "Notes from Apple Notes app",
       unitName: "notes",
@@ -272,6 +277,9 @@ export default defineProvider<AppleContext>({
     },
     {
       id: "apple-reminders",
+      ...appleStorePermissions("Selected Reminders stores", ({ signal }) =>
+        probeAppleStoresReadAccess(REMINDERS_DIR, "reminders", signal),
+      ),
       name: "Apple Reminders",
       description: "Tasks and reminders from Apple Reminders",
       unitName: "reminders",
@@ -358,6 +366,9 @@ export default defineProvider<AppleContext>({
     },
     {
       id: "apple-imessage",
+      ...appleStorePermissions("Selected Messages store", ({ signal }) =>
+        appleFileReadAccess(IMESSAGE_DB_PATH)({ signal }),
+      ),
       name: "Apple iMessage",
       description: "Messages from iMessage",
       unitName: "messages",
@@ -417,6 +428,9 @@ export default defineProvider<AppleContext>({
     },
     {
       id: "apple-contacts",
+      ...appleStorePermissions("Selected Contacts stores", ({ signal }) =>
+        probeAppleStoresReadAccess(CONTACTS_DIR, "contacts", signal),
+      ),
       // See #78 — Contact ZUNIQUEID values are host-local even for the
       // same iCloud address book. Joining replicas would duplicate every
       // logical person.
@@ -459,6 +473,9 @@ export default defineProvider<AppleContext>({
     },
     {
       id: "apple-calendar",
+      ...appleStorePermissions("Selected Calendar store", ({ signal }) =>
+        appleFileReadAccess(CALENDAR_DB_PATH)({ signal }),
+      ),
       // See #78 — CalendarItem.UUID is host-local across macOS replicas.
       // Keep this exclusive until the provider owns a stable cross-host key.
       multiDevice: { mode: "exclusive" },
@@ -501,6 +518,9 @@ export default defineProvider<AppleContext>({
     },
     {
       id: "apple-call-log",
+      ...appleStorePermissions("Selected call history store", ({ signal }) =>
+        appleFileReadAccess(CALL_LOG_DB_PATH)({ signal }),
+      ),
       name: "Apple Call Log",
       description: "Phone and FaceTime calls (macOS iCloud call-history sync)",
       unitName: "calls",
@@ -541,6 +561,11 @@ export default defineProvider<AppleContext>({
     },
     {
       id: "apple-voicemail",
+      ...appleStorePermissions(
+        "Selected voicemail store",
+        ({ signal }) => appleFileReadAccess(VOICEMAIL_DB_PATH, false)({ signal }),
+        false,
+      ),
       name: "Apple Voicemail",
       description: "Carrier voicemail transcripts synchronized by macOS Phone",
       unitName: "voicemails",

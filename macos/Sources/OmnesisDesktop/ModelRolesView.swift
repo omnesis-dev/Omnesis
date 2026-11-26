@@ -8,14 +8,22 @@ struct DesktopModelRolesView: View {
     let overview: ModelsOverview
     let api: DesktopAPI
     let updated: (ModelsOverview) -> Void
+    var reviewingRestoredLibrary = false
     var body: some View {
         Section("Choose which models to use") {
             Text(
-                "Connections and keys can stay saved while every task is disabled. Choose each model deliberately after restoring a backup."
+                reviewingRestoredLibrary
+                    ? "Your model connections were kept. Choose which models may use your restored information; nothing is turned back on automatically."
+                    : "Start with a model for questions and answers. You can leave the other model choices unchanged."
             )
             .foregroundStyle(.secondary)
-            ForEach(overview.capabilities.filter { !$0.experimental && $0.configurableOnDevice }) { capability in
+            ForEach(overview.capabilities.filter { !$0.experimental && $0.configurableOnDevice && $0.role == "agent" }) { capability in
                 DesktopModelRoleRow(capability: capability, overview: overview, api: api, updated: updated)
+            }
+            DisclosureGroup("Other model choices") {
+                ForEach(overview.capabilities.filter { !$0.experimental && $0.configurableOnDevice && $0.role != "agent" }) { capability in
+                    DesktopModelRoleRow(capability: capability, overview: overview, api: api, updated: updated)
+                }
             }
         }
     }
@@ -45,10 +53,10 @@ private struct DesktopModelRoleRow: View {
                     .available {
                     Text("This model is currently unavailable. Check its connection or choose another model.").foregroundStyle(.orange)
                 }
-            } else { Text("Disabled").foregroundStyle(.secondary) }
+            } else { Text("Not in use").foregroundStyle(.secondary) }
             Picker("Model for \(capability.title)", selection: $selection) {
                 Text("Choose a model").tag("")
-                Text("Disable this task").tag("disabled")
+                Text("Do not use a model for this").tag("disabled")
                 ForEach(choices) { choice in Text(choice.title).tag(choice.id) }
             }
             Button("Save selection") {
@@ -59,7 +67,7 @@ private struct DesktopModelRoleRow: View {
             }.disabled(loading || selection.isEmpty)
             if loading { ProgressView("Saving selection…") }
             if let notice { Text(notice).font(.callout).foregroundStyle(.secondary) }
-            if let error { Text(error).foregroundStyle(.red) }
+            if let error { Text(error).foregroundStyle(DesktopTheme.danger) }
         }.padding(.vertical, 8)
             .confirmationDialog("Use a model outside your library Mac?", isPresented: Binding(
                 get: { pending != nil }, set: { if !$0 { pending = nil } }

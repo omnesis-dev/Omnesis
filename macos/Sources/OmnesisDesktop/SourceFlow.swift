@@ -1,15 +1,35 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import DesktopCore
 import Foundation
 import Observation
 
 @MainActor @Observable
 final class DesktopSourceFlow {
-    let descriptor: DesktopDescriptor
+    private(set) var descriptor: DesktopDescriptor
+    let advertisedHosts: [DesktopDescriptor.Host]
+    private(set) var descriptorDeviceId: String?
+    private(set) var needsDescriptorReview = false
+    var isCurrentAPI: (() -> Bool)?
     let api: DesktopAPI
-    var deviceId: String
-    var params: [String: String] = [:]
+    var deviceId: String {
+        didSet {
+            if oldValue != deviceId {
+                generation += 1
+                busy = false
+                descriptorDeviceId = nil
+                observation?.cancel()
+                observation = nil
+                invalidateCollectionAccess()
+            }
+        }
+    }
+
+    var params: [String: String] = [:] {
+        didSet { if oldValue != params { invalidateCollectionAccess() } }
+    }
+
     var credentials: [String: String] = [:]
     var accounts: [String] = []
     var selectedAccounts: Set<String> = []
@@ -25,30 +45,123 @@ final class DesktopSourceFlow {
     var notices: [AuthSnapshot.Notice] = []
     var pendingMove: DesktopSourceSettingsSnapshot?
     var keptPausedAfterMove = false
+    let access = DesktopCollectionAccessFlow()
+    var needsAccess = false
+    private var unverifiedAccessChoices: Set<String> = []
     let movingSource: DesktopSource?
     private var processedAccounts: Set<String> = []
     private var moveAttemptedAccounts: Set<String> = []
     private let existingAccountId: String?
+    private let targetHostId: String?
+    private let repairSourceId: String?
     private var credentialsCollected = false
     private var sharedCredentialsSaved = false
+    private var freshAccountRequested = false
     private var generation = 0
     private var retryAvailableAt: Date?
     private var observation: Task<Void, Never>?
+    private var presentationCleanup: Task<Void, Never>?
 
     init(
         descriptor: DesktopDescriptor,
         api: DesktopAPI,
         accountId: String? = nil,
         hostId: String? = nil,
-        movingSource: DesktopSource? = nil
+        movingSource: DesktopSource? = nil,
+        repairSourceId: String? = nil
     ) {
         self.descriptor = descriptor
+        advertisedHosts = descriptor.devices ?? []
         self.api = api
         existingAccountId = accountId
+        targetHostId = hostId
         self.movingSource = movingSource
+        self.repairSourceId = repairSourceId
         let hosts = descriptor.devices ?? []
-        deviceId = hosts.first(where: { $0.id == hostId })?.id ?? hosts.first(where: { $0.id == api.connection.collectorDeviceId })?
-            .id ?? hosts.first?.id ?? ""
+        if let hostId {
+            // An explicitly targeted member must never turn into a sibling's sign-in.
+            deviceId = hosts.contains(where: { $0.id == hostId }) ? hostId : ""
+        } else {
+            deviceId = hosts.first(where: { $0.id == api.connection.collectorDeviceId })?.id ?? hosts.first?.id ?? ""
+        }
+    }
+
+    private func requireRepairTarget(_ current: Int) async throws {
+        if let repairSourceId { try await api.requireSourceRepair(repairSourceId, deviceId: deviceId) }
+        try check(current)
+    }
+
+    private var selectedParams: [String: String] {
+        let names = Set((descriptor.params ?? []).map(\.name))
+        return params.filter { names.contains($0.key) }
+    }
+
+    private var selectedCredentials: [String: String] {
+        let names = Set((descriptor.credentials?.fields ?? []).map(\.name))
+        return credentials.filter { names.contains($0.key) }
+    }
+
+    private func bindSelectedDescriptor(_ current: Int, requireUnchanged: Bool = false) async throws {
+        try check(current)
+        let selected = deviceId
+        let roster = try await api.devices()
+        try check(current)
+        guard selected == deviceId, roster.contains(where: { $0.id == selected && $0.revokedAt == nil && $0.needsPairing != true }) else {
+            throw DesktopAPIError
+                .message("The selected computer is no longer available for this source. Review its connection and try again.")
+        }
+        let fresh = try await api.descriptor(id: descriptor.id, deviceId: selected)
+        try check(current)
+        guard selected == deviceId else { throw CancellationError() }
+        let changed = descriptor != fresh || (descriptorDeviceId != nil && descriptorDeviceId != selected)
+        let wasBound = descriptorDeviceId != nil
+        if changed {
+            descriptor = fresh
+            descriptorDeviceId = selected
+            credentialsCollected = false
+            sharedCredentialsSaved = false
+            needsCredentials = false
+            access.invalidateEvidenceKeepingDenial()
+            unverifiedAccessChoices = []
+        }
+        descriptor = fresh
+        descriptorDeviceId = selected
+        if requireUnchanged, wasBound, changed {
+            needsDescriptorReview = true
+            throw DesktopAPIError
+                .message("Source settings changed on the selected computer. Review the updated settings before connecting.")
+        }
+    }
+
+    func prepareSelectedDevice() async {
+        guard isCurrentAPI?() != false else { return }
+        guard !busy, !deviceId.isEmpty, descriptorDeviceId != deviceId else { return }
+        busy = true
+        let current = generation
+        defer { if generation == current { busy = false } }
+        do { try await bindSelectedDescriptor(current) }
+        catch is CancellationError {} catch { if current == generation { self.error = error.localizedDescription } }
+    }
+
+    func invalidatePresentation() {
+        generation += 1
+        observation?.cancel()
+        observation = nil
+        access.invalidateSelection()
+        descriptorDeviceId = nil
+        busy = false
+        credentials = [:]
+        let previous = flowId
+        flowId = nil
+        auth = nil
+        if let previous {
+            let joining = presentationCleanup
+            let api = api
+            presentationCleanup = Task {
+                await joining?.value
+                try? await api.mutate("POST", "admin/auth-flows/\(pathPart(previous))/cancel")
+            }
+        }
     }
 
     func expand(_ text: String) -> String {
@@ -56,7 +169,9 @@ final class DesktopSourceFlow {
     }
 
     func begin() async {
-        guard !busy, !complete, descriptor.setupGuide == nil else { return }
+        guard isCurrentAPI?() != false else { return }
+        guard !needsDescriptorReview else { return }
+        guard !busy, !complete else { return }
         guard !deviceId.isEmpty else { error = "No connected device can add this source yet."
             return
         }
@@ -65,6 +180,9 @@ final class DesktopSourceFlow {
         let current = generation
         defer { if generation == current { busy = false } }
         do {
+            try await bindSelectedDescriptor(current)
+            guard descriptor.setupGuide == nil else { return }
+            try await requireRepairTarget(current)
             for param in descriptor.params ?? [] {
                 let value = params[param.name] ?? ""
                 guard param.required != true || !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -84,10 +202,11 @@ final class DesktopSourceFlow {
                 try check(current)
                 if !result.valid { throw DesktopAPIError.message(result.error ?? "Check \(param.label.lowercased()).") }
             }
+            guard try await checkCollectionAccess(current, account: existingAccountId) else { return }
             if try await collectCredentialsIfNeeded(current) { return }
             try check(current)
             // Existing brokered/local accounts are offered before starting a fresh sign-in.
-            if descriptor.hasDiscover, existingAccountId == nil {
+            if descriptor.hasDiscover, existingAccountId == nil, !freshAccountRequested {
                 do {
                     struct Discovered: Decodable { let accounts: [String] }
                     let result: Discovered = try await api.request("POST", "admin/sources/discover", body: [
@@ -124,7 +243,7 @@ final class DesktopSourceFlow {
                 if descriptor.hasResolveAccountId == true {
                     struct Resolved: Decodable { let accountId: String }
                     let result: Resolved = try await api.request("POST", "admin/sources/resolve-account", body: [
-                        "descriptorId": descriptor.id, "deviceId": deviceId, "params": params,
+                        "descriptorId": descriptor.id, "deviceId": deviceId, "params": selectedParams,
                     ])
                     try check(current)
                     accounts = [result.accountId]
@@ -137,17 +256,18 @@ final class DesktopSourceFlow {
     }
 
     private func check(_ current: Int) throws {
-        guard generation == current, !Task.isCancelled else { throw CancellationError() }
+        guard generation == current, !Task.isCancelled, isCurrentAPI?() != false else { throw CancellationError() }
     }
 
     private func collectCredentialsIfNeeded(_ current: Int) async throws -> Bool {
         guard let spec = descriptor.credentials else { return false }
         if credentialsCollected {
             if spec.perAccount != true, !sharedCredentialsSaved {
+                try await requireRepairTarget(current)
                 try await api.mutate(
                     "POST",
                     "admin/credentials/\(pathPart(spec.fileKey))",
-                    body: ["deviceId": deviceId, "fields": credentials]
+                    body: ["deviceId": deviceId, "fields": selectedCredentials]
                 )
                 try check(current)
                 credentials = [:]
@@ -165,7 +285,7 @@ final class DesktopSourceFlow {
         try check(current)
         let entry = status.items.first { $0.fileKey == spec.fileKey }
         if spec.perAccount != true, entry?.configured == true { return false }
-        if let brokered = entry?.brokeredAccounts, !brokered.isEmpty {
+        if !freshAccountRequested, let brokered = entry?.brokeredAccounts, !brokered.isEmpty {
             let existing = try await api.sources()
             try check(current)
             if brokered
@@ -212,7 +332,7 @@ final class DesktopSourceFlow {
     }
 
     func selectHost(_ id: String) {
-        guard !busy, flowId == nil, deviceId != id else { return }
+        guard targetHostId == nil, !busy, flowId == nil, deviceId != id else { return }
         deviceId = id
         credentials = [:]
         credentialsCollected = false
@@ -221,7 +341,12 @@ final class DesktopSourceFlow {
         error = nil
     }
 
+    var canChooseHost: Bool {
+        targetHostId == nil
+    }
+
     func continueCredentials() async {
+        guard isCurrentAPI?() != false else { return }
         guard let spec = descriptor.credentials, !busy else { return }
         do {
             for field in spec.fields {
@@ -239,14 +364,29 @@ final class DesktopSourceFlow {
     }
 
     func authenticateAnotherAccount() async {
-        guard !busy else { return }
-        if descriptor.credentials?.perAccount == true, !credentialsCollected { await begin()
-            return
-        }
-        busy = true
-        let current = generation
-        defer { if current == generation { busy = false } }
-        do { try await startAuthentication(current) } catch { if current == generation { self.error = error.localizedDescription } }
+        guard isCurrentAPI?() != false else { return }
+        guard canAuthenticateAnotherAccount, !busy else { return }
+        error = nil
+        let expectedGeneration = generation + 1
+        await cancel(clearCredentials: descriptor.credentials?.perAccount == true)
+        guard generation == expectedGeneration, error == nil, !Task.isCancelled else { return }
+        accounts = []
+        selectedAccounts = []
+        answer = [:]
+        freshAccountRequested = true
+        await begin()
+    }
+
+    var canAuthenticateAnotherAccount: Bool {
+        descriptor.hasAuthFlow && existingAccountId == nil && movingSource == nil && !complete && !needsDescriptorReview
+    }
+
+    var offersAnotherAccountAfterFailure: Bool {
+        canAuthenticateAnotherAccount && error != nil && (auth?.state == "error" || !accounts.isEmpty)
+    }
+
+    var offersRegistrationRetry: Bool {
+        error != nil && auth?.state == "completed" && !selectedAccounts.isEmpty && !complete && !needsDescriptorReview
     }
 
     private func startAuthentication(_ current: Int) async throws {
@@ -254,11 +394,12 @@ final class DesktopSourceFlow {
         var body: [String: Any] = [
             "sourceType": descriptor.id,
             "deviceId": deviceId,
-            "params": params,
+            "params": selectedParams,
             "renders": ["redirect", "code", "qr", "fields", "widget", "wait"],
         ]
-        if descriptor.credentials?.perAccount == true { body["credentials"] = credentials }
+        if descriptor.credentials?.perAccount == true { body["credentials"] = selectedCredentials }
         if let existingAccountId { body["accountId"] = existingAccountId }
+        try await requireRepairTarget(current)
         let result: Started = try await api.request("POST", "admin/auth-flows", body: body)
         // Even when the sheet closed during start, cancel the newly created remote flow.
         if current != generation || Task.isCancelled {
@@ -271,21 +412,31 @@ final class DesktopSourceFlow {
     }
 
     func add() async {
+        guard isCurrentAPI?() != false else { return }
         guard !busy else { return }
         busy = true
         error = nil
         let current = generation
         defer { if current == generation { busy = false } }
-        do { try await addAccounts(current) } catch { if current == generation { self.error = error.localizedDescription } }
+        do { try await addAccounts(current)
+        } catch { if current == generation { self.error = error.localizedDescription } }
     }
 
     private func addAccounts(_ current: Int) async throws {
+        guard !needsDescriptorReview else { throw DesktopAPIError.message("Review the updated source settings before connecting.") }
+        try await bindSelectedDescriptor(current, requireUnchanged: true)
         guard !selectedAccounts.isEmpty else { throw DesktopAPIError.message("Choose at least one account.") }
         let existing = try await api.sources()
         try check(current)
+        try await requireRepairTarget(current)
         for account in selectedAccounts.sorted() {
             try check(current)
             if processedAccounts.contains(account) { continue }
+            let configured = existing.first { $0.type == descriptor.id && $0.accountId == account && DesktopSourceActionPolicy(
+                source: $0,
+                devices: []
+            ).members.contains(deviceId) }
+            guard try await checkCollectionAccess(current, account: account, sourceId: configured?.id) else { return }
             if let movingSource, account != movingSource.accountId {
                 throw DesktopAPIError.message("Sign in to the same account to move this source. Other accounts can be added separately.")
             }
@@ -321,7 +472,7 @@ final class DesktopSourceFlow {
                 if movingSource !=
                     nil { throw DesktopAPIError.message("This source was removed. Refresh Sources before connecting it again.") }
                 try await api.mutate("POST", "admin/sources/add", body: [
-                    "descriptorId": descriptor.id, "deviceId": deviceId, "accountIds": [account], "params": params,
+                    "descriptorId": descriptor.id, "deviceId": deviceId, "accountIds": [account], "params": selectedParams,
                 ])
             }
         }
@@ -331,12 +482,15 @@ final class DesktopSourceFlow {
     }
 
     func confirmMove() async {
+        guard isCurrentAPI?() != false else { return }
         guard !busy, let pendingMove else { return }
         busy = true
         error = nil
         let current = generation
         defer { if current == generation { busy = false } }
         do {
+            try await bindSelectedDescriptor(current, requireUnchanged: true)
+            guard try await checkCollectionAccess(current, account: pendingMove.source.accountId) else { return }
             let memberNames = Set(descriptor.memberScopedParamNames ?? [])
                 .union((descriptor.params ?? []).filter { $0.scope == "member" }.map(\.name))
             let sharedFields = (descriptor.params ?? []).filter { !memberNames.contains($0.name) }
@@ -419,17 +573,20 @@ final class DesktopSourceFlow {
     }
 
     func submitAnswer() async {
+        guard isCurrentAPI?() != false else { return }
         guard !busy, let flowId, let pending = auth?.pendingChallenge, pending.expectsAnswer else { return }
         busy = true
         let current = generation
         defer { if current == generation { busy = false } }
         do {
+            try await requireRepairTarget(current)
             let challenge = pending.challenge
             if let deadline = challenge.expiration, deadline < Date() {
                 throw DesktopAPIError.message("This sign-in step expired. Cancel and try again for a fresh one.")
             }
             if challenge.kind == "redirect" {
                 guard let code = answer["url"], !code.isEmpty else { throw DesktopAPIError.message("Paste the completed sign-in link.") }
+                try await requireRepairTarget(current)
                 try await api.mutate("POST", "admin/auth-flows/\(pathPart(flowId))/code", body: ["code": code])
             } else {
                 var values: [String: Any] = [:]
@@ -462,12 +619,14 @@ final class DesktopSourceFlow {
     }
 
     func submitLegacyCode() async {
+        guard isCurrentAPI?() != false else { return }
         guard !busy, descriptor.acceptsAuthCode == true, let flowId,
               auth?.pendingChallenge == nil, let code = answer["code"], !code.isEmpty else { return }
         busy = true
         let current = generation
         defer { if current == generation { busy = false } }
         do {
+            try await requireRepairTarget(current)
             try await api.mutate("POST", "admin/auth-flows/\(pathPart(flowId))/code", body: ["code": code])
             try check(current)
             answer = [:]
@@ -476,12 +635,14 @@ final class DesktopSourceFlow {
     }
 
     func submitWidgetResult(token: String?, metadata: [String: Any]?) async {
+        guard isCurrentAPI?() != false else { return }
         guard let flowId, let token, !token.isEmpty, token.utf8.count <= 16384,
               let metadata, JSONSerialization.isValidJSONObject(metadata),
               let data = try? JSONSerialization.data(withJSONObject: metadata), data.count <= 65536,
               auth?.widget != nil || auth?.pendingChallenge?.challenge.kind == "widget" else { return }
         let current = generation
         do {
+            try await requireRepairTarget(current)
             try await api.mutate("POST", "admin/auth-flows/\(pathPart(flowId))/widget-result", body: ["token": token, "metadata": metadata])
             try check(current)
         } catch is CancellationError {}
@@ -496,6 +657,7 @@ final class DesktopSourceFlow {
     }
 
     func reviewCredentials() async {
+        guard isCurrentAPI?() != false else { return }
         guard let spec = descriptor.credentials, !busy else { return }
         await cancel(clearCredentials: false)
         credentialsCollected = false
@@ -505,7 +667,23 @@ final class DesktopSourceFlow {
         error = nil
     }
 
+    func reviewUpdatedSettings() async {
+        guard isCurrentAPI?() != false, !busy, needsDescriptorReview else { return }
+        generation += 1
+        observation?.cancel()
+        observation = nil
+        // Only completed discovery/authentication or a pending move reaches this boundary.
+        flowId = nil
+        auth = nil
+        accounts = []
+        selectedAccounts = []
+        needsDescriptorReview = false
+        error = nil
+        await begin()
+    }
+
     func retry() async {
+        guard isCurrentAPI?() != false else { return }
         guard canRetryAuthentication else { return }
         if let retryAvailableAt, retryAvailableAt > Date() {
             error = "The provider asked you to wait before trying again. Review the message above and try again later."
@@ -518,7 +696,9 @@ final class DesktopSourceFlow {
     }
 
     func cancel(clearCredentials: Bool = true) async {
+        access.cancel()
         generation += 1
+        let current = generation
         busy = false
         observation?.cancel()
         observation = nil
@@ -528,72 +708,75 @@ final class DesktopSourceFlow {
         pendingMove = nil
         processedAccounts = []
         moveAttemptedAccounts = []
+        answer = [:]
         if clearCredentials { credentials = [:]
+            for field in descriptor.params ?? [] where field.type == "secret" {
+                params.removeValue(forKey: field.name)
+            }
             credentialsCollected = false
         }
+        let cleanup = presentationCleanup
+        presentationCleanup = nil
+        await cleanup?.value
         guard let previous, !complete else { return }
         do { try await api.mutate("POST", "admin/auth-flows/\(pathPart(previous))/cancel") }
-        catch { self.error = error.localizedDescription }
+        catch { if generation == current { self.error = error.localizedDescription } }
+    }
+
+    private func checkCollectionAccess(_ current: Int, account: String?, sourceId: String? = nil) async throws -> Bool {
+        guard descriptorDeviceId == deviceId
+        else { throw DesktopAPIError.message("Check the selected computer’s source settings before continuing.") }
+        if descriptor.permissionRequirements?.isEmpty == true, !access.unresolvedDenial, !access.memberAccessProblem { needsAccess = false
+            return true
+        }
+        let target = DesktopAccessTarget(
+            descriptorId: descriptor.id,
+            deviceId: deviceId,
+            sourceId: sourceId ?? repairSourceId,
+            accountId: account,
+            params: sourceId == nil && repairSourceId == nil ? selectedParams : [:]
+        )
+        access.configure(target, api: api)
+        needsAccess = true
+        await access.check(api: api)
+        try check(current)
+        let requestedTrial = (access.observation?.scopeDigest).map { unverifiedAccessChoices.contains(target.id + ":" + $0) } ?? false
+        unverifiedAccessChoices = unverifiedAccessChoices.filter { !$0.hasPrefix(target.id + ":") }
+        if access.allowsCollection, !access.memberAccessProblem { needsAccess = false
+            return true
+        }
+        if !access.unresolvedDenial, !access.memberAccessProblem, api.connection.collectorDeviceId == target.deviceId,
+           access.hasManagedPublicationGuard, [.unavailable, .unsupported].contains(access.state),
+           requestedTrial {
+            needsAccess = false
+            return true
+        }
+        return false
+    }
+
+    func continueAfterAccess() async {
+        if !accounts.isEmpty { await add() } else { await begin() }
+    }
+
+    private func invalidateCollectionAccess() {
+        access.invalidateSelection()
+        unverifiedAccessChoices = []
+        needsAccess = false
+    }
+
+    func tryCollectionToCheckAccess() async {
+        guard isCurrentAPI?() != false else { return }
+        guard let local = api.connection.collectorDeviceId, let target = access.target, target.deviceId == local,
+              access.hasManagedPublicationGuard,
+              !access.memberAccessProblem, let digest = access.observation?.scopeDigest, !access.unresolvedDenial, [
+                  .unavailable,
+                  .unsupported
+              ].contains(access.state) else { return }
+        unverifiedAccessChoices.insert(target.id + ":" + digest)
+        await continueAfterAccess()
     }
 }
 
 func pathPart(_ value: String) -> String {
     value.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? ""
-}
-
-struct AuthSnapshot: Decodable {
-    let state: String
-    let errorMessage: String?
-    let errorDetail: ErrorDetail?
-    let message: String?
-    let authUrl: URL?
-    let qrData: String?
-    let resolvedAccountId: String?
-    let resolvedAccountIds: [String]?
-    let resolvedNotices: [Notice]?
-    let widget: Widget?
-    let pendingChallenge: Pending?
-    struct Notice: Decodable { let title: String
-        let detail: String?
-    }
-
-    struct Widget: Decodable { let kind: String
-        let payload: [String: String]
-    }
-
-    struct ErrorDetail: Decodable { let code: String?
-        let fileKey: String?
-        let remedy: String?
-        let retryAfterMs: Double?
-    }
-
-    struct Pending: Decodable {
-        let id: String
-        let expectsAnswer: Bool
-        let challenge: Challenge
-    }
-
-    struct Challenge: Decodable {
-        let kind: String
-        let title: String
-        let instructions: String?
-        let url: URL?
-        let data: String?
-        let fields: [DesktopDescriptor.Param]?
-        let schema: [String: SourceConfigField]?
-        let prefill: [String: String]?
-        let pattern: String?
-        let patternHint: String?
-        let via: String?
-        let renderer: String?
-        let payload: [String: String]?
-        let expiresAt: String?
-        var expiration: Date? {
-            guard let expiresAt else { return nil }
-            let parser = ISO8601DateFormatter()
-            if let date = parser.date(from: expiresAt) { return date }
-            parser.formatOptions.insert(.withFractionalSeconds)
-            return parser.date(from: expiresAt)
-        }
-    }
 }

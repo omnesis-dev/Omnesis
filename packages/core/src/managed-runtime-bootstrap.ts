@@ -12,8 +12,13 @@ import {
   realpathSync,
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { installManagedRuntimeLauncher, type ManagedDesktopDataContext } from "./node-command.js";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { isMainThread } from "node:worker_threads";
+import {
+  installManagedRuntimeLauncher,
+  managedBackgroundExecArgv,
+  type ManagedDesktopDataContext,
+} from "./node-command.js";
 
 // This is a command-line preload selected by the native lease-exec adapter. Ordinary CLI/source
 // entries never import it, so they retain the existing Node and process-launching behavior.
@@ -67,7 +72,45 @@ if (encodedData) {
     Buffer.from(encodedData, "base64url").toString("utf8"),
   ) as ManagedDesktopDataContext;
 }
-installManagedRuntimeLauncher({ root, launcher, preload, ...(data ? { data } : {}) });
+const ownerParams = new URL(import.meta.url).searchParams;
+const daemonQuery = ownerParams.get("background-owner");
+const retirementQuery = ownerParams.get("background-retirement");
+if (daemonQuery !== null && retirementQuery !== null)
+  throw new Error("The native background owner hint is ambiguous");
+const ownerQuery = daemonQuery ?? retirementQuery;
+let backgroundOwner: unknown;
+if (ownerQuery !== null) {
+  if (ownerQuery.length > 8192 || !/^[A-Za-z0-9_-]+$/u.test(ownerQuery))
+    throw new Error("The native background owner hint is invalid");
+  try {
+    const ownerBytes = Buffer.from(ownerQuery, "base64url");
+    if (ownerBytes.length > 4096 || ownerBytes.toString("base64url") !== ownerQuery)
+      throw new Error("Invalid native owner bytes");
+    backgroundOwner = JSON.parse(ownerBytes.toString("utf8"));
+  } catch {
+    backgroundOwner = undefined;
+  }
+  if (backgroundOwner === undefined) throw new Error("The native background owner hint is invalid");
+  // fork() and raw Worker defaults inherit execArgv. Only the helper-owned main
+  // isolate may capture this hint; descendants use the ordinary fixed preload.
+  const ordinary = pathToFileURL(preload).href;
+  process.execArgv.splice(
+    0,
+    process.execArgv.length,
+    ...managedBackgroundExecArgv(process.execArgv, import.meta.url, ordinary),
+  );
+}
+installManagedRuntimeLauncher({
+  root,
+  launcher,
+  preload,
+  ...(data ? { data } : {}),
+  ...(ownerQuery === null || !isMainThread
+    ? {}
+    : retirementQuery !== null
+      ? { backgroundRetirement: backgroundOwner }
+      : { backgroundOwner }),
+});
 
 // Third-party SDKs commonly spawn process.execPath directly with only stdio 0..2. Publish the
 // verified native Node-compatible adapter so those children reserve the epoch before Node loads.

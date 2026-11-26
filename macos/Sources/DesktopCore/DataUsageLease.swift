@@ -8,7 +8,7 @@ import Foundation
 /// A component's descendants retain data authority independently of the component's PID.
 /// Controllers never acquire SH; destructive hosts retain EX across actual publication/purge.
 public final class DesktopDataUsageLease {
-    public enum Failure: Error { case invalidScope, unsafeRecord, inUse, blocked, missingAuthority }
+    public enum Failure: Error { case invalidScope, unsafeRecord, inUse, blocked, missingAuthority, legacyUnverified }
     public struct Scope: Codable, Equatable {
         public let format: Int
         public let configDir: String
@@ -130,6 +130,115 @@ public final class DesktopDataUsageLease {
         }
     }
 
+    /// Recovery uses only fixed native Keychain calls while preserving the ordinary consumer fence.
+    public static func acquireKeyRecovery(_ recovery: DesktopKeyRecoveryAuthority.Context, epoch: String) throws -> DesktopDataUsageLease {
+        try DesktopKeyRecoveryAuthority.validate(recovery, epoch: epoch)
+        let path = lockURL(recovery.scope)
+        let descriptor = Darwin.open(path.path, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK, 0o600)
+        guard descriptor >= 0 else { throw Failure.unsafeRecord }
+        do {
+            var info = stat(), published = stat()
+            guard fstat(descriptor, &info) == 0, validFile(info), lstat(path.path, &published) == 0,
+                  info.st_dev == published.st_dev, info.st_ino == published.st_ino else { throw Failure.unsafeRecord }
+            guard flock(descriptor, LOCK_SH | LOCK_NB) == 0 else { throw Failure.inUse }
+            try DesktopKeyRecoveryAuthority.validate(recovery, epoch: epoch)
+            return DesktopDataUsageLease(descriptor: descriptor, context: Context(
+                format: 1, scope: recovery.scope, lease: Identity(device: String(info.st_dev), inode: String(info.st_ino)), exclusive: nil
+            ))
+        } catch { Darwin.close(descriptor)
+            throw error
+        }
+    }
+
+    /// Only the fixed native read/write delegates receive this exact SH description at FD7.
+    func keyRecoveryDescriptor(scope: Scope) throws -> Int32 {
+        guard context.exclusive == nil, context.scope == scope else { throw Failure.missingAuthority }
+        let duplicate = fcntl(descriptor, F_DUPFD_CLOEXEC, 30)
+        guard duplicate >= 30 else { throw Failure.unsafeRecord }
+        return duplicate
+    }
+
+    /// A catalog writer retains its own EX lease even if its controller is killed.
+    public final class CatalogDiscovery {
+        private let descriptor: Int32
+        fileprivate init(descriptor: Int32) {
+            self.descriptor = descriptor
+        }
+
+        deinit { Darwin.close(descriptor) }
+        public func inheritAcrossExec() throws {
+            let flags = fcntl(descriptor, F_GETFD)
+            guard flags >= 0, fcntl(descriptor, F_SETFD, flags & ~FD_CLOEXEC) == 0 else { throw Failure.unsafeRecord }
+        }
+    }
+
+    public func acquireCatalogDiscovery(nonce: String, epoch: String) throws -> CatalogDiscovery {
+        guard context.exclusive == nil, Self.validUUID(nonce) else { throw Failure.missingAuthority }
+        try Self.requireProcessAuthority(context.scope)
+        try Self.validateProfile(context.scope)
+        try Self.validateConsumer(context.scope, epoch: epoch, keychainSetup: false, keychainRead: false)
+        let path = URL(fileURLWithPath: context.scope.configDir + ".bootstrap", isDirectory: true)
+            .appendingPathComponent(".catalog-" + String(context.scope.secretService.suffix(64)) + ".lock")
+        let opened = Darwin.open(path.path, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard opened >= 0 else { throw Failure.unsafeRecord }
+        let descriptor = fcntl(opened, F_DUPFD_CLOEXEC, 8)
+        Darwin.close(opened)
+        guard descriptor >= 8 else { throw Failure.unsafeRecord }
+        do {
+            var info = stat(), published = stat()
+            guard fstat(descriptor, &info) == 0, Self.validFile(info), lstat(path.path, &published) == 0,
+                  info.st_dev == published.st_dev, info.st_ino == published.st_ino else { throw Failure.unsafeRecord }
+            guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else { throw Failure.inUse }
+            guard fstat(descriptor, &info) == 0, Self.validFile(info), lstat(path.path, &published) == 0,
+                  info.st_dev == published.st_dev, info.st_ino == published.st_ino else { throw Failure.unsafeRecord }
+            try Self.validateProfile(context.scope)
+            try Self.validateConsumer(context.scope, epoch: epoch, keychainSetup: false, keychainRead: false)
+            let cache = URL(fileURLWithPath: context.scope.configDir, isDirectory: true)
+                .appendingPathComponent("codex-home", isDirectory: true)
+                .appendingPathComponent(context.scope.instance, isDirectory: true)
+                .appendingPathComponent("models_cache.json")
+            let previous = try Self.catalogWitness(cache)
+            let receipt = try JSONSerialization.data(withJSONObject: [
+                "version": 1, "nonce": nonce, "previousSha256": previous.map { $0 as Any } ?? NSNull(),
+            ])
+            guard ftruncate(descriptor, 0) == 0, lseek(descriptor, 0, SEEK_SET) == 0 else { throw Failure.unsafeRecord }
+            try receipt.withUnsafeBytes { buffer in
+                var offset = 0
+                while offset < buffer.count {
+                    let count = Darwin.write(descriptor, buffer.baseAddress!.advanced(by: offset), buffer.count - offset)
+                    if count < 0, errno == EINTR { continue }
+                    guard count > 0 else { throw Failure.unsafeRecord }
+                    offset += count
+                }
+            }
+            guard fsync(descriptor) == 0 else { throw Failure.unsafeRecord }
+            return CatalogDiscovery(descriptor: descriptor)
+        } catch { Darwin.close(descriptor)
+            throw error
+        }
+    }
+
+    private static func catalogWitness(_ path: URL) throws -> String? {
+        try privateDirectory(path.deletingLastPathComponent())
+        let fd = Darwin.open(path.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        if fd < 0 {
+            if errno == ENOENT { return nil }
+            throw Failure.unsafeRecord
+        }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        defer { try? handle.close() }
+        var before = stat(), after = stat(), published = stat()
+        guard fstat(fd, &before) == 0, validFile(before), before.st_size >= 0,
+              before.st_size <= 16 * 1024 * 1024 else { throw Failure.unsafeRecord }
+        let bytes = try handle.read(upToCount: Int(before.st_size) + 1) ?? Data()
+        guard bytes.count == Int(before.st_size), fstat(fd, &after) == 0, lstat(path.path, &published) == 0,
+              after.st_dev == before.st_dev, after.st_ino == before.st_ino, after.st_size == before.st_size,
+              after.st_mtimespec.tv_sec == before.st_mtimespec.tv_sec, after.st_mtimespec.tv_nsec == before.st_mtimespec.tv_nsec,
+              after.st_ctimespec.tv_sec == before.st_ctimespec.tv_sec, after.st_ctimespec.tv_nsec == before.st_ctimespec.tv_nsec,
+              published.st_dev == before.st_dev, published.st_ino == before.st_ino, validFile(published) else { throw Failure.unsafeRecord }
+        return digest(bytes)
+    }
+
     /// FD7 is reserved in every operation worker's stdio mapping; other consumers reacquire SH.
     public func prepareEnvironment(_ environment: [String: String]) throws -> [String: String] {
         if descriptor != Self.inheritedDescriptor {
@@ -177,8 +286,8 @@ public final class DesktopDataUsageLease {
     private static func validateProfile(_ scope: Scope) throws {
         guard scope.format == 1 else { throw Failure.invalidScope }
         let root = URL(fileURLWithPath: scope.configDir, isDirectory: true)
-        guard root.path.hasPrefix("/"), root.standardizedFileURL.path == scope.configDir,
-              root.resolvingSymlinksInPath().path == scope.configDir else { throw Failure.invalidScope }
+        guard root.path.hasPrefix("/"), root.path == scope.configDir,
+              try (DesktopCanonicalPath.resolve(scope.configDir, allowMissing: true)) == scope.configDir else { throw Failure.invalidScope }
         let parent = URL(fileURLWithPath: scope.configDir + ".bootstrap", isDirectory: true)
         try privateDirectory(parent)
         let generation = try record(parent.appendingPathComponent("generation.json"))
@@ -229,7 +338,7 @@ public final class DesktopDataUsageLease {
         let base = URL(fileURLWithPath: scope.configDir, isDirectory: true).appendingPathComponent("codex-home", isDirectory: true)
         let homes = [base, base.appendingPathComponent(scope.instance, isDirectory: true)]
         guard homes.contains(where: { path in
-            path.resolvingSymlinksInPath().path == path.standardizedFileURL.path &&
+            (try? DesktopCanonicalPath.resolve(path.path, allowMissing: true)) == path.path &&
                 account == "cli|" + String(digest(Data(path.path.utf8)).prefix(16))
         }) else { throw Failure.invalidScope }
     }
@@ -288,7 +397,19 @@ public final class DesktopDataUsageLease {
         }
     }
 
+    public static func requireProcessAuthority(_ scope: Scope) throws {
+        try validateProfile(scope)
+        let path = URL(fileURLWithPath: scope.configDir + ".bootstrap/process-authority.json")
+        guard let authority = try record(path), authority.count == 4, authority["version"] as? Int == 3,
+              authority["owner"] as? String == "omnesis-desktop", authority["instance"] as? String == scope.instance,
+              authority["secretService"] as? String == scope.secretService else { throw Failure.legacyUnverified }
+        if let journal = try record(URL(fileURLWithPath: scope.configDir).appendingPathComponent("desktop-install.json")) {
+            guard bound(journal, scope), journal["processAuthorityVersion"] as? Int == 3 else { throw Failure.legacyUnverified }
+        }
+    }
+
     private static func validateOperation(_ scope: Scope, _ operation: Operation) throws {
+        try requireProcessAuthority(scope)
         let update = operation.purpose == .updateSnapshot || operation.purpose == .updateRollback
         let name = operation.purpose == .erase ? "retirement.json" : (update ? "update.json" : "restore.json")
         let path = URL(fileURLWithPath: scope.configDir + ".bootstrap", isDirectory: true).appendingPathComponent(name)
@@ -339,7 +460,7 @@ public final class DesktopDataUsageLease {
     private static func privateDirectory(_ path: URL) throws {
         var info = stat()
         guard lstat(path.path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR, info.st_uid == getuid(),
-              info.st_mode & 0o077 == 0, path.resolvingSymlinksInPath().path == path.standardizedFileURL.path else {
+              info.st_mode & 0o077 == 0, try (DesktopCanonicalPath.resolve(path.path)) == path.path else {
             throw Failure.unsafeRecord
         }
     }

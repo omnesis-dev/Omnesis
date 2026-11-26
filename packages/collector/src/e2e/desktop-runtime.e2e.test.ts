@@ -15,9 +15,9 @@ import {
   type WireMessage,
 } from "./brain-bench/openai-server.js";
 
-/** Real desktop CLI/daemon/gateway/collector with only the OS Keychain command substituted. */
-describe.skipIf(process.platform === "win32")(
-  "managed desktop lifecycle beside a headless library",
+/** Linux source CLI/daemon/gateway/collector; native macOS OS credentials and kernel leases are qualified separately. */
+describe.skipIf(process.platform !== "linux")(
+  "Linux source desktop lifecycle beside a headless library",
   () => {
     let desktop: DesktopRuntimeFixture;
     let headless: E2EHarness;

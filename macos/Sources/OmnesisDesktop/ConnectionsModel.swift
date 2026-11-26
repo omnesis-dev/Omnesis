@@ -65,7 +65,7 @@ final class DesktopPhonePairing {
     var kind = "ios"
     var pending: PendingPairing?
     var payload: String?
-    var connectedPhone: DesktopDevice?
+    private(set) var observedPhones: [DesktopDevice] = []
     var failure: String?
     var working = false
     var needsBrowserConfirmation = false
@@ -79,15 +79,15 @@ final class DesktopPhonePairing {
         observation?.cancel()
         payload = nil
         pending = nil
-        connectedPhone = nil
+        observedPhones = []
         failure = nil
         needsBrowserConfirmation = false
         working = true
         defer { if generation == attempt { working = false } }
         var minted: PendingPairing?
         do {
-            let before = try await api.devices()
-            let baselineIds = Set(before.map(\.id))
+            await refreshPhones(api: api)
+            guard generation == attempt, !Task.isCancelled else { return }
             let code = try await api.admin.createPairing(kind: kind)
             minted = code
             guard generation == attempt else {
@@ -107,7 +107,6 @@ final class DesktopPhonePairing {
             }
             pending = code
             payload = qr
-            let selectedKind = kind
             observation = Task { [weak self] in
                 while !Task.isCancelled {
                     do {
@@ -118,18 +117,7 @@ final class DesktopPhonePairing {
                             self.failure = "This code expired. Create a new code and try again."
                             return
                         }
-                        let roster = try await api.devices()
-                        guard self.generation == attempt, !Task.isCancelled else { return }
-                        if let phone = roster.first(where: {
-                            !baselineIds.contains($0.id) && $0.kind == selectedKind && $0.online == true && $0.revokedAt == nil
-                        }) {
-                            self.connectedPhone = phone
-                            self.payload = nil
-                            self.pending = nil
-                            self.issuedCode = nil
-                            try? await self.revoke(code.pairingCode, api: api)
-                            return
-                        }
+                        await self.refreshPhones(api: api)
                     } catch is CancellationError { return }
                     catch {
                         if !Task.isCancelled { self?.failure = "Waiting for your phone. Check your connection, then try again." }
@@ -148,6 +136,22 @@ final class DesktopPhonePairing {
                 } else { failure = error.localizedDescription }
                 issuedCode = nil
             }
+        }
+    }
+
+    /// The roster does not identify which one-time code a phone redeemed.
+    /// Keep it informational; only closing the flow withdraws our unused code.
+    func refreshPhones(api: DesktopAPI) async {
+        let current = generation
+        do {
+            let roster = try await api.devices()
+            guard generation == current, !Task.isCancelled else { return }
+            observedPhones = roster.filter {
+                ($0.kind == "ios" || $0.kind == "android") && $0.online == true && $0.revokedAt == nil
+            }
+        } catch {
+            guard generation == current, !Task.isCancelled else { return }
+            observedPhones = []
         }
     }
 

@@ -169,10 +169,20 @@
         <p>
           Install the signed Omnesis app from its disk image by dragging it into Applications, then
           open it. Sign in to your Omnesis account, or create one with an invitation where required.
-          Choose the Mac that will keep your library. That Mac must stay awake for your other
-          devices to use it. On another Mac, choose the existing library instead of creating another
-          one. Nearby addresses are connection hints; the app verifies the library's identity before
-          using them and can reconnect through the account's encrypted connection.
+          Choose the Mac that will keep your library. A desktop Mac that stays powered on is a
+          useful choice; follow the <a href="install#mac-server">Mac sleep settings steps</a> so
+          your other devices can use it while its display is off. On another Mac, choose the
+          existing library instead of creating another one. Nearby addresses are connection hints;
+          the app verifies the library's identity before using them and can reconnect through the
+          account's encrypted connection.
+        </p>
+        <p>
+          Setup remains incomplete until automatic startup and the permissions needed by your chosen
+          sources are verified. On the Mac storing the library, its system sleep settings must also
+          be configured, storage must have room for new information, and its encrypted remote
+          connection must be available. The app explains each required step and checks again after
+          changes; opening System Settings does not count as granting access. If a prerequisite is
+          lost, the app shows the repair steps again and keeps your indexed information.
         </p>
         <p>
           Setup protects the app's local storage with a separate macOS Keychain key before
@@ -184,10 +194,13 @@
         <p>
           Ask is the main window. The menu bar menu opens it without requiring you to keep the
           window visible. The setup checklist also offers phone pairing and connecting an assistant.
-          These steps use your library's confirmed public address. Setting up a chat provider is
-          optional: Settings → AI explains what the provider receives and offers the authentication
-          methods your library supports. A ChatGPT sign-in is offered only when its supported
-          runtime is available. Search does not require a cloud chat provider.
+          When using a phone scan code, finish connecting in the phone app. The Mac lists connected
+          phones, but does not identify which phone used that code. Closing the scan-code window
+          withdraws its unused code. These steps use your library's confirmed public address.
+          Setting up a chat provider is optional: Settings → AI explains what the provider receives
+          and offers the authentication methods your library supports. A ChatGPT sign-in is offered
+          only when its supported runtime is available. Search does not require a cloud chat
+          provider.
         </p>
         <p>
           The Mac app keeps its ChatGPT sign-in in its own Keychain entries. Sign out in Settings →
@@ -197,10 +210,11 @@
         <p>
           Settings includes storage, backups, memory and recovery protection. A memory-budget change
           takes effect after restarting the library on its home Mac. Closing a window keeps
-          collection running; starting at login is a separate System Settings permission. Stop
-          Omnesis pauses this Mac's background operation. Remove Omnesis first reviews what will be
-          kept: preserving the library is the default, and erasing it requires a separate
-          confirmation. Keep a backup and recovery protection before erasing a library you need.
+          collection running. Automatic startup requires macOS approval; setup stays incomplete
+          until that approval is confirmed. Stop Omnesis pauses this Mac's background operation.
+          Remove Omnesis first reviews what will be kept: preserving the library is the default, and
+          erasing it requires a separate confirmation. Keep a backup and recovery protection before
+          erasing a library you need.
         </p>
         <p>
           The app owns a separate installation. Installing it does not adopt or restart a

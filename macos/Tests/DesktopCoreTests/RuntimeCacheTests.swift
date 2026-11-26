@@ -37,11 +37,29 @@ final class RuntimeCacheTests: XCTestCase {
             ["path": "packages/cli/dist/index.js", "bytes": js.count, "executable": false, "sha256": hash(js)],
         ] + extra
         try JSONSerialization.data(
-            withJSONObject: ["format": 1, "architecture": architecture, "nodeVersion": "24.21.0", "inventory": inventory],
+            withJSONObject: [
+                "format": 1,
+                "processAuthorityProtocol": 3,
+                "architecture": architecture,
+                "nodeVersion": "24.21.0",
+                "inventory": inventory,
+            ],
             options: [.sortedKeys]
         )
         .write(to: source.appendingPathComponent("desktop-runtime.json"))
         return source
+    }
+
+    func testUnknownProcessAuthorityNeverPublishesAnUnqualifiedCacheEpoch() throws {
+        let source = try source()
+        let manifest = source.appendingPathComponent("desktop-runtime.json")
+        var value = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: manifest)) as? [String: Any])
+        for version in [nil, 1, 2, 4] as [Int?] {
+            value["processAuthorityProtocol"] = version
+            try JSONSerialization.data(withJSONObject: value).write(to: manifest)
+            XCTAssertThrowsError(try DesktopRuntimeCache.prepare(source: source, cacheRoot: cache, validateSource: {}))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: cache.path))
+        }
     }
 
     private func hash(_ data: Data) -> String {

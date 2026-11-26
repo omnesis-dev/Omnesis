@@ -18,6 +18,7 @@ import {
 import { basename, isAbsolute, join, relative, sep } from "node:path";
 import { Transform, type Readable } from "node:stream";
 import { createGunzip, createZstdDecompress } from "node:zlib";
+import { isReadAccessDenied } from "./read-access.js";
 
 const MAX_FILES = 10_000;
 const MAX_SCAN_ENTRIES = 100_000;
@@ -83,6 +84,7 @@ export interface LocalAgentSessionScan {
   files: ScannedLocalAgentSessionFile[];
   complete: boolean;
   rootFailures: Record<string, string>;
+  permissionDenied?: true;
   truncated?: string;
 }
 
@@ -383,6 +385,7 @@ export function scanLocalAgentSessionFiles(
 ): LocalAgentSessionScan {
   const files: ScannedLocalAgentSessionFile[] = [];
   let complete = true;
+  let permissionDenied = false;
   let scannedEntries = 0;
   let limitReached = false;
   // Why each root cannot be vouched for, when it cannot. A root absent from
@@ -414,7 +417,8 @@ export function scanLocalAgentSessionFiles(
         return;
       }
       directory = opendirSync(dir);
-    } catch {
+    } catch (error) {
+      if (isReadAccessDenied(error)) permissionDenied = true;
       failRoot("a directory in it would not open");
       return;
     }
@@ -480,7 +484,8 @@ export function scanLocalAgentSessionFiles(
             dev: stat.dev,
             nlink: stat.nlink,
           });
-        } catch {
+        } catch (error) {
+          if (isReadAccessDenied(error)) permissionDenied = true;
           failRoot("a file in it could not be inspected");
         }
       }
@@ -495,7 +500,8 @@ export function scanLocalAgentSessionFiles(
           files.splice(firstFileIndex);
           failRoot("a directory in it was replaced while it was being read");
         }
-      } catch {
+      } catch (error) {
+        if (isReadAccessDenied(error)) permissionDenied = true;
         files.splice(firstFileIndex);
         failRoot("a directory in it could not be re-checked after reading");
       }
@@ -515,7 +521,8 @@ export function scanLocalAgentSessionFiles(
     let rootPath: string;
     try {
       rootPath = realpathSync(root.path);
-    } catch {
+    } catch (error) {
+      if (isReadAccessDenied(error)) permissionDenied = true;
       failRoot("the root path would not resolve");
       continue;
     }
@@ -547,6 +554,7 @@ export function scanLocalAgentSessionFiles(
   return {
     files,
     complete,
+    ...(permissionDenied ? { permissionDenied: true as const } : {}),
     rootFailures: Object.fromEntries(rootFailures),
     ...(truncated ? { truncated } : {}),
   };

@@ -8,6 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import {
   defineSource,
+  probeRootReadAccess,
   config as configSchema,
   expandHostPath,
   type SourceInstance,
@@ -327,6 +328,23 @@ export default defineSource({
   name: "Antigravity Sessions",
   description: "Coding-agent conversations saved by Antigravity",
   provider: { id: "antigravity", name: "Antigravity" },
+  permissionRequirements: [
+    {
+      id: "conversation-folders",
+      kind: "selected-folder",
+      summary: "Allow access to selected conversation folders",
+      scope: "Selected conversation source roots",
+      blocking: true,
+      actions: [{ kind: "choose-folder" }, { kind: "retry-access" }],
+    },
+  ],
+  probePermissionAccess: ({ params, signal }) =>
+    probeRootReadAccess({
+      signal,
+      roots: antigravityRoots(
+        params.antigravityHome ? expandHostPath(params.antigravityHome) : undefined,
+      ),
+    }),
   authType: "local",
   unitName: "conversation days",
   primaryCount: "documents",

@@ -29,6 +29,7 @@ export { recordingToDocument } from "./normalizer.js";
 
 export default defineProvider<PlaudContext>({
   provider: { id: "plaud", name: "Plaud" },
+  permissionRequirements: [],
   authType: "api-key",
   credentials: plaudCredentialsSpec,
   // The API is the one Plaud's own web app uses, not a published one, and

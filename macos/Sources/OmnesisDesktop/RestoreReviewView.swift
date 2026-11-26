@@ -11,17 +11,17 @@ struct DesktopRestoreReviewView: View {
         DisclosureGroup("Choices saved before restoring") {
             VStack(alignment: .leading, spacing: 12) {
                 Text(
-                    "These are reference choices. Restoring does not turn them back on. Choose models and deletion policies separately in Settings."
+                    "These are reference choices. Restoring does not turn them back on. Choose your models and how long information is kept in Settings."
                 )
                 .foregroundStyle(.secondary)
-                Text("Previous model assignments").font(.headline)
+                Text("Models used before restoring").font(.headline)
                 ForEach(review.modelAssignments.keys.sorted(), id: \.self) { role in
                     LabeledContent(
                         role.replacingOccurrences(of: "-", with: " ").capitalized,
                         value: review.modelAssignments[role].flatMap { $0 } ?? "Disabled"
                     )
                 }
-                if review.modelAssignments.isEmpty { Text("No model assignments were saved.").foregroundStyle(.secondary) }
+                if review.modelAssignments.isEmpty { Text("No previous model choices were saved.").foregroundStyle(.secondary) }
                 Text("Previous automatic deletion").font(.headline)
                 ForEach(Array(review.storageRetention.prefix(50).enumerated()), id: \.offset) { _, rule in
                     LabeledContent(sourceName(rule.sourceId), value: "After \(rule.maxAgeDays.formatted()) days")

@@ -13,6 +13,7 @@ import {
   OMNESIS_INSTALL_ROOT_KEY,
   secureMarkerStateKeyName,
 } from "@omnesis/core";
+import { assertDesktopProcessAuthority } from "./process-authority.js";
 import { withDesktopInstallLease } from "./bootstrap.js";
 import { acquireDesktopRestoreSessionLease } from "./restore-owner.js";
 import {
@@ -151,7 +152,12 @@ export class DesktopFreshInstallService {
         throw new Error("The erased installation changed; review the new installation again");
       // Only fixed, identity-bound control records are reset. The completed
       // erase receipt remains the fence until the final generation publication.
-      for (const name of ["restore.json", "update.json", "active-runtime.json"] as const) {
+      for (const name of [
+        "restore.json",
+        "update.json",
+        "active-runtime.json",
+        "code-retention.json",
+      ] as const) {
         signal.throwIfAborted();
         const path = join(`${this.profile.configDir}.bootstrap`, name);
         let before;
@@ -222,6 +228,7 @@ export class DesktopFreshInstallService {
       (await desktopRootIdentity(this.profile))
     )
       throw new Error("The old library or its cleanup is still present; no new root was created");
+    await assertDesktopProcessAuthority(this.profile);
     return record;
   }
   private async exclusive<T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> {

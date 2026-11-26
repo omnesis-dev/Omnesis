@@ -41,12 +41,14 @@ final class DesktopConnectionsTests: XCTestCase {
         XCTAssertNotNil(model.failure)
     }
 
-    func testPhoneCodeUsesCanonicalGrantAndRelayAddressAndIsWithdrawnOnClose() async throws {
+    func testUnrelatedPhoneDoesNotConsumeCodeAndExplicitCloseWithdrawsCanonicalGrant() async throws {
         let expiry = Int64(Date().addingTimeInterval(600).timeIntervalSince1970 * 1000)
+        let roster = PhoneRosterSequence()
         let script = ScriptedDesktopHTTP { request in
             let body = try Self.body(request)
             switch (request.httpMethod, request.url?.path) {
-            case ("GET", "/admin/devices"): return #"{"items":[]}"#
+            case ("GET", "/admin/devices"):
+                return roster.next()
             case ("POST", "/admin/devices/pair"):
                 XCTAssertEqual(body["kind"] as? String, "ios")
                 XCTAssertNil(body["scopes"])
@@ -68,7 +70,12 @@ final class DesktopConnectionsTests: XCTestCase {
         let model = DesktopPhonePairing()
         try await model.start(api: fixture.api, gatewayOrigin: XCTUnwrap(URL(string: "https://library.example.com")))
         XCTAssertEqual(model.payload, "invented-server-encoded-qr")
-        XCTAssertNil(model.connectedPhone)
+        XCTAssertTrue(model.observedPhones.isEmpty)
+        await model.refreshPhones(api: fixture.api)
+        XCTAssertEqual(model.observedPhones.map(\.id), ["unrelated-phone"])
+        XCTAssertEqual(model.payload, "invented-server-encoded-qr")
+        XCTAssertEqual(model.pending?.pairingCode, "invented-code")
+        XCTAssertFalse(script.requests.contains { $0.httpMethod == "DELETE" })
         await model.cancel(api: fixture.api)
         XCTAssertNil(model.payload)
         XCTAssertNil(model.pending)
@@ -234,4 +241,16 @@ private final class DesktopFixtureURLProtocol: URLProtocol {
     }
 
     override func stopLoading() {}
+}
+
+private final class PhoneRosterSequence: @unchecked Sendable {
+    private let lock = NSLock()
+    private var reads = 0
+    func next() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        reads += 1
+        return reads == 1 ? #"{"items":[]}"#
+            : #"{"items":[{"id":"unrelated-phone","name":"Another phone","kind":"ios","online":true}]}"#
+    }
 }

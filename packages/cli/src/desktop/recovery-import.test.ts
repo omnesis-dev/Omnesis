@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { constants } from "node:fs";
+import { mkdtemp, mkdir, open, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
@@ -10,6 +13,7 @@ import {
   generateInstallRootKey,
   generateRecoveryCode,
   isInstallRootKey,
+  installRootKeyBytes,
   renderSecureMarker,
   secureMarkerPath,
   type SecureMarkerKind,
@@ -18,6 +22,12 @@ import {
 import { desktopProfile } from "./environment.js";
 import { DesktopRecoveryImportService } from "./recovery-import.js";
 import { desktopRootIdentity, writeDesktopRetirement } from "./retirement.js";
+import {
+  writeDesktopRestoreIntent,
+  readDesktopRestoreIntent,
+  type DesktopRestoreIntent,
+} from "./restore-intent.js";
+import { writeDesktopUpdateState, readDesktopUpdateState } from "./update-state.js";
 import type { DesktopInstall } from "./bootstrap.js";
 
 const roots: string[] = [];
@@ -38,12 +48,23 @@ async function fixture(options: { existing?: string | null; mode?: "home" | "joi
     secretService: profile.secretService,
     mode: options.mode ?? "home",
     phase: "configured",
+    processAuthorityVersion: 3,
     embedder: null,
     memoryLimitMb: 512,
   } satisfies DesktopInstall;
   await writeFile(join(profile.configDir, "desktop-install.json"), JSON.stringify(install), {
     mode: 0o600,
   });
+  await writeFile(
+    join(`${profile.configDir}.bootstrap`, "process-authority.json"),
+    JSON.stringify({
+      version: 3,
+      owner: "omnesis-desktop",
+      instance: profile.instance,
+      secretService: profile.secretService,
+    }),
+    { mode: 0o600 },
+  );
   const key = generateInstallRootKey();
   const code = generateRecoveryCode();
   const envelope = createRecoveryEnvelope(key, code);
@@ -118,11 +139,14 @@ test("restores matching key and both Keychain marker mirrors without changing lo
   expect(await readFile(secureMarkerPath("storage-encryption", f.profile.configDir), "utf8")).toBe(
     before,
   );
-  expect(f.insert).toHaveBeenCalledWith(f.key, {
-    backend: "macos-keychain",
-    configDir: f.profile.configDir,
-    service: f.profile.secretService,
-  });
+  expect(f.insert).toHaveBeenCalledWith(
+    f.key,
+    expect.objectContaining({
+      backend: "macos-keychain",
+      configDir: f.profile.configDir,
+      service: f.profile.secretService,
+    }),
+  );
 });
 
 test("wrong code or foreign key/markers refuses before Keychain mutation", async () => {
@@ -250,4 +274,132 @@ test("cancellation after atomic insertion still completes fail-closed marker mir
   expect(controller.signal.aborted).toBe(true);
   expect(f.existing()).toBe(f.key);
   expect(f.mirrors.size).toBe(2);
+});
+
+async function pendingRestore(
+  f: Awaited<ReturnType<typeof fixture>>,
+  phase: DesktopRestoreIntent["phase"] = "committed",
+) {
+  const keyBytes = installRootKeyBytes(f.key);
+  const digest = createHash("sha256").update(keyBytes).digest("hex");
+  keyBytes.fill(0);
+  const record: DesktopRestoreIntent = {
+    version: 1,
+    owner: "omnesis-desktop",
+    instance: f.profile.instance,
+    secretService: f.profile.secretService,
+    operationId: randomUUID(),
+    phase,
+    root: (await desktopRootIdentity(f.profile))!,
+    targetKeyDigest: digest,
+    archiveSha256: "a".repeat(64),
+    archiveBytes: 64,
+    backup: { manifestSha256: "b".repeat(64), bytes: 64 },
+  };
+  await writeDesktopRestoreIntent(f.profile, record);
+  return record;
+}
+
+test.each(["committed", "starting", "recovery-required"] as const)(
+  "explicit original-key import repairs %s restore without changing its journal",
+  async (phase) => {
+    const f = await fixture();
+    const record = await pendingRestore(f, phase);
+    await expect(f.service.restore(f.envelope, f.code, signal())).resolves.toMatchObject({
+      status: "restored",
+    });
+    expect(f.existing()).toBe(f.key);
+    expect(f.mirrors.size).toBe(2);
+    expect(await readDesktopRestoreIntent(f.profile)).toEqual(record);
+  },
+);
+
+test("pending update recovery permits only original-key import and preserves its phase", async () => {
+  const f = await fixture();
+  const record = {
+    format: 1 as const,
+    owner: "omnesis-desktop" as const,
+    instance: f.profile.instance,
+    secretService: f.profile.secretService,
+    operationId: randomUUID(),
+    phase: "recovery-required" as const,
+    mode: "home" as const,
+    oldEpoch: "a".repeat(64),
+    candidateEpoch: "b".repeat(64),
+    oldVersion: "1.0.0",
+    candidateVersion: "1.0.1",
+    artifactSha256: "c".repeat(64),
+    root: (await desktopRootIdentity(f.profile))!,
+    backup: null,
+  };
+  await writeDesktopUpdateState(f.profile, record);
+  await expect(f.service.restore(f.envelope, f.code, signal())).resolves.toMatchObject({
+    status: "restored",
+  });
+  expect(await readDesktopUpdateState(f.profile)).toEqual(record);
+});
+
+test("restore key digest and root changes reject before any Keychain insertion", async () => {
+  for (const change of ["digest", "root"] as const) {
+    const f = await fixture();
+    const record = await pendingRestore(f);
+    await writeDesktopRestoreIntent(f.profile, {
+      ...record,
+      ...(change === "digest"
+        ? { targetKeyDigest: "c".repeat(64) }
+        : { root: { device: "0", inode: "0" } }),
+    });
+    await expect(f.service.restore(f.envelope, f.code, signal())).rejects.toThrow();
+    expect(f.insert).not.toHaveBeenCalled();
+    expect(f.mirror).not.toHaveBeenCalled();
+  }
+});
+
+test("pending operation replacement during private validation refuses before insertion", async () => {
+  const f = await fixture();
+  const record = await pendingRestore(f);
+  f.read.mockImplementationOnce(async () => {
+    await writeDesktopRestoreIntent(f.profile, { ...record, operationId: randomUUID() });
+    return null;
+  });
+  await expect(f.service.restore(f.envelope, f.code, signal())).rejects.toThrow("context changed");
+  expect(f.insert).not.toHaveBeenCalled();
+  expect(f.mirror).not.toHaveBeenCalled();
+});
+
+test("operation change during final mirror cannot report successful recovery", async () => {
+  const f = await fixture();
+  const record = await pendingRestore(f);
+  f.mirror.mockImplementation(async (kind) => {
+    f.mirrors.set(kind, "required");
+    if (kind === "secret-files")
+      await writeDesktopRestoreIntent(f.profile, { ...record, operationId: randomUUID() });
+  });
+  await expect(f.service.restore(f.envelope, f.code, signal())).rejects.toThrow("context changed");
+  expect(f.existing()).toBe(f.key);
+});
+
+test("a FIFO protection marker refuses before any Keychain mutation without waiting for a writer", async () => {
+  const f = await fixture();
+  const path = secureMarkerPath("secret-files", f.profile.configDir);
+  await rm(path, { force: true });
+  execFileSync("mkfifo", ["-m", "600", path]);
+  let neededWriter = false;
+  let releaseWriter: Promise<void> | undefined;
+  // Release a regressed blocking open so this fixture cannot leave a filesystem worker stranded.
+  const rescue = setTimeout(() => {
+    neededWriter = true;
+    releaseWriter = open(path, constants.O_RDWR | constants.O_NONBLOCK).then((file) =>
+      file.close(),
+    );
+  }, 2_000);
+  try {
+    await expect(f.service.restore(f.envelope, f.code, signal())).rejects.toThrow("unsafe");
+    expect(neededWriter).toBe(false);
+    expect(f.insert).not.toHaveBeenCalled();
+    expect(f.mirror).not.toHaveBeenCalled();
+  } finally {
+    clearTimeout(rescue);
+    await releaseWriter;
+  }
 });

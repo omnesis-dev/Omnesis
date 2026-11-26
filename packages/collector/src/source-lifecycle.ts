@@ -136,13 +136,13 @@ function logTransition(log: Logger, status: SourceStatus, to: SourceState, detai
  * call-sites that already log themselves can opt out.
  */
 export const SourceLifecycle = {
-  /** Move to `syncing` — clears progress + lastError + retry hint. */
+  /** Move to `syncing` — retain observed access loss until actual completion; clear other retry hints. */
   toSyncing(status: SourceStatus, log?: Logger): void {
     if (log) logTransition(log, status, "syncing");
     status.state = "syncing";
     status.progress = undefined;
-    status.lastError = undefined;
-    status.remediation = undefined;
+    if (status.remediation?.access?.status !== "denied") status.lastError = undefined;
+    if (status.remediation?.access?.status !== "denied") status.remediation = undefined;
     status.retryAfterMs = undefined;
   },
 

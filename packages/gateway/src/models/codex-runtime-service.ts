@@ -628,11 +628,13 @@ export class CodexRuntimeService {
       if (modelDetails.length > 0) {
         return { discovery: "app-server", modelDetails };
       }
+      if (managedCodexAuth(this.env)) throw new Error("The isolated model catalog is empty");
       log.warn(
         "Codex app-server model/list returned an empty catalog; falling back to debug models",
       );
     } catch (err) {
       this.refuseUnconfirmedCleanup(err);
+      if (managedCodexAuth(this.env)) throw err;
       log.warn(
         `Codex app-server model/list failed; falling back to debug models: ${conciseError(err)}`,
       );

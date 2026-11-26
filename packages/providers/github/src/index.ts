@@ -156,6 +156,7 @@ const GITHUB_URL_CANONICALIZER = {
 
 export default defineProvider<GithubContext>({
   provider: { id: "github", name: "GitHub" },
+  permissionRequirements: [],
   authType: "api-key",
   credentials: githubCredentialsSpec,
 

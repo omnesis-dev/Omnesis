@@ -32,6 +32,17 @@ afterEach(async () => {
 });
 async function eraseReceipt(target: DesktopProfile) {
   await mkdir(target.configDir, { recursive: true, mode: 0o700 });
+  await mkdir(`${target.configDir}.bootstrap`, { recursive: true, mode: 0o700 });
+  await writeFile(
+    join(`${target.configDir}.bootstrap`, "process-authority.json"),
+    JSON.stringify({
+      version: 3,
+      owner: "omnesis-desktop",
+      instance: target.instance,
+      secretService: target.secretService,
+    }),
+    { mode: 0o600 },
+  );
   const root = (await desktopRootIdentity(target))!;
   await writeDesktopRetirement(target, {
     version: 1,
@@ -243,4 +254,32 @@ test("a generation receipt copied into another home is refused rather than adopt
     { mode: 0o600 },
   );
   expect(() => desktopProfile(foreignHome)).toThrow("generation record is invalid");
+});
+
+test("fresh installation resets only an erased generation's owned retention ledger", async () => {
+  const service = new DesktopFreshInstallService(profile, { keysAbsent: keysAbsent() });
+  const path = join(`${profile.configDir}.bootstrap`, "code-retention.json");
+  await writeDesktopPrivateRecord(profile, "code-retention.json", {
+    owner: "omnesis-desktop",
+    instance: profile.instance,
+    secretService: profile.secretService,
+  });
+  await service.commit(await confirmation(service), signal());
+  await expect(stat(path)).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(writeDesktopPrivateRecord(profile, "code-retention.json", {})).rejects.toMatchObject(
+    { code: "FRESH_INSTALL_RECONNECT_REQUIRED" },
+  );
+});
+
+test("a completed erase without the prior verified-process certificate cannot mint a new generation", async () => {
+  await rm(join(`${profile.configDir}.bootstrap`, "process-authority.json"));
+  const keys = keysAbsent(),
+    service = new DesktopFreshInstallService(profile, { keysAbsent: keys });
+  await expect(service.preview(signal())).rejects.toMatchObject({
+    code: "DESKTOP_PROCESS_AUTHORITY_REQUIRED",
+  });
+  expect(keys).not.toHaveBeenCalled();
+  await expect(stat(desktopGenerationPath(profile.configDir))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
 });

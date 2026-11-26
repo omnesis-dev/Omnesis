@@ -198,11 +198,11 @@ describe("CodexRuntimeInstaller", () => {
       const started = new Promise<void>((resolve) => {
         start = resolve;
       });
-      vi.spyOn(CodexAppServerRuntime.prototype, "listModels").mockImplementation(() => {
+      vi.spyOn(CodexAppServerRuntime.prototype, "probeProtocolModels").mockImplementation(() => {
         start();
         return phase === "validation"
           ? Promise.reject(validationFailure)
-          : new Promise<unknown[]>((_resolve, reject) => {
+          : new Promise<void>((_resolve, reject) => {
               rejectValidation = reject;
             });
       });

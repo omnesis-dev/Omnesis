@@ -9,6 +9,9 @@ import { DesktopRestoreFailure } from "./restore-errors.js";
 import type { DesktopProfile } from "./environment.js";
 import type { DesktopBackupArchive } from "./restore-archive.js";
 
+/** Shared conservative allocation/envelope allowance, independent of the configured write reserve. */
+export const DESKTOP_RESTORE_ENTRY_HEADROOM_BYTES = 16_384;
+
 /** Include a full bounded envelope per entry, including tiny files and manifests. */
 export function desktopRestoreExpandedBytes(
   archive: Pick<DesktopBackupArchive, "files" | "bytes">,
@@ -18,7 +21,7 @@ export function desktopRestoreExpandedBytes(
   for (const size of archive.files.values()) {
     if (!Number.isSafeInteger(size) || size < 0)
       throw new DesktopRestoreFailure("RESTORE_CAPACITY_REQUIRED");
-    bytes += size + 16_384;
+    bytes += size + DESKTOP_RESTORE_ENTRY_HEADROOM_BYTES;
     if (!Number.isSafeInteger(bytes)) throw new DesktopRestoreFailure("RESTORE_CAPACITY_REQUIRED");
   }
   return Math.max(archive.bytes, bytes);

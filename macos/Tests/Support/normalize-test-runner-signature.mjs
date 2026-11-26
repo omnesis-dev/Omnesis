@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { inspectMachOEntitlementSlots } from "./signature-slots.mjs";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const PRODUCT = "OmnesisDesktopUITests-Runner";
@@ -98,13 +99,21 @@ export function normalizeDesktopTestRunner(
     );
   };
   const before = entitlements();
-  if (inspectOnly)
+  if (inspectOnly) {
+    if (lstatSync(executable).size > 16 * 1024 * 1024)
+      throw new Error("Unexpected generated runner size");
+    const bytes = readFileSync(executable);
     return {
       bundleIdentifier: BUNDLE_ID,
-      executableSha256: createHash("sha256").update(readFileSync(executable)).digest("hex"),
+      executableSha256: createHash("sha256").update(bytes).digest("hex"),
       restrictedClaimsPresent: Object.keys(before).filter((key) => RESTRICTED.has(key)),
       entitlements: before,
+      signatureSlots: dependencies.inspectSlots
+        ? dependencies.inspectSlots(bytes)
+        : inspectMachOEntitlementSlots(bytes),
+      defaultEntitlementDisplay: execute("/usr/bin/codesign", ["-d", "--entitlements", "-", app]),
     };
+  }
   const after = reduceTestRunnerEntitlements(before);
   if (before["com.apple.security.get-task-allow"] !== true)
     throw new Error("The generated Debug runner must already permit debugger attachment");

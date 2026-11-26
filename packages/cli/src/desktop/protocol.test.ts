@@ -3,6 +3,7 @@
 
 import { PassThrough, Readable, Writable } from "node:stream";
 import { expect, test, vi } from "vitest";
+import { DesktopSnapshotRetentionFailure } from "./snapshot-retention-errors.js";
 import { DesktopRestoreFailure } from "./restore-errors.js";
 import { DesktopInteractionBroker, runDesktopProtocol } from "./protocol.js";
 
@@ -413,4 +414,66 @@ test("restore errors expose fixed guidance while refusing raw or forged exceptio
   expect(f.messages[0]).toMatchObject({ ok: false, error: { code: "RESTORE_RECOVERY_REQUIRED" } });
   expect(f.messages[1]).toMatchObject({ ok: false, error: { code: "OPERATION_FAILED" } });
   expect(JSON.stringify(f.messages)).not.toContain(privateValue);
+});
+
+test("reports only fixed actionable recovery-retention errors to the native client", async () => {
+  const f = fixture(
+    () => {
+      throw new DesktopSnapshotRetentionFailure("RECOVERY_COPIES_FULL");
+    },
+    (_message, input) => input.end(),
+  );
+  send(f.input, "retention", "status");
+  await f.run;
+  expect(f.messages[0]).toMatchObject({
+    ok: false,
+    error: { code: "RECOVERY_COPIES_FULL", message: expect.stringContaining("personal backup") },
+  });
+});
+
+test.each([
+  "recoveryCopies",
+  "recoveryCopyPin",
+  "recoveryCopyPreview",
+  "recoveryCopyRemove",
+  "recoveryCopyRetry",
+  "recoveryCopyCancel",
+])("admits retention command %s in protocol one", async (command) => {
+  const f = fixture(
+    () => ({ kind: "desktopRecoveryCopies", items: [] }),
+    (_message, input) => input.end(),
+  );
+  send(
+    f.input,
+    "retention",
+    command,
+    command === "recoveryCopies"
+      ? {}
+      : { id: "00000000-0000-4000-8000-000000000001", pinned: true },
+  );
+  await f.run;
+  expect(f.messages[0]).toMatchObject({
+    version: 1,
+    ok: true,
+    result: { kind: "desktopRecoveryCopies" },
+  });
+});
+
+test("version one admits the additive collector-only restart command", async () => {
+  const f = fixture(
+    async (request) => ({ command: request.command, permissionRecheckRequired: true }),
+    (message, input) => {
+      if (message.id === "collector") input.end();
+    },
+  );
+  send(f.input, "collector", "restartCollector", {});
+  await f.run;
+  expect(f.messages).toEqual([
+    {
+      version: 1,
+      id: "collector",
+      ok: true,
+      result: { command: "restartCollector", permissionRecheckRequired: true },
+    },
+  ]);
 });

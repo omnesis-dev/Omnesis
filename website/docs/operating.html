@@ -164,6 +164,20 @@
 
         <h2 id="desktop">Operating the Mac app</h2>
         <p>
+          Setup and Settings → General show the required setup steps. Automatic startup must be
+          enabled and approved in macOS. The sources you enable must have their required access and
+          sign-in on the computer that collects them. Missing or revoked access returns setup to
+          incomplete with repair instructions; your indexed information is kept. An unavailable
+          check is shown as unverified rather than as a granted permission.
+        </p>
+        <p>
+          The Mac that stores your library must remain awake, online and running Omnesis for other
+          devices to use it. Settings → General and the setup checklist offer the
+          <a href="install#mac-server">sleep settings steps</a>. Starting Omnesis at sign-in is
+          separate from preventing system sleep; the display can turn off and the screen can stay
+          locked. After restarting the library Mac, sign in to macOS so Omnesis can start.
+        </p>
+        <p>
           Settings → Storage shows measured usage and the library's size limit. An unavailable
           measurement is shown as unknown. Cleanup runs as a job with its own progress and
           cancellation; cancelling can leave work already completed in place. Removing indexed
@@ -178,7 +192,21 @@
           pending removal or update prevents an ordinary restart from bypassing it.
         </p>
 
+        <p>
+          A source's access guidance can offer <strong>Restart collection on this Mac</strong>. This
+          restarts only this app's local collector, whether this Mac stores the library or joins
+          another computer. It keeps the gateway, connected library and saved pairing intact. A
+          pending restore, update or removal blocks the restart. Omnesis waits for the replacement
+          collector to authenticate, then checks the source's access again: restarting collection
+          does not grant a permission or prove that macOS attributed it to the expected app.
+        </p>
+
         <h2 id="services">Services</h2>
+        <p>
+          If the gateway runs on a Mac, also configure its
+          <a href="install#mac-server">system sleep settings</a>. Installing a service does not
+          change them. This includes a gateway container running on a macOS Docker host.
+        </p>
         <p>
           On a Docker install the services are the containers, and <code>omnesis service</code> on
           the host runs the <code>docker compose</code> equivalent of <code>start</code>,

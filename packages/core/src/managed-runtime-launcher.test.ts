@@ -104,3 +104,26 @@ test("the selected code identity cannot be changed or redirected to an arbitrary
     }),
   ).toThrow("cannot change");
 });
+
+test("fork and Worker defaults lose only the exact daemon-owner preload query", async () => {
+  const node = await import("./node-command.js");
+  const ordinary = "file:///example/runtime/bootstrap.js",
+    owner = ordinary + "?background-owner=fixture";
+  expect(
+    node.managedBackgroundExecArgv(
+      ["--use-system-ca", "--import", owner, "--import=another-preload", "--title", owner],
+      owner,
+      ordinary,
+    ),
+  ).toEqual([
+    "--use-system-ca",
+    "--import",
+    ordinary,
+    "--import=another-preload",
+    "--title",
+    owner,
+  ]);
+  expect(node.managedBackgroundExecArgv(["--import=" + owner], owner, ordinary)).toEqual([
+    "--import=" + ordinary,
+  ]);
+});

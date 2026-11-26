@@ -33,7 +33,13 @@ async function fixture() {
   await mkdir(applications, { mode: 0o700 });
   async function epoch(tag: string) {
     const bytes = Buffer.from(
-      JSON.stringify({ format: 1, codeUsageProtocol: 1, runtimeLauncher: "runtime-exec", tag }),
+      JSON.stringify({
+        format: 1,
+        codeUsageProtocol: 1,
+        processAuthorityProtocol: 3,
+        runtimeLauncher: "runtime-exec",
+        tag,
+      }),
     );
     const epoch = createHash("sha256").update(bytes).digest("hex");
     const runtime = join(cache, epoch),

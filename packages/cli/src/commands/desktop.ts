@@ -39,9 +39,19 @@ export const desktopCommand = defineCommand({
         name: "system-retire",
         description: "Keep this application's library stopped after its shell is removed",
       },
-      async run() {
-        const { retireDesktopApplication } = await import("../desktop/application-retirement.js");
-        await retireDesktopApplication(desktopProfile(), AbortSignal.timeout(80_000));
+      args: {
+        "background-owner": {
+          type: "boolean",
+          default: false,
+          description: "Internal native retirement entry",
+        },
+      },
+      async run({ args }) {
+        const { runDesktopRetirementEntry } = await import("../desktop/background-retirement.js");
+        await runDesktopRetirementEntry(desktopProfile(), {
+          backgroundOwner: args["background-owner"] === true,
+          signal: AbortSignal.timeout(80_000),
+        });
       },
     }),
     daemon: defineCommand({
@@ -51,27 +61,23 @@ export const desktopCommand = defineCommand({
       },
       args: {
         "restore-start": { type: "string", description: "Internal restore activation record" },
+        "background-owner": {
+          type: "boolean",
+          default: false,
+          description: "Internal native background-owner entry",
+        },
       },
       async run({ args }) {
-        const { runDesktopDaemon } = await import("../desktop/daemon.js");
+        const { runDesktopDaemonEntry } = await import("../desktop/background-owner.js");
         const { readDesktopRestoreActivationArguments } =
           await import("../desktop/restore-start-arguments.js");
         const restoreActivation = readDesktopRestoreActivationArguments(
           args["restore-start"] === undefined ? [] : ["--restore-start", args["restore-start"]],
         );
-        const controller = new AbortController();
-        const abort = () => controller.abort();
-        process.once("SIGINT", abort);
-        process.once("SIGTERM", abort);
-        try {
-          await runDesktopDaemon(desktopProfile(), {
-            signal: controller.signal,
-            restoreActivation,
-          });
-        } finally {
-          process.off("SIGINT", abort);
-          process.off("SIGTERM", abort);
-        }
+        await runDesktopDaemonEntry(desktopProfile(), {
+          backgroundOwner: args["background-owner"] === true,
+          restoreActivation,
+        });
       },
     }),
   },

@@ -10,6 +10,7 @@ import {
   fstatSync,
   rmSync,
   realpathSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -113,6 +114,118 @@ test("metadata without the native inherited descriptor is never authority", () =
     );
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout).refused).toBe(true);
+  } finally {
+    closeSync(f.fd);
+  }
+});
+
+test("catalog discovery requires native data-consumer authority and keeps its fixed prefix through wrapping", () => {
+  const f = fixture();
+  try {
+    const refused = run(`
+      try { node.managedDesktopCatalogDiscoveryInvocation('/example/sdk',['app-server'],'00000000-0000-4000-8000-000000000001'); process.exit(2); }
+      catch(error) { process.stdout.write(error.message); }
+    `);
+    expect(refused.status).toBe(0);
+    expect(refused.stdout).toContain("installed data-consumer runtime");
+    const launcher = join(f.root, "runtime-exec");
+    const result = run(
+      `
+      node.installManagedRuntimeLauncher({root:${JSON.stringify(f.root)},launcher:${JSON.stringify(launcher)},preload:${JSON.stringify(join(f.root, "packages/core/dist/managed-runtime-bootstrap.js"))},data:${JSON.stringify({ format: 1, scope: f.scope, lease: f.lease })}});
+      const invocation=node.managedDesktopCatalogDiscoveryInvocation('/example/sdk',['app-server'],'00000000-0000-4000-8000-000000000001');
+      process.stdout.write(JSON.stringify(node.nodeCommandInvocation(invocation.command,invocation.args)));
+    `,
+      f.fd,
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const invocation = JSON.parse(result.stdout);
+    expect(invocation.command).toBe(launcher);
+    expect(invocation.args.slice(0, 3)).toEqual([
+      "--catalog-discovery",
+      "00000000-0000-4000-8000-000000000001",
+      "--data-use",
+    ]);
+    expect(invocation.args.slice(-3)).toEqual(["--external", "/example/sdk", "app-server"]);
+  } finally {
+    closeSync(f.fd);
+  }
+});
+
+test("Node execve keeps PID identity but a native handoff must reacquire inherited data authority", () => {
+  const f = fixture();
+  try {
+    const probe = `import {fstatSync} from 'node:fs';let retained=false;try{const info=fstatSync(7,{bigint:true});retained=info.dev.toString()===${JSON.stringify(f.lease.device)}&&info.ino.toString()===${JSON.stringify(f.lease.inode)}}catch{}process.stdout.write(JSON.stringify({retained,pid:process.pid}));`;
+    const result = run(
+      `const pid=process.pid;const next=${JSON.stringify(probe)}+"if(process.pid!=="+pid+")process.exit(2);";process.execve(process.execPath,[process.execPath,'--input-type=module','-e',next],process.env);`,
+      f.fd,
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout).retained).toBe(false);
+  } finally {
+    closeSync(f.fd);
+  }
+});
+
+test("the scoped process certificate cannot authorize a caller's different managed profile", () => {
+  const f = fixture();
+  try {
+    writeFileSync(
+      join(`${f.scope.configDir}.bootstrap`, "process-authority.json"),
+      JSON.stringify({
+        version: 3,
+        owner: "omnesis-desktop",
+        instance: f.scope.instance,
+        secretService: f.scope.secretService,
+      }),
+      { mode: 0o600 },
+    );
+    const result = run(
+      `
+      node.installManagedRuntimeLauncher({root:${JSON.stringify(f.root)},launcher:${JSON.stringify(join(f.root, "runtime-exec"))},preload:${JSON.stringify(join(f.root, "packages/core/dist/managed-runtime-bootstrap.js"))},data:{format:1,scope:${JSON.stringify(f.scope)},lease:${JSON.stringify(f.lease)}}});
+      node.assertManagedDesktopProcessAuthority(${JSON.stringify(f.scope)});
+      let refused=false;try{node.assertManagedDesktopProcessAuthority({...${JSON.stringify(f.scope)},configDir:${JSON.stringify(join(f.root, "another-library"))}})}catch{refused=true}
+      if(!refused)throw new Error('A foreign profile inherited process authority');process.stdout.write('bound');
+    `,
+      f.fd,
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("bound");
+  } finally {
+    closeSync(f.fd);
+  }
+});
+
+test("key recovery factory is control-only and never accepts inherited shared or exclusive DATA", () => {
+  const f = fixture();
+  const context = {
+    version: 1,
+    scope: f.scope,
+    root: { device: "1", inode: "2" },
+    update: null,
+    restore: null,
+  };
+  try {
+    for (const data of [
+      undefined,
+      { format: 1, scope: f.scope, lease: f.lease },
+      {
+        format: 1,
+        scope: f.scope,
+        lease: f.lease,
+        exclusive: { purpose: "erase", operationId: "00000000-0000-4000-8000-000000000001" },
+      },
+    ]) {
+      const result = run(
+        `
+        node.installManagedRuntimeLauncher({root:${JSON.stringify(f.root)},launcher:${JSON.stringify(join(f.root, "runtime-exec"))},preload:${JSON.stringify(join(f.root, "packages/core/dist/managed-runtime-bootstrap.js"))},data:${JSON.stringify(data)}});
+        let refused=false;try{const invocation=node.managedDesktopKeyRecoveryInvocation(${JSON.stringify(context)});process.stdout.write(invocation.args[0])}catch{refused=true}
+        if(refused!==${data !== undefined})throw new Error('Key recovery DATA boundary was not enforced');
+      `,
+        f.fd,
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe(data ? "" : "--key-recovery");
+    }
   } finally {
     closeSync(f.fd);
   }

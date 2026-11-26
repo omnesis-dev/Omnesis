@@ -23,6 +23,7 @@ const codeManifestSchema = z
   .object({
     format: z.literal(1),
     codeUsageProtocol: z.literal(1),
+    processAuthorityProtocol: z.literal(3),
     runtimeLauncher: z.literal("runtime-exec"),
   })
   .passthrough();

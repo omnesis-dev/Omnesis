@@ -15,6 +15,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { runManagedKeyRecoveryCommand } from "./managed-key-recovery.js";
 import {
   managedRuntimeExecutableInvocation,
   managedDesktopMetadataInvocation,
@@ -47,6 +48,7 @@ import {
   retireLegacySecretEntry,
   deleteSecretEntry,
 } from "./secret-store-entry.js";
+import type { ManagedDesktopKeyRecoveryContext } from "./node-command.js";
 
 export const OMNESIS_SECRET_SERVICE = DEFAULT_SECRET_STORE_SERVICE;
 export const OMNESIS_INSTALL_ROOT_KEY = "install-root-key-v1";
@@ -120,6 +122,8 @@ export interface SecretCommandOptions {
   /** Secret Service accepts secrets on stdin; macOS `security` does not. */
   input?: string;
   metadataGeneration?: string;
+  /** A fixed, original-key recovery operation; never ordinary Keychain mutation authority. */
+  keyRecovery?: ManagedDesktopKeyRecoveryContext;
 }
 
 export type SecretCommandRunner = (
@@ -463,8 +467,9 @@ export async function confirmMacosKeychainEntriesAbsent(
   return true;
 }
 
-export const defaultSecretCommandRunner: SecretCommandRunner = (cmd, args, options = {}) =>
-  new Promise((resolve) => {
+export const defaultSecretCommandRunner: SecretCommandRunner = (cmd, args, options = {}) => {
+  if (options.keyRecovery) return runManagedKeyRecoveryCommand(cmd, args, options.keyRecovery);
+  return new Promise((resolve) => {
     const executable =
       process.platform === "darwin" && cmd === "security" ? "/usr/bin/security" : cmd;
     const invocation = options.metadataGeneration
@@ -511,6 +516,7 @@ export const defaultSecretCommandRunner: SecretCommandRunner = (cmd, args, optio
       }
     }
   });
+};
 
 class MacosKeychainSecretStore implements SecretStore {
   readonly backend = "macos-keychain" as const;

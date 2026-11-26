@@ -29,70 +29,82 @@ struct DesktopSourceSettingsView: View {
                         } } }
                     } else if let source = flow.snapshot?.source {
                         Text(source.accountId).font(.headline).textSelection(.enabled)
-                        Label(source.enabled ? "Enabled" : "Paused", systemImage: source.enabled ? "checkmark.circle" : "pause.circle")
+                        Label(
+                            flow.historical ? "Historical data" : source.enabled ? "Enabled" : "Paused",
+                            systemImage: flow.historical ? "clock.arrow.circlepath" : source.enabled ? "checkmark.circle" : "pause.circle"
+                        )
+                        ForEach(flow.lifecycle?.archivedDevices ?? []) { origin in
+                            Text("History from \(origin.name)").foregroundStyle(DesktopTheme.secondary)
+                        }
+                        if !flow.canEditSelectedHost {
+                            Text(
+                                "Indexed information stays in your library. Refresh an eligible computer's source settings before editing collection settings."
+                            )
+                            .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                        }
                         Button(source.enabled ? "Pause and keep indexed information" : "Resume this source") {
                             Task { await flow.setEnabled(!source.enabled)
                                 await store.refresh()
                             }
-                        }.disabled(flow.busy)
+                        }.disabled(flow.busy || (!source.enabled && !flow.canResume))
 
                         if !flow.sharedParams.isEmpty {
                             GroupBox("Library settings") {
                                 VStack(alignment: .leading, spacing: 14) {
                                     Text("These settings apply to the source across your library.").font(.callout)
-                                        .foregroundStyle(.secondary)
+                                        .foregroundStyle(DesktopTheme.secondary)
                                     ForEach(flow.sharedParams) { param in
                                         SourceParameterField(
                                             param: param,
                                             value: sharedBinding(param.name),
-                                            allowsFilePicker: isLocalSelectedDevice
-                                        )
+                                            allowsFilePicker: isLocalSelectedDevice && flow.canEditSelectedHost
+                                        ).disabled(flow.busy || !flow.canEditSelectedHost)
                                     }
                                     Button("Save library settings") { Task { await flow.saveShared()
                                         await store.refresh()
                                     } }
-                                    .disabled(flow.busy)
+                                    .disabled(flow.busy || !flow.canEditSelectedHost)
                                 }.padding(8)
                             }
                         }
 
-                        GroupBox("Connected computers") {
+                        GroupBox("Collection computers") {
                             VStack(alignment: .leading, spacing: 14) {
                                 Picker("Settings on", selection: Binding(get: { flow.selectedDeviceId }, set: { id in
                                     Task { await flow.selectDevice(id) }
                                 })) {
                                     ForEach(flow.memberIds, id: \.self) { id in Text(deviceName(id)).tag(id) }
                                 }.disabled(flow.busy)
-                                if !isLocalSelectedDevice {
+                                if !flow.selectedDeviceId.isEmpty, !isLocalSelectedDevice {
                                     Text("Paths below refer to \(deviceName(flow.selectedDeviceId)), rather than this Mac.")
-                                        .font(.callout).foregroundStyle(.secondary)
+                                        .font(.callout).foregroundStyle(DesktopTheme.secondary)
                                 }
                                 ForEach(flow.localParams) { param in
                                     SourceParameterField(
                                         param: param,
                                         value: localBinding(param.name),
-                                        allowsFilePicker: isLocalSelectedDevice
-                                    )
+                                        allowsFilePicker: isLocalSelectedDevice && flow.canEditSelectedHost
+                                    ).disabled(flow.busy || !flow.canEditSelectedHost)
                                 }
                                 if !flow.localParams.isEmpty {
                                     Button("Save settings on this computer") { Task { await flow.saveLocal()
                                         await store.refresh()
                                     } }
-                                    .disabled(flow.busy)
+                                    .disabled(flow.busy || !flow.canEditSelectedHost)
                                     Text(source.enabled
                                         ? "Editing these settings keeps collection running."
                                         : "Editing these settings keeps this source paused.")
-                                        .font(.caption).foregroundStyle(.secondary)
+                                        .font(.caption).foregroundStyle(DesktopTheme.secondary)
                                 }
                                 if ["replicated", "partitioned", "handoff"].contains(source.multiDeviceMode ?? ""),
                                    flow.memberIds.count > 1 {
                                     Button("Disconnect \(deviceName(flow.selectedDeviceId))", role: .destructive) { confirmDetach = true }
                                         .disabled(flow.busy)
-                                } else if flow.memberIds.count == 1 {
+                                } else if flow.memberIds.count == 1, !flow.historical {
                                     Text(
                                         "This is the source's only computer. Pause it to keep its indexed information, or remove the source below."
                                     )
-                                    .font(.callout).foregroundStyle(.secondary)
+                                    .font(.callout).foregroundStyle(DesktopTheme.secondary)
                                 }
                             }.padding(8)
                         }
@@ -111,7 +123,7 @@ struct DesktopSourceSettingsView: View {
                                     }
                                     if targets.isEmpty {
                                         Text("Open Omnesis on the other computer first. It appears here when it can connect this source.")
-                                            .font(.callout).foregroundStyle(.secondary)
+                                            .font(.callout).foregroundStyle(DesktopTheme.secondary)
                                     }
                                 }.padding(8)
                             }
@@ -121,14 +133,14 @@ struct DesktopSourceSettingsView: View {
                         Text(
                             "Removing a source deletes its managed information from Omnesis on all connected computers. Your originals stay where they are."
                         )
-                        .font(.callout).foregroundStyle(.secondary)
+                        .font(.callout).foregroundStyle(DesktopTheme.secondary)
                         Button("Remove this source…", role: .destructive) { confirmRemoval = true }.disabled(flow.busy)
                     } else if flow.busy {
                         ProgressView("Loading source settings…")
                     }
-                    if let message = flow.message { Text(message).foregroundStyle(.secondary) }
+                    if let message = flow.message { Text(message).foregroundStyle(DesktopTheme.secondary) }
                     if let error = flow.error {
-                        Text(error).foregroundStyle(.red).textSelection(.enabled)
+                        Text(error).foregroundStyle(DesktopTheme.danger).textSelection(.enabled)
                         if !flow.removalRequested { Button("Refresh settings") { Task { await flow.load() } }.disabled(flow.busy) }
                     }
                     if flow.busy, flow.snapshot != nil { ProgressView("Saving source changes…") }
@@ -139,7 +151,16 @@ struct DesktopSourceSettingsView: View {
         }
         .frame(width: 660, height: 650)
         .interactiveDismissDisabled(flow.busy)
-        .task { if flow.snapshot == nil, flow.error == nil, !flow.removalRequested { await flow.load() } }
+        .disabled(store.api !== flow.api)
+        .task {
+            flow.isCurrentAPI = { [weak owner = store, weak api = flow.api] in api != nil && owner?.api === api }
+            if flow.snapshot == nil, flow.error == nil, !flow.removalRequested { await flow.load() }
+        }
+        .onChange(of: store.api.map(ObjectIdentifier.init)) {
+            if store.api !== flow.api { flow.cancelPresentation()
+                dismiss()
+            }
+        }
         .onDisappear { flow.cancelPresentation() }
         .confirmationDialog("Remove this source from your library?", isPresented: $confirmRemoval) {
             Button("Pause and keep indexed information") { Task { await flow.setEnabled(false)
@@ -165,7 +186,7 @@ struct DesktopSourceSettingsView: View {
                 :
                 "This computer stops contributing to this source. Information already indexed stays in the library, and the other connected computers continue.")
         }
-        .sheet(item: $movingHost, onDismiss: { Task { await flow.load()
+        .omnesisSheet(item: $movingHost, onDismiss: { Task { await flow.load()
             await store.refresh()
         } }) { host in
             if let source = flow.snapshot?.source {
@@ -211,6 +232,16 @@ struct DesktopSourceMoveConfirmation: View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Move this account to \(targetName)?").font(.title2)
             Text(pending.source.accountId).font(.headline).textSelection(.enabled)
+            if flow.needsAccess {
+                DesktopCollectionAccessCard(
+                    flow: flow.access,
+                    requirements: flow.descriptor.permissionRequirements,
+                    computer: targetName,
+                    local: flow.deviceId == flow.api.connection.collectorDeviceId,
+                    checkLabel: "Check access and review move",
+                    check: { await flow.confirmMove() }
+                )
+            }
             Text(pending.source.enabled
                 ? "Collection stops on the previous computer and starts on the selected one. Information already indexed stays in your library. Your original files and sign-ins stay on the previous computer."
                 :
@@ -224,10 +255,10 @@ struct DesktopSourceMoveConfirmation: View {
                 Button("Move to \(targetName)") { Task { await flow.confirmMove()
                     await store.refresh()
                 } }
-                .buttonStyle(.borderedProminent).disabled(flow.busy)
+                .buttonStyle(DesktopButtonStyle(primary: true)).disabled(flow.busy)
             }
             if flow.busy { ProgressView("Moving account…") }
-        }.padding(26).frame(width: 520)
+        }.buttonStyle(DesktopButtonStyle()).padding(26).frame(width: 520)
             .interactiveDismissDisabled(flow.busy)
     }
 

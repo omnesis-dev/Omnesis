@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { createLogger, fullDiskAccessRemediation } from "@omnesis/core";
 import {
   defineSource,
+  expandHostPath,
   listReadAccessDirectory,
   probeFileReadAccess,
   syncPage,
@@ -182,6 +183,38 @@ export default defineSource({
   id: "things",
   name: "Things 3",
   description: "Tasks from Things 3 app",
+  permissionRequirements: [
+    {
+      id: "tasks-store",
+      kind: "protected-files",
+      summary: "Allow access to the selected task store",
+      scope: "Selected task store",
+      blocking: true,
+      actions: [
+        { kind: "open-system-settings", category: "privacy-security" },
+        { kind: "retry-access" },
+        { kind: "restart-collector" },
+      ],
+    },
+  ],
+  async probePermissionAccess({ params, signal }) {
+    if (params.dbPath) return probeFileReadAccess(expandHostPath(params.dbPath), { signal });
+    const listing = await listReadAccessDirectory(THINGS_GROUP_CONTAINER, { signal });
+    if (listing.status !== "readable") return listing;
+    const stores = listing.entries.filter(
+      (entry) => entry.isDirectory() && entry.name.startsWith("ThingsData-"),
+    );
+    if (stores.length !== 1) return { status: "unavailable" };
+    return probeFileReadAccess(
+      join(
+        THINGS_GROUP_CONTAINER,
+        stores[0]!.name,
+        "Things Database.thingsdatabase",
+        "main.sqlite",
+      ),
+      { signal },
+    );
+  },
   authType: "local",
   unitName: "tasks",
   contract: {

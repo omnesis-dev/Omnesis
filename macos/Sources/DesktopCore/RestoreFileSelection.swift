@@ -20,7 +20,7 @@ public struct DesktopRestoreFileSelection: Encodable, Sendable {
     public static func read(_ url: URL, maxBytes: Int64 = 1_099_511_627_776) throws -> Self {
         guard url.isFileURL, url.query == nil, url.fragment == nil, !url.path.contains("\0"),
               url.path.utf8.count <= 4096, maxBytes > 0,
-              url.resolvingSymlinksInPath() == url.standardizedFileURL else { throw CocoaError(.fileReadNoPermission) }
+              try DesktopCanonicalPath.resolve(url.path) == url.path else { throw CocoaError(.fileReadNoPermission) }
         let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
         guard descriptor >= 0 else { throw CocoaError(.fileReadNoSuchFile) }
         defer { close(descriptor) }
@@ -37,9 +37,9 @@ public struct DesktopRestoreFileSelection: Encodable, Sendable {
         let seconds = info.st_mtim.tv_sec
         let nanoseconds = info.st_mtim.tv_nsec
         #endif
-        guard seconds >= 0, nanoseconds >= 0 else { throw CocoaError(.fileReadNoPermission) }
+        guard nanoseconds >= 0, nanoseconds < 1_000_000_000 else { throw CocoaError(.fileReadNoPermission) }
         return Self(
-            path: url.standardizedFileURL.path,
+            path: url.path,
             device: device,
             inode: String(info.st_ino),
             bytes: info.st_size,

@@ -6,7 +6,7 @@ import { mkdtempSync, chmodSync, rmSync, existsSync, readFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { SCOPE_ADMIN, SCOPE_READ } from "@omnesis/types";
+import { DeviceId, SourceId, SCOPE_ADMIN, SCOPE_READ } from "@omnesis/types";
 import {
   openEncryptedSqlite,
   sqliteFileLooksPlaintext,
@@ -14,12 +14,22 @@ import {
 } from "../sqlite-encryption.js";
 import { runSchemaSetup } from "../data/schema.js";
 import { runMigrations } from "../data/migrations.js";
-import { createDevice } from "../data/repositories/DeviceRepository.js";
+import {
+  createDevice,
+  getDevice,
+  listDevices,
+  revokeDevice,
+} from "../data/repositories/DeviceRepository.js";
 import { createToken } from "../data/repositories/TokenRepository.js";
 import { createServer } from "../server.js";
 import { enqueueNewNotes, claimDueNote } from "../brain/note-agent/storage.js";
 import { directWriteGate } from "../write-gate.js";
-import { reconcileRestoredMainDatabase } from "./main-database.js";
+import {
+  retireDeviceSources,
+  sourceArchivedDevices,
+} from "../data/repositories/DeviceRetirementRepository.js";
+import { desktopRestoreReviewedTables } from "./authority-policy.js";
+import { reconcileRestoredMainDatabase, inspectRestoredMainDatabase } from "./main-database.js";
 import type { Db } from "../data/types.js";
 
 let dir: string;
@@ -157,6 +167,7 @@ test("keeps target native HTTP authority and imports encrypted inert personal da
     sourcesPaused: 1,
     foreignDevicesRetained: 1,
     targetDevicesPreserved: 1,
+    recordings: 0,
     targetLabs: { brain: true, tasks: false, watches: false },
   });
   expect(sqliteFileLooksPlaintext(join(dir, "destination.db"))).toBe(false);
@@ -338,5 +349,234 @@ test("legacy SQLite images are read only from bounded memory and produce encrypt
   } finally {
     db.close();
     image.fill(0);
+  }
+});
+
+function retirementSource(
+  db: EncryptedSqliteDatabase,
+  id: string,
+  deviceId: string,
+  createdAt = 123,
+) {
+  db.prepare(
+    "INSERT INTO sources(id,type,account_id,device_id,config,enabled,created_at,updated_at) VALUES (?,'invented',?,?,'{}',1,?,?)",
+  ).run(id, id, deviceId, createdAt, createdAt);
+  db.prepare("INSERT INTO source_devices(source_id,device_id,added_at) VALUES(?,?,1)").run(
+    id,
+    deviceId,
+  );
+  db.prepare(
+    "INSERT INTO source_member_config_contracts(source_id,param_names) VALUES(?,'[\"path\"]')",
+  ).run(id);
+}
+function retire(db: EncryptedSqliteDatabase, id: string, choice: "keep" | "delete") {
+  revokeDevice(db as unknown as Db, DeviceId(id));
+  retireDeviceSources(db as unknown as Db, DeviceId(id), choice);
+}
+function matchingDevice(db: EncryptedSqliteDatabase, id: string) {
+  db.prepare(
+    "INSERT INTO devices(id,name,kind,capabilities,paired_at) VALUES(?,?,'collector','{}',1)",
+  ).run(id, "Invented counterpart " + id);
+}
+
+test("real encrypted empty current schema has exactly the reviewed ordinary tables including empty retirement tables", () => {
+  const empty = create("empty.db", destinationKey);
+  const tables = empty
+    .prepare<[], { name: string }>(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+    )
+    .all()
+    .map((row) => row.name);
+  expect(tables).toEqual(desktopRestoreReviewedTables());
+  expect(tables).toContain("forgotten_devices");
+  expect(tables).toContain("source_device_archives");
+  empty.close();
+  expect(
+    inspectRestoredMainDatabase({ sourcePath: join(dir, "empty.db"), sourceKey: destinationKey }),
+  ).toMatchObject({ devices: 0, sources: 0, documents: 0 });
+});
+
+test("foreign retired provenance stays archived while target retirement and absent archive choices win over an older backup", () => {
+  retire(source, foreignId, "keep");
+  const targetRetired = createDevice(target as unknown as Db, {
+    name: "Invented retired target",
+    kind: "collector",
+  });
+  retirementSource(target, "retirement-choice", targetRetired.id);
+  // Target discarded its contribution while a sibling kept this source alive: no archive edge is earned.
+  const sibling = createDevice(target as unknown as Db, {
+    name: "Invented surviving sibling",
+    kind: "collector",
+  });
+  target
+    .prepare("UPDATE sources SET multi_device_mode='partitioned' WHERE id='retirement-choice'")
+    .run();
+  target
+    .prepare(
+      "INSERT INTO source_devices(source_id,device_id,added_at) VALUES('retirement-choice',?,1)",
+    )
+    .run(sibling.id);
+  retire(target, targetRetired.id, "delete");
+  matchingDevice(source, targetRetired.id);
+  retirementSource(source, "retirement-choice", targetRetired.id);
+  // Even a backup keep edge for the known target ID must not override the target's absent edge.
+  retire(source, targetRetired.id, "keep");
+  const expected = target.prepare("SELECT * FROM forgotten_devices ORDER BY device_id").all();
+  reconcile();
+  const db = result();
+  try {
+    expect(
+      db.prepare("SELECT * FROM forgotten_devices WHERE device_id=?").all(targetRetired.id),
+    ).toEqual(expected);
+    expect(getDevice(db as unknown as Db, targetRetired.id)).toBeNull();
+    expect(listDevices(db as unknown as Db).some((device) => device.id === targetRetired.id)).toBe(
+      false,
+    );
+    expect(
+      db
+        .prepare("SELECT count(*) FROM source_devices WHERE device_id IN (?,?)")
+        .pluck()
+        .get(targetRetired.id, foreignId),
+    ).toBe(0);
+    expect(
+      db
+        .prepare("SELECT count(*) FROM source_device_archives WHERE device_id=?")
+        .pluck()
+        .get(targetRetired.id),
+    ).toBe(0);
+    expect(sourceArchivedDevices(db as unknown as Db, SourceId("source-invented"))).toMatchObject([
+      { deviceId: foreignId },
+    ]);
+    expect(
+      db
+        .prepare(
+          "SELECT param_names FROM source_member_config_contracts WHERE source_id='retirement-choice'",
+        )
+        .pluck()
+        .get(),
+    ).toBe('["path"]');
+    expect(db.pragma("foreign_key_check")).toEqual([]);
+  } finally {
+    db.close();
+  }
+});
+
+test("target forgotten identity cannot be revived by older active backup memberships", () => {
+  const retired = createDevice(target as unknown as Db, {
+    name: "Invented retired owner",
+    kind: "collector",
+  });
+  retirementSource(target, "target-retained-history", retired.id);
+  retire(target, retired.id, "keep");
+  matchingDevice(source, retired.id);
+  retirementSource(source, "target-retained-history", retired.id);
+  const expected = target
+    .prepare("SELECT * FROM forgotten_devices WHERE device_id=?")
+    .get(retired.id);
+  reconcile();
+  const db = result();
+  try {
+    expect(db.prepare("SELECT * FROM forgotten_devices WHERE device_id=?").get(retired.id)).toEqual(
+      expected,
+    );
+    expect(
+      sourceArchivedDevices(db as unknown as Db, SourceId("target-retained-history")),
+    ).toMatchObject([{ deviceId: retired.id }]);
+    expect(getDevice(db as unknown as Db, retired.id)).toBeNull();
+    expect(
+      db.prepare("SELECT count(*) FROM source_devices WHERE device_id=?").pluck().get(retired.id),
+    ).toBe(0);
+    expect(
+      db.prepare("SELECT device_id FROM sources WHERE id='target-retained-history'").pluck().get(),
+    ).toBe(retired.id);
+    expect(db.pragma("foreign_key_check")).toEqual([]);
+  } finally {
+    db.close();
+  }
+});
+
+test("source retirement conflicting with an active target device refuses without changing target authority", () => {
+  matchingDevice(source, ownerId);
+  retirementSource(source, "conflicting-retirement", ownerId);
+  retire(source, ownerId, "keep");
+  const before = readFileSync(join(dir, "target.db"));
+  expect(() => reconcile()).toThrow("could not be reconciled");
+  expect(readFileSync(join(dir, "target.db"))).toEqual(before);
+  expect(existsSync(join(dir, "destination.db"))).toBe(false);
+});
+
+test.each(["missing", "different-incarnation"])(
+  "target archive edge is not attached to %s restored source",
+  (mode) => {
+    const retired = createDevice(target as unknown as Db, {
+      name: "Invented historical host",
+      kind: "collector",
+    });
+    retirementSource(target, "historical-source", retired.id);
+    retire(target, retired.id, "keep");
+    if (mode === "different-incarnation")
+      retirementSource(source, "historical-source", foreignId, 456);
+    reconcile();
+    const db = result();
+    try {
+      expect(
+        db
+          .prepare("SELECT count(*) FROM forgotten_devices WHERE device_id=?")
+          .pluck()
+          .get(retired.id),
+      ).toBe(1);
+      expect(
+        db
+          .prepare("SELECT count(*) FROM source_device_archives WHERE device_id=?")
+          .pluck()
+          .get(retired.id),
+      ).toBe(0);
+      expect(db.pragma("foreign_key_check")).toEqual([]);
+    } finally {
+      db.close();
+    }
+  },
+);
+
+test("completed and unfinished recording blobs and metadata survive reconstruction unchanged", () => {
+  source
+    .prepare(
+      "INSERT INTO recording_sessions(id,started_at,last_activity_at,created_at) VALUES('invented-recording','2026-01-01','2026-01-01','2026-01-01')",
+    )
+    .run();
+  source
+    .prepare(
+      "INSERT INTO recording_chunks(session_id,seq,started_at,duration_ms,audio,status,text,voice_vectors,next_attempt_at,received_at) VALUES('invented-recording',0,'2026-01-01',1000,?,'pending','Invented transcript',?,'2026-01-01','2026-01-01')",
+    )
+    .run(Buffer.from("invented audio"), Buffer.from("invented vectors"));
+  source
+    .prepare(
+      "INSERT INTO recording_marks(session_id,note_id,marked_at) VALUES('invented-recording','invented-note','2026-01-01')",
+    )
+    .run();
+  source
+    .prepare(
+      "INSERT INTO recording_speakers(session_id,speaker,name) VALUES('invented-recording',1,'Invented speaker')",
+    )
+    .run();
+  source
+    .prepare(
+      "INSERT INTO recording_suggestion_dismissals(session_id,key,dismissed_at) VALUES('invented-recording','invented-choice','2026-01-01')",
+    )
+    .run();
+  const tables = [
+    "recording_sessions",
+    "recording_chunks",
+    "recording_marks",
+    "recording_speakers",
+    "recording_suggestion_dismissals",
+  ];
+  const expected = tables.map((table) => source.prepare(`SELECT * FROM ${table}`).all());
+  expect(reconcile().recordings).toBe(1);
+  const db = result();
+  try {
+    expect(tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all())).toEqual(expected);
+  } finally {
+    db.close();
   }
 });

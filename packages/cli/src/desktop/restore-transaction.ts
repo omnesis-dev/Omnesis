@@ -12,6 +12,12 @@ import {
   DERIVED_INDEX_FILE_PATTERN,
 } from "@omnesis/core";
 import { swapIntoPlace, type SwapPlan } from "../commands/restore-swap.js";
+import { assertDesktopProcessAuthority } from "./process-authority.js";
+import {
+  captureDesktopRestoreBackupRuntime,
+  retainDesktopRestoreBeforeReplacement,
+} from "./snapshot-retention-restore.js";
+import { registerVerifiedDesktopRestoreSnapshot } from "./snapshot-retention.js";
 import { assertDesktopConfigSecretsProtected } from "./config-protection.js";
 import { DesktopRestoreFailure } from "./restore-errors.js";
 import { assertDesktopRestoreCapacity } from "./restore-capacity.js";
@@ -104,6 +110,10 @@ export async function applyDesktopRestoreTransaction(
   dependencies: Partial<TransactionDependencies> = {},
 ): Promise<{ operationId: string; sourcesPaused: number; watchesPaused: number }> {
   const deps = { ...defaults, ...dependencies };
+  signal.throwIfAborted();
+  const operationId = plan.adoptedOperationId ?? randomUUID();
+  deps.authorize(profile, "restore", operationId);
+  await assertDesktopProcessAuthority(profile);
   return withDesktopInstallLease(profile, signal, async () => {
     signal.throwIfAborted();
     if (plan.adoptedOperationId) {
@@ -124,7 +134,8 @@ export async function applyDesktopRestoreTransaction(
           : protection.matches(plan.protection))
       )
         throw new Error("The library changed; preview this backup again before restoring");
-      const operationId = plan.adoptedOperationId ?? randomUUID();
+      if (!plan.adoptedOperationId) await retainDesktopRestoreBeforeReplacement(profile, signal);
+      const backupRuntime = await captureDesktopRestoreBackupRuntime(profile);
       deps.authorize(profile, "restore", operationId);
       const proposed: DesktopRestoreIntent = {
         version: 1,
@@ -138,6 +149,7 @@ export async function applyDesktopRestoreTransaction(
         archiveSha256: plan.archiveSha256,
         archiveBytes: plan.archiveBytes,
         backup: null,
+        ...(backupRuntime ? { backupRuntime } : {}),
       };
       if (plan.adoptedOperationId) {
         const existing = await readDesktopRestoreIntent(profile);
@@ -152,7 +164,16 @@ export async function applyDesktopRestoreTransaction(
           !sameDesktopRoot(existing.root, proposed.root)
         )
           throw new Error("The restore intent changed");
-        intent = existing;
+        if (
+          existing.backupRuntime &&
+          backupRuntime &&
+          (existing.backupRuntime.epoch !== backupRuntime.epoch ||
+            existing.backupRuntime.version !== backupRuntime.version)
+        )
+          throw new Error("The application changed before making the recovery copy");
+        intent =
+          existing.backupRuntime || !backupRuntime ? existing : { ...existing, backupRuntime };
+        if (intent !== existing) await writeDesktopRestoreIntent(profile, intent);
       } else {
         intent = proposed;
         await writeDesktopRestoreIntent(profile, intent);
@@ -236,6 +257,7 @@ export async function applyDesktopRestoreTransaction(
         if (!sameDesktopRoot(intent.root, await desktopRootIdentity(profile)))
           throw new Error("The managed folder identity changed", { cause: error });
         intent = { ...intent, phase: "rolled-back" };
+        await registerVerifiedDesktopRestoreSnapshot(profile, intent, cleanup);
         await writeDesktopRestoreIntent(profile, intent);
       } catch {
         intent = { ...intent, phase: "recovery-required" };
@@ -271,6 +293,7 @@ export async function recoverDesktopRestoreTransaction(
 ): Promise<{ recoveryCopyRetained: boolean }> {
   const deps = { ...defaults, ...dependencies };
   deps.authorize(profile, "rollback", operationId);
+  await assertDesktopProcessAuthority(profile);
   const recover = async () => {
     const retirement = await readDesktopRetirement(profile);
     if (retirement?.mode === "keep-data" && retirement.phase === "complete")
@@ -315,6 +338,7 @@ export async function recoverDesktopRestoreTransaction(
           throw new Error("The recovery copy is missing");
         await assertDesktopRuntimeLeases(profile, leases);
         intent = { ...intent, phase: "rolled-back" };
+        await registerVerifiedDesktopRestoreSnapshot(profile, intent, cleanup);
         await writeDesktopRestoreIntent(profile, intent);
         return { recoveryCopyRetained: intent.backup !== null };
       } catch {

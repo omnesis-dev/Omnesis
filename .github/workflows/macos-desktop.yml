@@ -43,6 +43,8 @@ jobs:
         run: node scripts/desktop/prepare-node-test-fixture.mjs --arch "$(node -p process.arch)" --out macos/.node-fixture --cache "$RUNNER_TEMP/desktop-node-cache"
       - name: Prepare pinned Codex Keychain process fixture
         run: node scripts/desktop/prepare-codex-keychain-test-fixture.mjs --arch "$(node -p process.arch)" --out macos/.codex-keychain-fixture --cache "$RUNNER_TEMP/desktop-codex-cache"
+      - name: Prepare production backend composition fixture
+        run: node scripts/desktop/codex-backend-test-fixture.mjs --out macos/.codex-backend-fixture
       - name: Restore SwiftPM packages
         id: swiftpm-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -105,9 +107,10 @@ jobs:
           desktop_xcodebuild -resultBundlePath build/DesktopTests.xcresult test-without-building
       - name: Assemble complete unsigned app and exercise bundled runtime
         run: |
-          node scripts/desktop/prepare-runtime.mjs --out "$RUNNER_TEMP/desktop-runtime" --cache "$RUNNER_TEMP/desktop-node-cache" --runtime-exec macos/build/Build/Products/Debug/OmnesisRuntimeExec
+          xcodebuild -project macos/OmnesisDesktop.xcodeproj -scheme OmnesisDesktop -configuration Release -destination 'platform=macOS' -derivedDataPath macos/build CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO build
+          node scripts/desktop/prepare-runtime.mjs --out "$RUNNER_TEMP/desktop-runtime" --cache "$RUNNER_TEMP/desktop-node-cache" --runtime-exec macos/build/Build/Products/Release/OmnesisRuntimeExec
           node scripts/desktop/smoke-runtime.mjs --runtime "$RUNNER_TEMP/desktop-runtime"
-          node scripts/desktop/assemble-app.mjs --runtime "$RUNNER_TEMP/desktop-runtime" --shell-app macos/build/Build/Products/Debug/Omnesis.app --out "$RUNNER_TEMP/Omnesis.app" --arch "$(node -p process.arch)" --version "$(node -p 'JSON.parse(require("fs").readFileSync("packages/core/package.json")).version')"
+          node scripts/desktop/assemble-app.mjs --runtime "$RUNNER_TEMP/desktop-runtime" --shell-app macos/build/Build/Products/Release/Omnesis.app --out "$RUNNER_TEMP/Omnesis.app" --arch "$(node -p process.arch)" --version "$(node -p 'JSON.parse(require("fs").readFileSync("packages/core/package.json")).version')"
           ditto -c -k --keepParent "$RUNNER_TEMP/Omnesis.app" "$RUNNER_TEMP/Omnesis-unsigned.zip"
       - name: Upload unsigned app for isolated QA
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7

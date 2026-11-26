@@ -26,7 +26,9 @@ import {
   type DesktopRestoreActivation,
 } from "./restore-start-arguments.js";
 import { desktopRuntimeEpoch } from "./update-state.js";
-import { desktopEpochMayStart } from "./update-admission.js";
+import { readDesktopRestartIdentity } from "./collector-restart-identity.js";
+import { DesktopCollectorRestart } from "./collector-restart.js";
+import { desktopEpochMayStart, desktopUpdateBlocked } from "./update-admission.js";
 import { claimDesktopUpdateEpoch } from "./update-claim.js";
 import { probeDesktopRemoteProtection, watchDesktopRemoteProtection } from "./remote-protection.js";
 import { startDesktopDaemonControl } from "./daemon-control.js";
@@ -40,6 +42,7 @@ export interface DesktopChildExit {
 export interface DesktopOwnedChild {
   /** Rejects only when no process was created; resolves on the actual exit event. */
   exited: Promise<DesktopChildExit>;
+  collectorReady?: Promise<string>;
   kill(signal: NodeJS.Signals): void;
 }
 export interface DesktopDaemonEvent {
@@ -48,9 +51,11 @@ export interface DesktopDaemonEvent {
 }
 
 interface DaemonDependencies {
+  restartIdentity: typeof readDesktopRestartIdentity;
   watchProtection: typeof watchDesktopRemoteProtection;
   remoteProtection: typeof probeDesktopRemoteProtection;
   mayStartEpoch: typeof desktopEpochMayStart;
+  epochBlocked: typeof desktopUpdateBlocked;
   claimEpoch: typeof claimDesktopUpdateEpoch;
   readInstall: typeof readDesktopInstall;
   restoreBlocked: typeof desktopRestoreBlocked;
@@ -83,9 +88,11 @@ const RETRY_MAX_MS = 30_000;
 const STABLE_MS = 60_000;
 
 const defaults: DaemonDependencies = {
+  restartIdentity: readDesktopRestartIdentity,
   watchProtection: watchDesktopRemoteProtection,
   remoteProtection: probeDesktopRemoteProtection,
   mayStartEpoch: desktopEpochMayStart,
+  epochBlocked: desktopUpdateBlocked,
   claimEpoch: claimDesktopUpdateEpoch,
   readInstall: readDesktopInstall,
   restoreBlocked: desktopRestoreBlocked,
@@ -129,6 +136,18 @@ const defaults: DaemonDependencies = {
         stdio: ["ignore", "ignore", "ignore", "ipc"],
       },
     );
+    const collectorReady =
+      component === "collector"
+        ? new Promise<string>((resolve) => {
+            child.on("message", (message: unknown) => {
+              const result = z
+                .object({ type: z.literal("desktop-collector-ready"), deviceId: z.string().uuid() })
+                .strict()
+                .safeParse(message);
+              if (result.success) resolve(result.data.deviceId);
+            });
+          })
+        : undefined;
     const exited = new Promise<DesktopChildExit>((resolve, reject) => {
       child.on("error", (error) => {
         if (child.pid === undefined) reject(error);
@@ -138,6 +157,7 @@ const defaults: DaemonDependencies = {
     void exited.catch(() => {});
     return {
       exited,
+      collectorReady,
       kill: (signal) => {
         child.kill(signal);
       },
@@ -160,6 +180,8 @@ export async function runDesktopDaemon(
     signal: AbortSignal;
     restoreActivation?: DesktopRestoreActivation;
     onEvent?(event: DesktopDaemonEvent): void;
+    /** Supervisor ownership only, after the exact private control listener is installed. */
+    onOwned?(): void | Promise<void>;
   },
   overrides: Partial<DaemonDependencies> = {},
 ): Promise<"stopped" | "already-running"> {
@@ -203,6 +225,11 @@ export async function runDesktopDaemon(
     drained = resolve;
   });
   let control: Awaited<ReturnType<typeof startDesktopDaemonControl>> | undefined;
+  const collectorRestart = new DesktopCollectorRestart(async () => {
+    if (install.mode === "joined" && !(await deps.paired(profile)))
+      throw new Error("A saved paired collector is required before restarting collection");
+    return deps.restartIdentity(profile);
+  });
   try {
     if (await deps.retired(profile)) return "stopped";
     if (!(await deps.claimEpoch(profile, signal, desktopRuntimeEpoch(), options.restoreActivation)))
@@ -217,17 +244,38 @@ export async function runDesktopDaemon(
       throw new Error("The desktop installation changed before it could start");
     const runtime = await deps.readRuntime(profile);
     if (!runtime) throw new Error("The desktop runtime port has not been assigned");
-    control = await deps.control(profile, { stop: () => stop.abort(), drained: stopped });
+    control = await deps.control(profile, {
+      stop: () => stop.abort(),
+      drained: stopped,
+      restartCollector: (requestSignal) =>
+        collectorRestart.request(AbortSignal.any([signal, requestSignal])),
+    });
     const env = { ...desktopEnvironment(profile), OMNESIS_GATEWAY_PORT: String(runtime.port) };
+    if (install.mode === "joined" && !(await deps.paired(profile))) return "stopped";
+    if (
+      (await deps.retired(profile)) ||
+      (await deps.epochBlocked(profile, desktopRuntimeEpoch(), options.restoreActivation))
+    )
+      return "stopped";
+    signal.throwIfAborted();
+    await options.onOwned?.();
+    signal.throwIfAborted();
     if (install.mode === "joined") {
-      if (!(await deps.paired(profile))) return "stopped";
-      await superviseCollector(profile, env, signal, deps, emit);
+      await superviseCollector(profile, env, signal, deps, emit, collectorRestart);
     } else {
       let attempt = 0;
       while (!signal.aborted) {
         const started = deps.now();
         try {
-          await superviseHome(profile, env, signal, deps, emit, options.restoreActivation);
+          await superviseHome(
+            profile,
+            env,
+            signal,
+            deps,
+            emit,
+            collectorRestart,
+            options.restoreActivation,
+          );
         } catch {
           if (signal.aborted) break;
         }
@@ -243,6 +291,7 @@ export async function runDesktopDaemon(
     }
     return "stopped";
   } finally {
+    collectorRestart.close();
     drained();
     try {
       await control?.close();
@@ -258,6 +307,7 @@ async function superviseHome(
   signal: AbortSignal,
   deps: DaemonDependencies,
   emit: (component: DesktopComponent, state: DesktopDaemonEvent["state"]) => void,
+  collectorRestart: DesktopCollectorRestart,
   restoreActivation?: DesktopRestoreActivation,
 ): Promise<void> {
   emit("gateway", "starting");
@@ -289,6 +339,16 @@ async function superviseHome(
     emit("gateway", "ready");
     for (;;) {
       epoch.throwIfAborted();
+      if (collectorRestart.consume()) {
+        if (collector) {
+          const previous = collector;
+          collector = undefined;
+          await stopOwnedChild(previous, deps);
+        }
+        suspended = false;
+        suspendedStamp = undefined;
+        retryAt = 0;
+      }
       let linked = false;
       try {
         linked =
@@ -327,10 +387,12 @@ async function superviseHome(
         emit("collector", "starting");
         const child = deps.spawn("collector", {
           ...env,
+          ...(collectorRestart.savedPairingOnly ? { OMNESIS_DESKTOP_COLLECTOR_RESTART: "1" } : {}),
           OMNESIS_GATEWAY_URL: `https://127.0.0.1:${env.OMNESIS_GATEWAY_PORT}`,
           NODE_EXTRA_CA_CERTS: join(profile.configDir, "tls", "cert.pem"),
         });
         collector = child;
+        collectorRestart.started(child);
         collectorStarted = deps.now();
         const finished = async (exit?: DesktopChildExit) => {
           if (collector !== child) return;
@@ -370,6 +432,7 @@ async function superviseCollector(
   signal: AbortSignal,
   deps: DaemonDependencies,
   emit: (component: DesktopComponent, state: DesktopDaemonEvent["state"]) => void,
+  collectorRestart: DesktopCollectorRestart,
 ): Promise<void> {
   let attempt = 0;
   while (!signal.aborted) {
@@ -384,7 +447,18 @@ async function superviseCollector(
       continue;
     }
     emit("collector", "starting");
-    const child = deps.spawn("collector", env);
+    const child = deps.spawn("collector", {
+      ...env,
+      ...(collectorRestart.savedPairingOnly ? { OMNESIS_DESKTOP_COLLECTOR_RESTART: "1" } : {}),
+    });
+    collectorRestart.started(child);
+    const restartSignal = collectorRestart.signal;
+    let wakeRestart!: () => void;
+    const restartRequested = new Promise<void>((resolve) => {
+      wakeRestart = resolve;
+      restartSignal.addEventListener("abort", wakeRestart, { once: true });
+      if (restartSignal.aborted) resolve();
+    });
     const started = deps.now();
     let onAbort!: () => void;
     const aborted = new Promise<void>((resolve) => {
@@ -413,16 +487,19 @@ async function superviseCollector(
         child.exited,
         aborted.then(() => undefined),
         watched.then(() => undefined),
+        restartRequested.then(() => undefined),
       ]);
     } catch {
       /* A failed spawn follows the same bounded restart policy as an exit. */
     } finally {
       signal.removeEventListener("abort", onAbort);
+      restartSignal.removeEventListener("abort", wakeRestart);
       monitor.abort();
       await Promise.all([stopOwnedChild(child, deps), watched]);
       emit("collector", "stopped");
     }
     if (signal.aborted) return;
+    if (collectorRestart.consume()) continue;
     if (monitorError !== undefined) throw monitorError;
     if (protectionLost) {
       emit("collector", "waiting-protection");
@@ -437,6 +514,7 @@ async function superviseCollector(
           return;
         }
         if (!deps.encrypted(profile)) return;
+        if (collectorRestart.consume()) break;
         const current = await deps.pairingStamp(profile).catch(() => null);
         if (current !== null && current !== stoppedStamp && (await deps.paired(profile))) break;
       }

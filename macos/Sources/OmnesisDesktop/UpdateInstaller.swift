@@ -90,10 +90,12 @@ actor DesktopUpdateInstaller {
                   values["architecture"] == .string(architecture),
                   values["bundleIdentifier"] == .string("dev.omnesis.desktop") else { throw Failure.untrusted }
             let candidateRuntime = candidate.appendingPathComponent("Contents/Resources/runtime", isDirectory: true)
-            let candidateEpoch = try digest(sealedFile(
+            let candidateManifest = try sealedFile(
                 candidateRuntime.appendingPathComponent("desktop-runtime.json"),
                 maximum: 32 * 1024 * 1024
-            ))
+            )
+            try DesktopProcessAuthorityManifest.require(candidateManifest)
+            let candidateEpoch = digest(candidateManifest)
             try verifyArtifact(artifact, hash: artifactHash)
             let receipt = try Receipt(
                 id: UUID().uuidString,
@@ -127,8 +129,12 @@ actor DesktopUpdateInstaller {
             let candidate = mount.point.appendingPathComponent("Omnesis.app", isDirectory: true)
             try assess(candidate)
             let candidateRuntime = candidate.appendingPathComponent("Contents/Resources/runtime", isDirectory: true)
-            guard try digest(sealedFile(candidateRuntime.appendingPathComponent("desktop-runtime.json"), maximum: 32 * 1024 * 1024)) ==
-                candidateEpoch else { throw Failure.untrusted }
+            let candidateManifest = try sealedFile(
+                candidateRuntime.appendingPathComponent("desktop-runtime.json"),
+                maximum: 32 * 1024 * 1024
+            )
+            try DesktopProcessAuthorityManifest.require(candidateManifest)
+            guard digest(candidateManifest) == candidateEpoch else { throw Failure.untrusted }
             let staged = try DesktopRuntimeCache.prepare(
                 source: candidateRuntime,
                 validateSource: { try DesktopRuntimeBootstrap.validateApplication(candidate) }
@@ -148,7 +154,9 @@ actor DesktopUpdateInstaller {
         let receipt = try checkedReceipt(receiptID, artifactHash: artifactHash, oldEpoch: oldEpoch, candidateEpoch: candidateEpoch)
         let mount = try mount(receipt.artifact)
         do {
-            try assess(mount.point.appendingPathComponent("Omnesis.app", isDirectory: true))
+            let candidate = mount.point.appendingPathComponent("Omnesis.app", isDirectory: true)
+            try assess(candidate)
+            try requireProcessAuthority(candidate)
             try verifyArtifact(receipt.artifact, hash: artifactHash)
             try Task.checkCancellation()
             let opened = await MainActor.run { NSWorkspace.shared.open(mount.point) }
@@ -202,9 +210,10 @@ actor DesktopUpdateInstaller {
               runtime.lastPathComponent == candidateEpoch else { throw Failure.untrusted }
         try verifyExecutingApplication()
         guard try activeRuntime().epoch == oldEpoch else { throw Failure.untrusted }
-        let previous = try applicationMetadata(applicationsRoot.appendingPathComponent(oldEpoch).appendingPathComponent("Omnesis.app"))
+        let previousApplication = applicationsRoot.appendingPathComponent(oldEpoch).appendingPathComponent("Omnesis.app")
+        try assess(previousApplication)
+        let previous = try applicationMetadata(previousApplication)
         guard previous == receipt.previousMetadata else { throw Failure.untrusted }
-        try assess(applicationsRoot.appendingPathComponent(oldEpoch).appendingPathComponent("Omnesis.app"))
         guard try applicationMetadata(application) == receipt.metadata else { throw Failure.untrusted }
     }
 
@@ -219,9 +228,11 @@ actor DesktopUpdateInstaller {
         #if !DEBUG
         try assess(application)
         #endif
+        try requireProcessAuthority(application)
     }
 
     private func applicationMetadata(_ app: URL) throws -> BridgeValue {
+        try requireProcessAuthority(app)
         let result = try JSONDecoder().decode(
             BridgeValue.self,
             from: sealedFile(app.appendingPathComponent("Contents/Resources/runtime/desktop-update.json"), maximum: 65536)
@@ -233,8 +244,9 @@ actor DesktopUpdateInstaller {
         return result
     }
 
-    private func activeRuntime() throws -> (epoch: String, version: String) {
-        let config = home.appendingPathComponent("Library/Application Support/Omnesis Desktop", isDirectory: true)
+    func activeRuntime() throws -> (epoch: String, version: String) {
+        let profile = try DesktopBackgroundManagedProfile.current(home: home)
+        let config = URL(fileURLWithPath: profile.configDir, isDirectory: true)
         let directory = URL(fileURLWithPath: config.path + ".bootstrap", isDirectory: true)
         try privateDirectory(directory, create: false)
         let path = directory.appendingPathComponent("active-runtime.json")
@@ -242,13 +254,20 @@ actor DesktopUpdateInstaller {
         guard lstat(path.path, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_nlink == 1,
               info.st_uid == getuid(), info.st_mode & 0o077 == 0 else { throw Failure.untrusted }
         let value = try JSONDecoder().decode(BridgeValue.self, from: sealedFile(path, maximum: 16384))
-        let identity = digest(Data(config.path.utf8))
         guard case .object(let values) = value, values["format"] == .number(1), values["owner"] == .string("omnesis-desktop"),
-              values["instance"] == .string("desktop-" + String(identity.prefix(16))),
-              values["secretService"] == .string("dev.omnesis.desktop." + identity),
+              values["instance"] == .string(profile.instance),
+              values["secretService"] == .string(profile.secretService),
               case .string(let epoch)? = values["epoch"], validDigest(epoch),
-              case .string(let version)? = values["productVersion"] else { throw Failure.untrusted }
+              case .string(let version)? = values["productVersion"],
+              try DesktopBackgroundManagedProfile.current(home: home) == profile else { throw Failure.untrusted }
         return (epoch, version)
+    }
+
+    private func requireProcessAuthority(_ app: URL) throws {
+        try DesktopProcessAuthorityManifest.require(sealedFile(
+            app.appendingPathComponent("Contents/Resources/runtime/desktop-runtime.json"),
+            maximum: 32 * 1024 * 1024
+        ))
     }
 
     private func previousApplication(epoch: String, expectedVersion: String) throws -> URL {
@@ -256,7 +275,9 @@ actor DesktopUpdateInstaller {
         let app = applicationsRoot.appendingPathComponent(epoch, isDirectory: true).appendingPathComponent("Omnesis.app", isDirectory: true)
         try assess(app)
         let manifest = app.appendingPathComponent("Contents/Resources/runtime/desktop-runtime.json")
-        guard try digest(sealedFile(manifest, maximum: 32 * 1024 * 1024)) == epoch,
+        let bytes = try sealedFile(manifest, maximum: 32 * 1024 * 1024)
+        try DesktopProcessAuthorityManifest.require(bytes)
+        guard digest(bytes) == epoch,
               let info = Bundle(url: app),
               info.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String == expectedVersion else { throw Failure.untrusted }
         return app

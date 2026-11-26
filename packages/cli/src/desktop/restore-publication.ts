@@ -120,7 +120,7 @@ export async function buildDesktopRestorePublication(options: {
       raw.fill(0);
     }
   } else config = { ...config, sources: {} };
-  const paused = pauseDesktopRestoreProcessing(config);
+  const paused = pauseDesktopRestoreProcessing(config, result.recordings);
   config = paused.config;
   const reviewPath = join(stage, DESKTOP_RESTORE_REVIEW_FILE);
   await atomicWriteFile(
@@ -209,6 +209,7 @@ export async function buildDesktopRestorePublication(options: {
     },
     verification: {
       schemaVersion: inspected.schemaVersion,
+      recordings: result.recordings,
       sources: inspected.sources,
       documents: inspected.documents,
       tokenDigest,

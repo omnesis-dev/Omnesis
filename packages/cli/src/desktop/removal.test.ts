@@ -55,6 +55,17 @@ function deferred<T>() {
 async function fixture() {
   const profile = desktopProfile(home);
   await mkdir(profile.configDir, { recursive: true, mode: 0o700 });
+  await mkdir(`${profile.configDir}.bootstrap`, { recursive: true, mode: 0o700 });
+  await writeFile(
+    join(`${profile.configDir}.bootstrap`, "process-authority.json"),
+    JSON.stringify({
+      version: 3,
+      owner: "omnesis-desktop",
+      instance: profile.instance,
+      secretService: profile.secretService,
+    }),
+    { mode: 0o600 },
+  );
   const install = {
     version: 1,
     owner: "omnesis-desktop",
@@ -478,5 +489,19 @@ test("key-cleanup retry retains a new folder that appears after the host inspect
   expect(f.purge).toHaveBeenCalledTimes(1);
   expect(await readFile(join(f.profile.configDir, "unrelated"), "utf8")).toBe(
     "invented unrelated material",
+  );
+});
+
+test("an uncertified legacy installation is refused before retirement, stop or key deletion", async () => {
+  const f = await fixture();
+  await rm(join(`${f.profile.configDir}.bootstrap`, "process-authority.json"));
+  await expect(f.remove(true)).rejects.toMatchObject({
+    code: "DESKTOP_PROCESS_AUTHORITY_REQUIRED",
+  });
+  expect(f.stop).not.toHaveBeenCalled();
+  expect(f.purge).not.toHaveBeenCalled();
+  expect(await readDesktopRetirement(f.profile)).toBeNull();
+  expect(await readFile(join(f.profile.configDir, "library.data"), "utf8")).toBe(
+    "invented library material",
   );
 });

@@ -4,6 +4,7 @@
 import { parentPort, workerData } from "node:worker_threads";
 import CipherDatabase from "better-sqlite3-multiple-ciphers";
 import { z } from "zod";
+import { classifyRestoreFailure, type RestoreFailureCode } from "./failure.js";
 import { reconcileRestoredMainDatabase, inspectRestoredMainDatabase } from "./main-database.js";
 import { restoreSecretEntry } from "./secret-entry.js";
 import { restoreConversationHistoryEntry } from "./conversation-history.js";
@@ -74,8 +75,10 @@ const inputSchema = z.union([
 ]);
 if (!parentPort) throw new Error("Restore worker requires its owned parent");
 const keys: Buffer[] = [];
+let failureCode: RestoreFailureCode = "input-schema";
 try {
   const input = inputSchema.parse(workerData);
+  failureCode = "unknown";
   // V8's heap limit excludes SQLite's native page/cell allocations. This
   // process hosts only the offline operation, so its global SQLite allocator
   // can refuse oversized cells before the addon copies them into JS memory.
@@ -130,8 +133,11 @@ try {
     });
   }
   parentPort.postMessage({ ok: true, result });
-} catch {
-  parentPort.postMessage({ ok: false });
+} catch (error) {
+  parentPort.postMessage({
+    ok: false,
+    failureCode: failureCode === "input-schema" ? failureCode : classifyRestoreFailure(error),
+  });
 } finally {
   for (const key of keys) key.fill(0);
   if (typeof workerData === "object" && workerData !== null) {

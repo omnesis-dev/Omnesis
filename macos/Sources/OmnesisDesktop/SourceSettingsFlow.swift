@@ -45,13 +45,36 @@ extension DesktopAPI {
 
 @MainActor @Observable
 final class DesktopSourceSettingsFlow {
+    var isCurrentAPI: (() -> Bool)?
     let descriptor: DesktopDescriptor
     let api: DesktopAPI
+    private(set) var selectedDescriptor: DesktopDescriptor?
+    private var descriptorDeviceId: String?
+    private var descriptorReady = false
     let sourceId: String
     var snapshot: DesktopSourceSettingsSnapshot?
     var memberSnapshot: DesktopSourceSettingsSnapshot?
     var memberIds: [String] = []
-    var selectedDeviceId: String
+    var lifecycle: DesktopSource?
+    var devices: [DesktopDevice] = []
+    var policy: DesktopSourceActionPolicy? {
+        lifecycle.map { DesktopSourceActionPolicy(source: $0, devices: devices) }
+    }
+
+    var canEditSelectedHost: Bool {
+        descriptorReady && descriptorDeviceId == selectedDeviceId && policy?.canRepair(selectedDeviceId) == true
+    }
+
+    var canResume: Bool {
+        policy?.canResume == true
+    }
+
+    var historical: Bool {
+        policy?.historical == true
+    }
+
+    private var requiredDeviceId: String?
+    private(set) var selectedDeviceId: String
     var sharedValues: [String: String] = [:]
     var localValues: [String: String] = [:]
     var busy = false
@@ -62,30 +85,33 @@ final class DesktopSourceSettingsFlow {
     var disconnected = false
     private var generation = 0
 
-    init(source: DesktopSource, descriptor: DesktopDescriptor, api: DesktopAPI) {
+    init(source: DesktopSource, descriptor: DesktopDescriptor, api: DesktopAPI, focusDeviceId: String? = nil) {
         sourceId = source.id
         self.descriptor = descriptor
         self.api = api
-        let members = Set([source.deviceId] + (source.members ?? []))
-        selectedDeviceId = api.connection.collectorDeviceId.flatMap { members.contains($0) ? $0 : nil } ?? source.deviceId
+        requiredDeviceId = focusDeviceId
+        let members = Set(DesktopSourceActionPolicy(source: source, devices: []).members)
+        selectedDeviceId = focusDeviceId ?? api.connection.collectorDeviceId.flatMap { members.contains($0) ? $0 : nil } ?? members.sorted()
+            .first ?? ""
     }
 
     var memberParamNames: Set<String> {
-        Set(descriptor.memberScopedParamNames ?? [])
-            .union((descriptor.params ?? []).filter { $0.scope == "member" }.map(\.name))
+        Set(selectedDescriptor?.memberScopedParamNames ?? [])
+            .union((selectedDescriptor?.params ?? []).filter { $0.scope == "member" }.map(\.name))
     }
 
     var sharedParams: [DesktopDescriptor.Param] {
-        (descriptor.params ?? []).filter { !memberParamNames.contains($0.name) }
+        (selectedDescriptor?.params ?? []).filter { !memberParamNames.contains($0.name) }
     }
 
     var localParams: [DesktopDescriptor.Param] {
-        (descriptor.params ?? []).filter { memberParamNames.contains($0.name) }
+        (selectedDescriptor?.params ?? []).filter { memberParamNames.contains($0.name) }
     }
 
     func load() async {
         guard !busy, !removalRequested else { return }
         busy = true
+        descriptorReady = false
         error = nil
         let current = generation
         defer { if current == generation { busy = false } }
@@ -95,8 +121,11 @@ final class DesktopSourceSettingsFlow {
 
     func selectDevice(_ id: String) async {
         guard !busy, memberIds.contains(id) else { return }
+        requiredDeviceId = nil // Changing computers here is an explicit user choice.
+        let previous = selectedDeviceId
         selectedDeviceId = id
         await load()
+        if error != nil { selectedDeviceId = previous }
     }
 
     private func refresh(_ current: Int) async throws {
@@ -108,19 +137,63 @@ final class DesktopSourceSettingsFlow {
         guard let row = page.items.first(where: { $0.id == sourceId }) else {
             throw DesktopAPIError.message("This source has been removed. Refresh Sources before continuing.")
         }
-        let members = Array(Set([row.deviceId] + (row.members ?? []))).sorted()
-        let selected = members.contains(selectedDeviceId) ? selectedDeviceId : row.deviceId
-        let local = try await api.sourceSettings(sourceId, member: selected)
-        _ = try local.checkedRevision()
+        let roster = try await api.devices()
         try check(current)
-        let shared = try parameterValues(global.source.config, fields: sharedParams)
-        let localValues = try parameterValues(local.source.config, fields: localParams)
-        snapshot = global
-        memberSnapshot = local
-        selectedDeviceId = selected
+        let policy = DesktopSourceActionPolicy(source: row, devices: roster)
+        let members = policy.members
+        if let requiredDeviceId, !policy.canRepair(requiredDeviceId) {
+            throw DesktopAPIError
+                .message(
+                    "The computer selected for access recovery is no longer connected to this source. Review its device connection before changing folders. Your existing information is kept."
+                )
+        }
+        let selected = selectedDeviceId
+        // Publish lifecycle authority even when this member cannot supply editable metadata.
+        // Draft values remain intact until the complete selected-member load succeeds.
+        lifecycle = row
+        devices = roster
         memberIds = members
-        sharedValues = shared
-        self.localValues = localValues
+        if !policy.canRepair(selected) {
+            snapshot = global
+            selectedDeviceId = selected
+            descriptorReady = false
+            memberSnapshot = nil
+            return
+        }
+        var decodingFields = false
+        do {
+            let scoped = try await api.descriptor(id: descriptor.id, deviceId: selected)
+            try check(current)
+            let local = try await api.sourceSettings(sourceId, member: selected)
+            _ = try local.checkedRevision()
+            try check(current)
+            guard global.source.id == sourceId, local.source.id == sourceId,
+                  global.source.type == scoped.id, local.source.type == scoped.id,
+                  global.source.accountId == local.source.accountId else {
+                throw DesktopAPIError.message("The source settings changed computer or account. Refresh before editing them.")
+            }
+            try await api.requireSourceRepair(sourceId, deviceId: selected)
+            try check(current)
+            let names = Set(scoped.memberScopedParamNames ?? [])
+                .union((scoped.params ?? []).filter { $0.scope == "member" }.map(\.name))
+            decodingFields = true
+            let shared = try parameterValues(global.source.config, fields: (scoped.params ?? []).filter { !names.contains($0.name) })
+            let localValues = try parameterValues(local.source.config, fields: (scoped.params ?? []).filter { names.contains($0.name) })
+            snapshot = global
+            memberSnapshot = local
+            selectedDescriptor = scoped
+            descriptorDeviceId = selected
+            selectedDeviceId = selected
+            sharedValues = shared
+            self.localValues = localValues
+            descriptorReady = true
+        } catch {
+            try check(current)
+            descriptorReady = false
+            // Lifecycle and removal remain available without substituting fleet metadata.
+            if snapshot == nil, !decodingFields { snapshot = global }
+            throw error
+        }
     }
 
     private func parameterValues(_ config: [String: SourceJSONValue]?, fields: [DesktopDescriptor.Param]) throws -> [String: String] {
@@ -150,16 +223,25 @@ final class DesktopSourceSettingsFlow {
     }
 
     private func save(local: Bool) async {
-        guard !busy, let snapshot, let memberSnapshot else { return }
+        guard !busy, canEditSelectedHost, let snapshot, let memberSnapshot else { return }
         busy = true
         error = nil
         message = nil
         let current = generation
         defer { if current == generation { busy = false } }
         do {
+            let freshDescriptor = try await api.descriptor(id: descriptor.id, deviceId: selectedDeviceId)
+            try check(current)
+            guard freshDescriptor == selectedDescriptor else {
+                throw DesktopAPIError.message("This computer's source settings changed. Refresh and review your draft before saving.")
+            }
+            try await api.requireSourceRepair(sourceId, deviceId: selectedDeviceId)
+            try check(current)
             let fields = local ? localParams : sharedParams
             let values = local ? localValues : sharedValues
             try await validate(fields, values: values, member: memberSnapshot, current: current)
+            try await api.requireSourceRepair(sourceId, deviceId: selectedDeviceId)
+            try check(current)
             if local {
                 var params = try parameters(memberSnapshot.source.config)
                     .filter { memberParamNames.contains($0.key) }.mapValues(\.jsonValue)
@@ -188,7 +270,13 @@ final class DesktopSourceSettingsFlow {
                 self.error = error.localizedDescription
                 // A refusal or lost reply may follow a committed write. Refresh
                 // actual state without presenting stale settings as current.
+                let sharedDraft = sharedValues, localDraft = localValues
                 try? await refresh(current)
+                if current == generation {
+                    sharedValues = sharedDraft
+                    localValues = localDraft
+                    descriptorReady = false
+                }
             }
         }
     }
@@ -199,6 +287,9 @@ final class DesktopSourceSettingsFlow {
         member: DesktopSourceSettingsSnapshot,
         current: Int
     ) async throws {
+        guard let descriptor = selectedDescriptor, descriptorReady, descriptorDeviceId == selectedDeviceId else {
+            throw DesktopAPIError.message("Refresh this computer's source settings before editing them.")
+        }
         for field in fields {
             guard ["string", "path", "select", "secret"].contains(field.type) else {
                 throw DesktopAPIError.message("Update Omnesis before editing this source's new setting type.")
@@ -221,7 +312,7 @@ final class DesktopSourceSettingsFlow {
             try check(current)
             if !result.valid { throw DesktopAPIError.message(result.error ?? "Check \(field.label.lowercased()).") }
         }
-        if descriptor.hasResolveAccountId == true {
+        if selectedDescriptor?.hasResolveAccountId == true {
             var params = try parameters(member.source.config).mapValues(\.text)
             for field in fields {
                 params[field.name] = values[field.name] ?? ""
@@ -239,12 +330,22 @@ final class DesktopSourceSettingsFlow {
     }
 
     func setEnabled(_ enabled: Bool) async {
-        guard !busy, let snapshot else { return }
+        guard !busy, let snapshot, !enabled || canResume else { return }
         busy = true
         error = nil
         let current = generation
         defer { if current == generation { busy = false } }
         do {
+            try check(current)
+            if enabled {
+                let page = try await api.sourcePage()
+                let roster = try await api.devices()
+                guard let row = page.items.first(where: { $0.id == sourceId }),
+                      DesktopSourceActionPolicy(source: row, devices: roster).canResume else {
+                    throw DesktopAPIError.message("Attach or repair a computer before resuming this source.")
+                }
+                try check(current)
+            }
             try await api.mutate("PATCH", "admin/sources/\(pathPart(sourceId))", body: [
                 "expectedRevision": snapshot.checkedRevision(), "enabled": enabled,
             ])
@@ -263,6 +364,7 @@ final class DesktopSourceSettingsFlow {
         let current = generation
         defer { if current == generation { busy = false } }
         do {
+            try check(current)
             try await api.mutate("DELETE", "admin/sources/\(pathPart(sourceId))/members/\(pathPart(selectedDeviceId))")
             try check(current)
             disconnected = true
@@ -280,6 +382,7 @@ final class DesktopSourceSettingsFlow {
         let current = generation
         defer { if current == generation { busy = false } }
         do {
+            try check(current)
             struct Removal: Decodable { let ok: Bool
                 let state: String
             }
@@ -334,11 +437,12 @@ final class DesktopSourceSettingsFlow {
 
     func cancelPresentation() {
         generation += 1
+        descriptorReady = false
         busy = false
     }
 
     private func check(_ current: Int) throws {
         try Task.checkCancellation()
-        if current != generation { throw CancellationError() }
+        if current != generation || isCurrentAPI?() == false { throw CancellationError() }
     }
 }

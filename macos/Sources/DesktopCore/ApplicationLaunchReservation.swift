@@ -27,8 +27,8 @@ public enum DesktopApplicationLaunchReservation {
         try withLock(publicationRoot) {
             try privateDirectory(archiveRoot, create: false)
             let expected = archiveRoot.appendingPathComponent(epoch).appendingPathComponent("Omnesis.app")
-            guard validEpoch(epoch), application.standardizedFileURL == expected,
-                  application.resolvingSymlinksInPath() == expected,
+            guard validEpoch(epoch), application.path == expected.path,
+                  (try? DesktopCanonicalPath.resolve(application.path)) == expected.path,
                   try DesktopApplicationArchive.runtimeEpoch(application) == epoch else { throw DesktopRuntimeCache.Failure.invalidPayload }
             try validate(application)
             let directory = archiveRoot.appendingPathComponent(".launch-reservations", isDirectory: true)
@@ -60,7 +60,7 @@ public enum DesktopApplicationLaunchReservation {
         publicationRoot: URL = DesktopRuntimeCache.defaultRoot
     ) throws {
         _ = lease
-        guard lease.runtimeURL.standardizedFileURL == runtime.standardizedFileURL else { throw DesktopRuntimeCache.Failure.unsafeCache }
+        guard lease.runtimeURL.path == runtime.path else { throw DesktopRuntimeCache.Failure.unsafeCache }
         guard UUID(uuidString: id)?.uuidString == id else { throw DesktopRuntimeCache.Failure.unsafeCache }
         try withLock(publicationRoot) {
             let directory = archiveRoot.appendingPathComponent(".launch-reservations", isDirectory: true)
@@ -77,8 +77,8 @@ public enum DesktopApplicationLaunchReservation {
             let record = try JSONDecoder().decode(Record.self, from: data)
             let expected = archiveRoot.appendingPathComponent(record.epoch).appendingPathComponent("Omnesis.app")
             guard record.format == 1, record.owner == owner, validEpoch(record.epoch), record.application == expected.path,
-                  application.standardizedFileURL == expected, application.resolvingSymlinksInPath() == expected,
-                  runtime.standardizedFileURL == publicationRoot.appendingPathComponent(record.epoch),
+                  application.path == expected.path, (try? DesktopCanonicalPath.resolve(application.path)) == expected.path,
+                  runtime.path == publicationRoot.appendingPathComponent(record.epoch).path,
                   try DesktopApplicationArchive.runtimeEpoch(application) == record.epoch
             else { throw DesktopRuntimeCache.Failure.unsafeCache }
             var current = stat()
@@ -116,7 +116,7 @@ public enum DesktopApplicationLaunchReservation {
         }
         var info = stat()
         guard lstat(url.path, &info) == 0, info.st_uid == getuid(), info.st_mode & S_IFMT == S_IFDIR,
-              info.st_mode & 0o077 == 0, url.standardizedFileURL == url.resolvingSymlinksInPath() else {
+              info.st_mode & 0o077 == 0, (try? DesktopCanonicalPath.resolve(url.path)) == url.path else {
             throw DesktopRuntimeCache.Failure.unsafeCache
         }
     }

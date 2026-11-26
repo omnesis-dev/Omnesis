@@ -10,6 +10,10 @@ import type { DesktopProtocolContext } from "./protocol.js";
 
 export const desktopAccountSchema = z.object({
   account: z.object({ linked: z.boolean() }).optional(),
+  // Independently validated capability evidence. Legacy/malformed evidence must not break account sign-in.
+  tunnel: z.unknown().optional(),
+  certificate: z.unknown().optional(),
+  publicMcp: z.unknown().optional(),
   publicOrigin: z.string().optional(),
   signup: z.object({ inviteOnly: z.boolean() }).optional(),
   config: z.object({ acmeTermsUrl: z.string().optional() }).optional(),

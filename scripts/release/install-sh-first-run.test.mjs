@@ -3592,6 +3592,44 @@ describe("install.sh encryption-at-rest question", () => {
   });
 });
 
+describe("gateway host sleep guidance", () => {
+  test.each([
+    ["mac-gateway", "Darwin", [], true],
+    ["mac-client", "Darwin", ["--client-only"], false],
+    ["linux-gateway", "Linux", [], false],
+    [
+      "mac-collector",
+      "Darwin",
+      ["--collector", "--gateway-url", "https://gateway.example.com:7600", "--code", "A1B2C3D4"],
+      false,
+    ],
+  ])(
+    "%s receives guidance only when this Mac hosts the gateway",
+    (name, platform, role, expected) => {
+      writeExecutable(
+        fixturePath("fake-bin", "uname"),
+        `#!/bin/sh\ncase "$1" in -m) echo arm64 ;; *) echo ${platform} ;; esac\n`,
+      );
+      const run = runInstaller(name, [
+        "--no-service",
+        "--no-model",
+        "--no-tls",
+        "--no-keyring",
+        ...role,
+      ]);
+      expect(run.status, run.output).toBe(0);
+      expect(run.output.includes("Keep this Mac available for your other devices")).toBe(expected);
+      if (expected) {
+        expect(run.output).toContain("Prevent automatic sleeping when the display is off");
+        expect(run.output).toContain("Battery > Options");
+        expect(run.output).toContain("display can turn off and the screen can stay locked");
+        expect(run.output).toContain("https://omnesis.dev/docs/install#mac-server");
+      }
+      expect(run.calls.some((call) => /\b(pmset|caffeinate)\b/.test(call))).toBe(false);
+    },
+  );
+});
+
 describe("install.sh on macOS without Node on PATH", () => {
   /**
    * A Mac as a command run over SSH sees it: `uname` says Darwin, no `node` or

@@ -27,6 +27,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { SyncError, quotaBucketOf, syncRemediationOf } from "@omnesis/types";
 import {
   boundSyncIssues,
   createLogger,
@@ -34,7 +35,6 @@ import {
   syncIssueIdentity,
   MAX_SYNC_ISSUES,
 } from "@omnesis/core";
-import { quotaBucketOf, syncRemediationOf } from "@omnesis/types";
 import {
   analyticsSchemaUsesDynamicColumns,
   isAnalyticsLeaseRejection,
@@ -49,6 +49,7 @@ import {
   type TableWrite,
   type UpsertWithCursorResponse,
 } from "@omnesis/source-sdk";
+import { assertManagedSourceAccess, managedAccessRemediation } from "./managed-source-access.js";
 import { sourceDisplayMeta } from "./source-display-meta.js";
 import { assertsPresence, pageSnapshot } from "./page-snapshot.js";
 import {
@@ -60,6 +61,7 @@ import { SourceLifecycle } from "./source-lifecycle.js";
 import { ProgressTracker } from "./progress-tracker.js";
 import { FeedProcessSupervisor } from "./feed-process-supervisor.js";
 import { runWithSyncTimeout } from "./source-sync-attempt.js";
+import type { DoctorReadAccess } from "./doctor-read-access.js";
 import type {
   DocumentIngestionContext,
   DocumentInput,
@@ -214,6 +216,7 @@ export class SourceSyncRunner {
     private readonly syncTimeoutMs: number,
     private readonly feedProcess: FeedProcessSupervisor = new FeedProcessSupervisor(),
     private readonly ingestionContext?: DocumentIngestionContext,
+    private readonly permissionAccess?: DoctorReadAccess,
   ) {}
 
   /**
@@ -373,6 +376,32 @@ export class SourceSyncRunner {
     const signal = AbortSignal.any([lifecycleSignal, timeoutSignal, leaseLost.signal]);
     const status = this.registry.getStatus(source.id);
     if (!status || status.state === "disabled") return;
+    try {
+      if (
+        this.permissionAccess &&
+        source.permissionRequirements?.some((requirement) => requirement.blocking)
+      )
+        await assertManagedSourceAccess(source, this.permissionAccess, signal);
+    } catch (error) {
+      if (signal.aborted) return;
+      if (!(error instanceof SyncError)) throw error;
+      // A repeated blocked check has no new gateway state to publish.
+      if (
+        status.state !== "error" ||
+        status.lastError !== error.message ||
+        status.remediation?.access?.scopeDigest !== error.remediation?.access?.scopeDigest ||
+        JSON.stringify(status.remediation?.actions) !== JSON.stringify(error.remediation?.actions)
+      ) {
+        SourceLifecycle.toError(status, error.message, log, error.remediation);
+        this.registry.emitStatusChange({
+          event: "sync.error",
+          sourceId: source.id,
+          status: { ...status },
+        });
+      }
+      await this.releaseLease(source.id);
+      return;
+    }
 
     // Note that the collector sends every member's snapshot, lease or no
     // lease, and the gateway decides whose counts: a non-holder's is read for
@@ -469,7 +498,12 @@ export class SourceSyncRunner {
     const stopDeletionDeferred = (holder: string | undefined): void => {
       this.heldLeases.delete(source.id);
       if (this.activeAttempts.get(source.id) === attemptToken && status.state === "syncing") {
+        const unresolved =
+          status.remediation?.access?.status === "denied"
+            ? { remediation: status.remediation, lastError: status.lastError }
+            : undefined;
         SourceLifecycle.toIdle(status, log);
+        if (unresolved) Object.assign(status, unresolved);
         this.registry.emitStatusChange({
           event: "sync.deferred",
           sourceId: source.id,
@@ -721,6 +755,11 @@ export class SourceSyncRunner {
           return;
         }
 
+        if (
+          this.permissionAccess &&
+          source.permissionRequirements?.some((requirement) => requirement.blocking)
+        )
+          await assertManagedSourceAccess(source, this.permissionAccess, signal);
         // Route to structured or unstructured sync
         if (isStructuredSource) {
           const syncStructured = () =>
@@ -730,6 +769,15 @@ export class SourceSyncRunner {
             (wipeEpoch !== undefined && this.gateway.runWithSourceWriteEpoch
               ? await this.gateway.runWithSourceWriteEpoch(source.id, wipeEpoch, syncStructured)
               : await syncStructured());
+          if (
+            this.permissionAccess &&
+            source.permissionRequirements?.some((requirement) => requirement.blocking)
+          )
+            await assertManagedSourceAccess(source, this.permissionAccess, signal);
+          if (this.permissionAccess && result.permissionDenied === true)
+            throw new SyncError("permission", "Collection access is blocked on this computer", {
+              remediation: managedAccessRemediation(source),
+            });
           if (stoppedOnLostLease()) return;
           // Checked AFTER the fetch, not only before it. The fetch is the long
           // part, so a removal almost always lands during one — and writing its
@@ -1008,6 +1056,15 @@ export class SourceSyncRunner {
             wipeEpoch !== undefined && this.gateway.runWithSourceWriteEpoch
               ? await this.gateway.runWithSourceWriteEpoch(source.id, wipeEpoch, sync)
               : await sync();
+          if (
+            this.permissionAccess &&
+            source.permissionRequirements?.some((requirement) => requirement.blocking)
+          )
+            await assertManagedSourceAccess(source, this.permissionAccess, signal);
+          if (this.permissionAccess && result.permissionDenied === true)
+            throw new SyncError("permission", "Collection access is blocked on this computer", {
+              remediation: managedAccessRemediation(source),
+            });
           if (stoppedOnLostLease()) return;
           if (signal.aborted) {
             log.info(
@@ -1139,6 +1196,7 @@ export class SourceSyncRunner {
         return;
       }
       SourceLifecycle.toIdle(status, log);
+      status.lastError = undefined;
       status.lastSyncAt = new Date().toISOString();
       status.lastSyncStats = {
         documents: writtenDocuments.size,
@@ -1280,14 +1338,27 @@ export class SourceSyncRunner {
         // after 50 pages". Previously `lastSyncStats` / `lastSyncAt`
         // only updated on the happy path, leaving the dashboard pinned
         // on whatever the most-recent successful cycle reported.
-        status.lastSyncAt = new Date().toISOString();
-        status.lastSyncStats = {
-          documents: writtenDocuments.size,
-          deleted: totalDeleted,
-          pages: pageCount,
-          durationMs: Date.now() - startTime,
-        };
-        SourceLifecycle.toError(status, toErrorMessage(error), log, syncRemediationOf(error));
+        const managedPermission =
+          this.permissionAccess !== undefined &&
+          source.permissionRequirements?.some((requirement) => requirement.blocking) &&
+          classifySyncError(error) === "permission";
+        if (!managedPermission || writtenDocuments.size > 0 || pageCount > 0) {
+          status.lastSyncAt = new Date().toISOString();
+          status.lastSyncStats = {
+            documents: writtenDocuments.size,
+            deleted: totalDeleted,
+            pages: pageCount,
+            durationMs: Date.now() - startTime,
+          };
+        }
+        SourceLifecycle.toError(
+          status,
+          managedPermission
+            ? "Collection access is blocked on this computer"
+            : toErrorMessage(error),
+          log,
+          managedPermission ? managedAccessRemediation(source) : syncRemediationOf(error),
+        );
         this.registry.emitStatusChange({
           event: "sync.error",
           sourceId: source.id,

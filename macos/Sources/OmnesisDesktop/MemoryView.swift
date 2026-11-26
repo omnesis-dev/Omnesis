@@ -55,7 +55,7 @@ struct DesktopMemoryView: View {
             }.disabled(working || store.busy)
             if working ||
                 (awaitingRestart && store.busy) { ProgressView(awaitingRestart ? "Restarting the library…" : "Reading memory settings…") }
-            if let error = error ?? store.failure { Text(error).foregroundStyle(.red) }
+            if let error = error ?? store.failure { Text(error).foregroundStyle(DesktopTheme.danger) }
         }.formStyle(.grouped)
             .task { await load() }
             .onChange(of: [automatic ? "automatic" : budget, analyticsAutomatic ? "automatic" : analyticsBudget]) { _, _ in

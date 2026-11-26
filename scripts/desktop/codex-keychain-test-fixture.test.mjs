@@ -33,6 +33,13 @@ async function fixture() {
   const extract = vi.fn(async (_archive, target) => {
     await mkdir(join(target, "package/vendor/fixture"), { recursive: true });
     await writeFile(join(target, spec.binary), "inert executable fixture", { mode: 0o755 });
+    await writeFile(
+      join(target, "package/package.json"),
+      JSON.stringify({
+        name: "@openai/codex",
+        version: `${spec.version}-darwin-${spec.architecture}`,
+      }),
+    );
   });
   const options = {
     architecture: "arm64",
@@ -75,6 +82,10 @@ test.skipIf(process.platform === "win32")(
     const executable = join(distribution, "package/vendor/aarch64-apple-darwin/bin/codex");
     await mkdir(join(distribution, "package/vendor/aarch64-apple-darwin/bin"), { recursive: true });
     await writeFile(executable, "inert reviewed-layout fixture", { mode: 0o755 });
+    await writeFile(
+      join(distribution, "package/package.json"),
+      JSON.stringify({ name: "@openai/codex", version: "0.169.0-darwin-arm64" }),
+    );
     const archive = join(f.root, "reviewed-layout.tgz");
     const tar = spawnSync("tar", ["-czf", archive, "-C", distribution, "package"], {
       encoding: "utf8",
@@ -104,6 +115,11 @@ test("publishes owned hashed fixture and reuses only the matching immutable exec
     owner: "omnesis-desktop-codex-keychain-test-fixture",
     integrity: f.spec.integrity,
   });
+  expect(metadata.packageBinary).toBe("vendor/fixture/codex");
+  expect(
+    await readFile(join(f.options.output, "sdk-package", metadata.packageBinary), "utf8"),
+  ).toBe("inert executable fixture");
+  expect(metadata.packageManifestSha256).toMatch(/^[a-f0-9]{64}$/u);
   expect(metadata.executableSha256).toBe(
     createHash("sha256").update("inert executable fixture").digest("hex"),
   );
@@ -182,7 +198,15 @@ test("admitted preflight prepares the selected host architecture before native t
   const f = await fixture();
   const run = vi.fn(() => ({ status: 0, stdout: "Darwin x86_64\n" }));
   const prepare = vi.fn(async () => "fixture");
-  await prepareNativeCodexFixture({ host: "fixture-build-host" }, { run, prepare }, f.root);
+  const prepareBackend = vi.fn(async () => "backend-fixture");
+  await prepareNativeCodexFixture(
+    { host: "fixture-build-host" },
+    { run, prepare, prepareBackend },
+    f.root,
+  );
+  expect(prepareBackend).toHaveBeenCalledWith({
+    output: join(f.root, "macos/.codex-backend-fixture"),
+  });
   expect(run).toHaveBeenCalledWith("ssh", ["fixture-build-host", "uname -sm"], expect.any(Object));
   expect(prepare).toHaveBeenCalledWith(
     expect.objectContaining({

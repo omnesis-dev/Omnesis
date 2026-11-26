@@ -4,6 +4,7 @@
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
 import { DesktopCoordinator, type DesktopStateCommand } from "./coordinator.js";
+import { desktopStorageAdmission } from "./desktop-state.js";
 import { DesktopInteractionBroker } from "./protocol.js";
 import { desktopProfile } from "./environment.js";
 import type { DesktopRetirement } from "./retirement.js";
@@ -105,6 +106,12 @@ function fixture(mode?: "home" | "joined") {
       keyring: options.eraseData ? "cleared" : "retained",
     })),
     protected: vi.fn(async () => true),
+    restartCollector: vi.fn(async () => ({
+      kind: "desktopCollectorRestart" as const,
+      status: "ready" as const,
+      deviceId: "00000000-0000-4000-8000-000000000004",
+      permissionRecheckRequired: true as const,
+    })),
     localCollectorDeviceId: vi.fn(async () => "00000000-0000-4000-8000-000000000004"),
     connection: vi.fn(async () => ({
       url: "https://localhost:18601",
@@ -122,6 +129,7 @@ function fixture(mode?: "home" | "joined") {
             config: { acmeTermsUrl: "https://ca.example.test/terms" },
           };
     }),
+    backgroundHandoff: vi.fn<NonNullable<Dependencies["backgroundHandoff"]>>(async () => null),
     discover: vi.fn<NonNullable<Dependencies["discover"]>>().mockResolvedValue({ kind: "no-home" }),
     enroll: vi.fn<NonNullable<Dependencies["enroll"]>>(async (options) =>
       pairing(options.role === "interactive" ? "cli" : "collector"),
@@ -174,6 +182,11 @@ function fixture(mode?: "home" | "joined") {
     context,
     deps,
     coordinator,
+    restartCollection: () =>
+      coordinator.handle(
+        { version: 1, id: "restart-fixture", command: "restartCollector", params: {} },
+        context,
+      ),
     run,
     pairs,
     tokens,
@@ -252,6 +265,7 @@ test("linked home waits for local search readiness and respects explicit downloa
   });
   expect(await f.run("status")).toMatchObject({
     phase: "ready",
+    installationId: f.profile.instance,
     encrypted: true,
     connection: {
       url: "https://localhost:18601",
@@ -283,6 +297,7 @@ test("joining encrypts separate roles before starting collector and verifies int
   const state = await f.run("connect");
   expect(state).toMatchObject({
     phase: "ready",
+    installationId: f.profile.instance,
     mode: "joined",
     connection: { url: f.transport.url, deviceId: pairing("cli").deviceId },
   });
@@ -311,7 +326,12 @@ test("partial role persistence resumes without reenrolling the already approved 
   const f = fixture("joined");
   f.save("cli");
   f.tokens.clear();
-  expect(await f.run("connect")).toMatchObject({ phase: "ready", mode: "joined" });
+  expect(await f.run("connect")).toMatchObject({
+    phase: "ready",
+    mode: "joined",
+    installationId: f.profile.instance,
+  });
+  expect(await f.run("status")).toMatchObject({ installationId: f.profile.instance });
   expect(f.deps.enroll.mock.calls.map(([options]) => options.role)).toEqual(["collector"]);
   expect(f.tokens.get(join(f.profile.configDir, "token"))).toBe(pairing("cli").token);
 });
@@ -719,4 +739,183 @@ test("an offline joined library keeps its approved display name without inferrin
   legacy.save("cli");
   legacy.save("collector");
   expect(await legacy.run("status")).not.toHaveProperty("homeName");
+});
+
+test.each(["home", "joined"] as const)(
+  "%s restartCollector preserves enrollment and interactive transport",
+  async (mode) => {
+    const f = fixture(mode);
+    expect(await f.restartCollection()).toMatchObject({
+      kind: "desktopCollectorRestart",
+      status: "ready",
+      permissionRecheckRequired: true,
+    });
+    expect(f.deps.restartCollector).toHaveBeenCalledOnce();
+    expect(f.deps.startDaemon).not.toHaveBeenCalled();
+    expect(f.deps.stopDaemon).not.toHaveBeenCalled();
+    expect(f.deps.enroll).not.toHaveBeenCalled();
+    expect(f.transport.close).not.toHaveBeenCalled();
+  },
+);
+
+test("retirement and pending update cannot dispatch a collector restart", async () => {
+  const f = fixture("home");
+  f.setRetirement(retired(f.profile));
+  await expect(f.restartCollection()).rejects.toThrow("pending library operation");
+  expect(f.deps.restartCollector).not.toHaveBeenCalled();
+  const updating = fixture("joined");
+  updating.deps.updateBlocked.mockResolvedValue(true);
+  await expect(updating.restartCollection()).rejects.toThrow("pending library operation");
+  expect(updating.deps.restartCollector).not.toHaveBeenCalled();
+});
+
+function storageStatus(state = "normal", measuredAt: number | null = Date.now()) {
+  return {
+    storagePressure: {
+      state,
+      measuredAt,
+      validUntil: measuredAt === null ? 0 : measuredAt + 120_000,
+      policy: { measurementMaxAgeMs: 120_000 },
+    },
+  };
+}
+
+test("home storage loss and recovery preserve reading while projecting current growth admission", async () => {
+  const f = fixture("home");
+  f.setLinked(true);
+  const originalRequest = f.deps.request.getMockImplementation()!;
+  let storage: unknown = storageStatus();
+  f.deps.request.mockImplementation(async (...args) =>
+    args[1] === "/status" ? storage : originalRequest(...args),
+  );
+  for (const [value, expected] of [
+    [storageStatus(), "ready"],
+    [storageStatus("blocked"), "blocked"],
+    [storageStatus("normal", Date.now() - 120_000), "unavailable"],
+    [storageStatus("warning"), "ready"],
+    [storageStatus("unknown", null), "checking"],
+    [storageStatus(), "ready"],
+  ] as const) {
+    storage = value;
+    expect(await f.run("status")).toMatchObject({
+      phase: "ready",
+      mode: "home",
+      encrypted: true,
+      connection: { token: "fictional-owner-token" },
+      storageAdmission: { state: expected },
+    });
+  }
+});
+
+test("storage transport failure is content-free and does not replace a usable home connection", async () => {
+  const f = fixture("home");
+  f.setLinked(true);
+  const originalRequest = f.deps.request.getMockImplementation()!;
+  f.deps.request.mockImplementation(async (...args) => {
+    if (args[1] === "/status") throw new Error("fictional-storage-private-detail");
+    return originalRequest(...args);
+  });
+  const result = await f.run("status");
+  expect(result).toMatchObject({ phase: "ready", storageAdmission: { state: "unavailable" } });
+  expect(JSON.stringify(result)).not.toContain("fictional-storage-private-detail");
+});
+
+test("joined library does not project remote or local cache storage as home admission", async () => {
+  const f = fixture("joined");
+  f.save("cli");
+  f.save("collector");
+  const result = await f.run("connect");
+  expect(result).toMatchObject({ phase: "ready", mode: "joined" });
+  expect(result).not.toHaveProperty("storageAdmission");
+  expect(result).not.toHaveProperty("remoteRoute");
+  expect(f.calls).not.toContain("/status");
+});
+
+test.each([
+  undefined,
+  { storagePressure: null },
+  storageStatus("unknown", 1_000),
+  storageStatus("normal", 2_001),
+  storageStatus("normal", Number.POSITIVE_INFINITY),
+  { storagePressure: { ...storageStatus().storagePressure, validUntil: Number.POSITIVE_INFINITY } },
+  { storagePressure: { ...storageStatus().storagePressure, validUntil: Number.MAX_SAFE_INTEGER } },
+  { storagePressure: { ...storageStatus("normal", 1_000).storagePressure, validUntil: 900 } },
+  { storagePressure: { ...storageStatus("normal", 1_000).storagePressure, validUntil: 121_001 } },
+  { storagePressure: { ...storageStatus("normal", 1_000).storagePressure, policy: {} } },
+  storageStatus("normal", null),
+])("missing, future, stale or malformed storage evidence never certifies admission %#", (value) => {
+  expect(desktopStorageAdmission(value, 2_000).state).toBe("unavailable");
+});
+
+test("server expiry is authoritative at the exact boundary without a replacement reserve policy", () => {
+  const value = storageStatus("normal", 1_000);
+  expect(desktopStorageAdmission(value, 120_999)).toMatchObject({
+    state: "ready",
+    validUntil: 121_000,
+  });
+  expect(desktopStorageAdmission(value, 121_000).state).toBe("unavailable");
+  expect(desktopStorageAdmission(value, 121_001).state).toBe("unavailable");
+});
+
+test("explicit candidate connect hands ownership over before daemon claim and never clears an update intent", async () => {
+  const f = fixture("home");
+  f.setLinked(true);
+  f.deps.updateBlocked.mockResolvedValue(true);
+  f.deps.backgroundHandoff.mockResolvedValue({ kind: "candidate", mode: "home" });
+  f.deps.startDaemon.mockImplementation(async () => {
+    f.deps.updateBlocked.mockResolvedValue(false); // Normal daemon epoch claim, never the handoff validator.
+  });
+  expect(await f.run("connect")).toMatchObject({ phase: "ready", mode: "home" });
+  expect(f.deps.backgroundHandoff.mock.invocationCallOrder[0]).toBeLessThan(
+    f.deps.startDaemon.mock.invocationCallOrder[0]!,
+  );
+  expect(f.deps.resumeRetirement).not.toHaveBeenCalled();
+  expect(f.deps.connectAccount).not.toHaveBeenCalled();
+});
+
+test("rebind refusal leaves the old update and processes untouched", async () => {
+  const f = fixture("home");
+  f.deps.backgroundHandoff.mockRejectedValue(new Error("Fixture native handoff refused"));
+  expect(await f.run("connect")).toMatchObject({ phase: "error" });
+  expect(f.deps.startDaemon).not.toHaveBeenCalled();
+  expect(f.deps.resumeRetirement).not.toHaveBeenCalled();
+});
+
+test("ordinary restart never implicitly rebinds a helper", async () => {
+  const f = fixture("home");
+  f.setLinked(true);
+  expect(await f.run("restart")).toMatchObject({ phase: "ready" });
+  expect(f.deps.backgroundHandoff).not.toHaveBeenCalled();
+});
+
+test("home remote route loss and recovery preserve local search independently of account linkage", async () => {
+  const f = fixture("home");
+  f.setLinked(true);
+  const request = f.deps.request.getMockImplementation()!;
+  let online = true;
+  f.deps.request.mockImplementation(async (...args) => {
+    const value = await request(...args);
+    if (args[1] !== "/admin/cloud-relay") return value;
+    const checkedAt = Date.now();
+    return {
+      ...(typeof value === "object" && value !== null ? value : {}),
+      tunnel: { state: online ? "online" : "offline" },
+      certificate: { state: "valid", expiresAt: new Date(Date.now() + 200_000).toISOString() },
+      publicMcp: { url: `${origin}/mcp`, ready: true, checkedAt, validUntil: checkedAt + 90_000 },
+    };
+  });
+  expect(await f.run("status")).toMatchObject({
+    phase: "ready",
+    mode: "home",
+    connection: { token: "fictional-owner-token" },
+    remoteRoute: { state: "ready" },
+  });
+  online = false;
+  expect(await f.run("status")).toMatchObject({
+    phase: "ready",
+    connection: { token: "fictional-owner-token" },
+    remoteRoute: { state: "unavailable" },
+  });
+  online = true;
+  expect(await f.run("status")).toMatchObject({ phase: "ready", remoteRoute: { state: "ready" } });
 });

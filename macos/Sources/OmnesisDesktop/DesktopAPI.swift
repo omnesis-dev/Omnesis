@@ -109,6 +109,31 @@ final class DesktopAPI: @unchecked Sendable {
         return page.items
     }
 
+    /// This endpoint asks the selected collector, rather than the fleet's merged descriptor cache.
+    func descriptors(deviceId: String) async throws -> [DesktopDescriptor] {
+        struct ScopedDescriptors: Decodable {
+            let deviceId: String
+            let items: [DesktopDescriptor]
+        }
+        guard !deviceId.isEmpty else {
+            throw DesktopAPIError.message("Choose a collection computer before checking its source settings.")
+        }
+        let page: ScopedDescriptors = try await request("GET", "admin/sources/descriptors?deviceId=\(pathPart(deviceId))")
+        try Task.checkCancellation()
+        guard page.deviceId == deviceId, Set(page.items.map(\.id)).count == page.items.count else {
+            throw DesktopAPIError.message("The source descriptions do not match the selected computer. Refresh before continuing.")
+        }
+        return page.items
+    }
+
+    func descriptor(id: String, deviceId: String) async throws -> DesktopDescriptor {
+        let items = try await descriptors(deviceId: deviceId)
+        guard let descriptor = items.first(where: { $0.id == id }) else {
+            throw DesktopAPIError.message("This computer no longer offers this source. Refresh its connection before continuing.")
+        }
+        return descriptor
+    }
+
     func mutate(_ method: String = "POST", _ path: String, body: [String: Any] = [:]) async throws {
         let _: LooseReply = try await request(method, path, body: body)
     }
@@ -136,6 +161,21 @@ struct DesktopSource: Decodable, Identifiable {
     let members: [String]?
     let multiDeviceMode: String?
     let config: [String: SourceJSONValue]?
+    let archived: Bool?
+    let archivedDevices: [ArchivedDevice]?
+    let dormantHosts: [String]?
+    let joinCandidates: [String]?
+    let lastSyncedAt: String?
+
+    struct ArchivedDevice: Decodable, Identifiable {
+        let deviceId: String
+        let name: String
+        let kind: String
+        let forgottenAt: Double
+        var id: String {
+            deviceId
+        }
+    }
 }
 
 struct DesktopDevice: Decodable, Identifiable {
@@ -144,9 +184,10 @@ struct DesktopDevice: Decodable, Identifiable {
     let kind: String
     let online: Bool?
     let revokedAt: Double?
+    let needsPairing: Bool?
 }
 
-struct DesktopDescriptor: Decodable, Identifiable {
+struct DesktopDescriptor: Decodable, Equatable, Identifiable {
     let id: String
     let name: String
     let description: String
@@ -159,7 +200,7 @@ struct DesktopDescriptor: Decodable, Identifiable {
     let authType: String?
     let experimental: Bool?
     let provider: Provider?
-    struct Provider: Decodable { let id: String
+    struct Provider: Decodable, Equatable { let id: String
         let name: String
     }
 
@@ -171,18 +212,19 @@ struct DesktopDescriptor: Decodable, Identifiable {
     let gatewayHosted: Bool?
     let pushBased: Bool?
     let widgetOrigins: WidgetOrigins?
+    let permissionRequirements: [DesktopPermissionRequirement]?
 
-    struct WidgetOrigins: Decodable {
+    struct WidgetOrigins: Decodable, Equatable {
         let script: [String]?
         let frame: [String]?
         let connect: [String]?
     }
 
-    struct Host: Decodable, Identifiable { let id: String
+    struct Host: Decodable, Equatable, Identifiable { let id: String
         let name: String?
     }
 
-    struct Param: Decodable, Identifiable {
+    struct Param: Decodable, Equatable, Identifiable {
         let name: String
         let label: String
         let type: String
@@ -195,11 +237,12 @@ struct DesktopDescriptor: Decodable, Identifiable {
         let patternHint: String?
         let validateWhenEmpty: Bool?
         let provesLocalAvailabilityForAccount: String?
+        let mustExist: String?
         var id: String {
             name
         }
 
-        struct Option: Decodable, Identifiable { let value: String
+        struct Option: Decodable, Equatable, Identifiable { let value: String
             let label: String
             var id: String {
                 value
@@ -207,19 +250,19 @@ struct DesktopDescriptor: Decodable, Identifiable {
         }
     }
 
-    struct Credentials: Decodable {
+    struct Credentials: Decodable, Equatable {
         let fileKey: String
         let fields: [Field]
         let required: Bool?
         let perAccount: Bool?
         let publicClient: Bool?
         let wizard: Wizard?
-        struct Wizard: Decodable {
+        struct Wizard: Decodable, Equatable {
             let intro: String
             let why: String
             let estMinutes: Int
             let steps: [Step]
-            struct Step: Decodable {
+            struct Step: Decodable, Equatable {
                 let kind: String
                 let title: String
                 let body: String
@@ -227,7 +270,7 @@ struct DesktopDescriptor: Decodable, Identifiable {
             }
         }
 
-        struct Field: Decodable, Identifiable {
+        struct Field: Decodable, Equatable, Identifiable {
             let name: String
             let label: String
             let secret: Bool?

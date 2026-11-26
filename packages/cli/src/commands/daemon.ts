@@ -17,6 +17,7 @@
  */
 
 import { defineCommand } from "citty";
+import { macServerGuidance } from "./mac-server-guidance.js";
 
 export const gatewayCommand = defineCommand({
   meta: {
@@ -30,6 +31,10 @@ export const gatewayCommand = defineCommand({
         description: "Start the gateway daemon (foreground; supervise with `omnesis service`)",
       },
       run: async () => {
+        if (process.stdout.isTTY === true) {
+          const guidance = macServerGuidance(process.platform, true);
+          if (guidance) process.stdout.write(`\n${guidance}\n\n`);
+        }
         // The gateway boots on import (module top-level) and registers its
         // own SIGINT/SIGTERM graceful-shutdown handlers.
         await import("@omnesis/gateway");

@@ -67,7 +67,7 @@ struct SourceWidgetView: View {
                     }
                 }.frame(minHeight: 420)
             }
-            if let failure { Text(failure).foregroundStyle(.red) }
+            if let failure { Text(failure).foregroundStyle(DesktopTheme.danger) }
             else if configuration == nil { ProgressView("Opening secure account connection…") }
         }.task(id: widget.kind) {
             do { configuration = try await SourceWidgetConfiguration.load(flow: flow, widget: widget) }

@@ -23,15 +23,15 @@ struct DesktopRemovalView: View {
                 Text(outcome.message).textSelection(.enabled)
                 if outcome.finished {
                     Text("You can keep the app for later or move this copy of Omnesis to Trash and quit.")
-                    if let localFailure { Text(localFailure).foregroundStyle(.red) }
+                    if let localFailure { Text(localFailure).foregroundStyle(DesktopTheme.danger) }
                     if movingApplication { ProgressView("Moving Omnesis to Trash…") }
                     HStack {
                         Button("Done") { dismiss() }
                         Spacer()
-                        Button("Move app to Trash and quit…", role: .destructive) { confirmTrash = true }.buttonStyle(.borderedProminent)
+                        Button("Move app to Trash and quit…", role: .destructive) { confirmTrash = true }.buttonStyle(DesktopButtonStyle(primary: true))
                     }
                 } else {
-                    Button("Retry saved key cleanup") { review() }.buttonStyle(.borderedProminent)
+                    Button("Retry saved key cleanup") { review() }.buttonStyle(DesktopButtonStyle(primary: true))
                     Button("Keep the app for now") { dismiss() }
                 }
             } else {
@@ -41,7 +41,7 @@ struct DesktopRemovalView: View {
                     Text(
                         "This Mac keeps your library. Your other devices will not be able to search or ask Omnesis until you set it up again."
                     )
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DesktopTheme.secondary)
                 }
                 Toggle("Also erase the Omnesis library on this Mac", isOn: $eraseData)
                     .onChange(of: eraseData) { store.removalPlan = nil }
@@ -49,7 +49,7 @@ struct DesktopRemovalView: View {
                 Text(eraseData ?
                     "This permanently deletes Omnesis data and its saved encryption key on this Mac. Your original files and accounts are unaffected." :
                     "Your library and its encryption key will be kept so you can reinstall later.")
-                    .font(.callout).foregroundStyle(eraseData ? Color.orange : Color.secondary)
+                    .font(.callout).foregroundStyle(eraseData ? Color.orange : DesktopTheme.secondary)
                 if let plan = store.removalPlan {
                     Text(plan.summary).textSelection(.enabled)
                     if plan.canConfirm, plan.mode == (eraseData ? .eraseData : .keepData) {
@@ -58,19 +58,19 @@ struct DesktopRemovalView: View {
                             role: .destructive
                         ) {
                             if eraseData { confirmErase = true } else { remove(plan) }
-                        }.buttonStyle(.borderedProminent)
+                        }.buttonStyle(DesktopButtonStyle(primary: true))
                     }
                 }
-                if let failure = localFailure ?? store.failure { Text(failure).foregroundStyle(.red).textSelection(.enabled) }
+                if let failure = localFailure ?? store.failure { Text(failure).foregroundStyle(DesktopTheme.danger).textSelection(.enabled) }
                 if localFailure != nil { Button("Open Login Items settings") { SMAppService.openSystemSettingsLoginItems() } }
                 HStack {
                     Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                     Spacer()
-                    if store.removalPlan == nil { Button("Review removal") { review() }.buttonStyle(.borderedProminent) }
+                    if store.removalPlan == nil { Button("Review removal") { review() }.buttonStyle(DesktopButtonStyle(primary: true)) }
                 }
                 if store.busy { ProgressView("Preparing removal…") }
             }
-        }.padding(30).frame(width: 540).disabled(store.busy || movingApplication)
+        }.buttonStyle(DesktopButtonStyle()).padding(30).frame(width: 540).disabled(store.busy || movingApplication)
             .interactiveDismissDisabled(store.busy || movingApplication)
             .onAppear {
                 if store.state.retirement?.mode == "erase-data", store.state.retirement?.phase != "complete" { eraseData = true }

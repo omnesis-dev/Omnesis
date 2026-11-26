@@ -3,8 +3,13 @@
 
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { resolve } from "node:path";
+import { MANAGED_CODEX_QUALIFIED_VERSION } from "./codex-managed-policy-version.js";
+import {
+  assertPreparedManagedCodexModel,
+  type PreparedManagedCodexCatalog,
+} from "./codex-managed-model-discovery.js";
 
-// Inspected against the pinned 0.169.0 runtime's recognized feature catalog.
+// Inspected against the pinned 0.171.0 runtime's recognized feature catalog.
 // ShellSnapshot is independently enabled by default even when ShellTool is disabled.
 export const MANAGED_CODEX_PROCESS_FEATURES = Object.freeze({
   shell_tool: false,
@@ -23,13 +28,29 @@ export const MANAGED_CODEX_PROCESS_FEATURES = Object.freeze({
   memories: false,
   goals: false,
   code_mode: false,
+  code_mode_only: false,
+  deferred_executor: false,
+  send_message_to_user_async: false,
+  request_permissions_tool: false,
+  token_budget: false,
+  current_time_reminder: false,
+  sleep_tool: false,
   code_mode_host: false,
   code_mode_host_grpc: false,
   code_mode_prewarm: false,
   executor_capability_discovery: false,
   executor_capability_discovery_v2: false,
   skip_host_skill_discovery: true,
+  restored_history_prewarm: false,
+  file_backed_tool_audio: false,
+  catalog_apps_instructions: false,
+  mcp_shared_repl_cwd: false,
+  multi_environment_mcp: false,
+  incremental_tools_legacy: false,
 });
+
+export const MANAGED_CODEX_CONVERSATION_REFUSAL =
+  "Managed Codex conversations require verified model tool metadata. Refresh the model list or use an API-key backend.";
 
 const refused = () =>
   new Error(
@@ -50,6 +71,8 @@ export function managedCodexProcessArgs(args: readonly string[]): string[] {
     ]),
     "-c",
     "mcp_servers={}",
+    "-c",
+    'web_search="disabled"',
     "-c",
     "notify=[]",
     "-c",
@@ -86,6 +109,7 @@ export function assertManagedCodexProcessPolicy(value: unknown): void {
     config.notify.length !== 0 ||
     config.allow_login_shell !== false ||
     config.project_doc_max_bytes !== 0 ||
+    config.web_search !== "disabled" ||
     record(tools?.experimental_request_user_input)?.enabled !== false ||
     record(tools?.update_plan)?.enabled !== false ||
     Object.entries(MANAGED_CODEX_PROCESS_FEATURES).some(
@@ -101,7 +125,7 @@ export async function assertManagedCodexEffectiveFeatures(
   threadId?: string,
   runtimeVersion?: string,
 ): Promise<void> {
-  if (runtimeVersion !== "0.169.0") throw refused();
+  if (runtimeVersion !== MANAGED_CODEX_QUALIFIED_VERSION) throw refused();
   const enabled = new Map<string, boolean>();
   let cursor: string | undefined;
   for (let page = 0; page < 16; page++) {
@@ -170,7 +194,9 @@ export async function assertManagedCodexWorkspace(workspace: string): Promise<vo
 }
 
 export function managedCodexThreadConfig<T extends { features: object }>(
-  _config: T,
+  config: T,
+  catalog?: PreparedManagedCodexCatalog,
+  model?: string,
 ): T & {
   features: T["features"] & typeof MANAGED_CODEX_PROCESS_FEATURES;
   mcp_servers: object;
@@ -179,7 +205,16 @@ export function managedCodexThreadConfig<T extends { features: object }>(
   project_doc_max_bytes: 0;
   tools: { experimental_request_user_input: { enabled: false }; update_plan: { enabled: false } };
 } {
-  throw new Error(
-    "Managed Codex conversations are unavailable until model tool metadata can be isolated. Use an API-key backend.",
-  );
+  if (!model) throw new Error(MANAGED_CODEX_CONVERSATION_REFUSAL);
+  assertPreparedManagedCodexModel(catalog, model);
+  return {
+    ...config,
+    model_catalog_json: catalog.path,
+    features: { ...config.features, ...MANAGED_CODEX_PROCESS_FEATURES },
+    mcp_servers: {},
+    notify: [],
+    allow_login_shell: false,
+    project_doc_max_bytes: 0,
+    tools: { experimental_request_user_input: { enabled: false }, update_plan: { enabled: false } },
+  };
 }

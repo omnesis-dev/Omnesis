@@ -20,6 +20,7 @@ async function smokeRuntime(sourceRuntime) {
   if (
     manifest.codeUsageProtocol !== 1 ||
     manifest.dataUsageProtocol !== 1 ||
+    manifest.processAuthorityProtocol !== 3 ||
     manifest.runtimeLauncher !== "runtime-exec"
   )
     throw new Error("Bundled runtime lacks its code and data lifetime protocols");

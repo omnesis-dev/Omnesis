@@ -400,6 +400,20 @@ const CHECKOUT_VERSION = JSON.parse(
 ).version;
 
 describe("install.sh --docker: what it puts on this host", () => {
+  test.each([
+    ["Darwin", true],
+    ["Linux", false],
+  ])("host sleep guidance follows the %s Docker host", (platform, expected) => {
+    writeExecutable(
+      fixturePath("fake-bin", "uname"),
+      `#!/bin/sh\ncase "$1" in -m) echo ${platform === "Darwin" ? "arm64" : "x86_64"} ;; *) echo ${platform} ;; esac\n`,
+    );
+    const run = runInstaller(`sleep-guide-${platform}`, QUIET);
+    expect(run.status, run.output).toBe(0);
+    expect(run.output.includes("Keep this Mac available for your other devices")).toBe(expected);
+    if (expected) expect(run.output).toContain("https://omnesis.dev/docs/install#mac-server");
+  });
+
   test.each(["--combined", "--gateway-only"])(
     "%s removes only the prior separate collector",
     (flag) => {

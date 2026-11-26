@@ -55,12 +55,92 @@ if (args[0] === 'find-generic-password') {
   const temporary = file + '.' + process.pid;
   fs.writeFileSync(temporary, option('-w'), { mode: 0o600 });
   fs.renameSync(temporary, file);
-} else if (args[0] === 'delete-generic-password') fs.rmSync(file, { force: true });
+} else if (args[0] === 'delete-generic-password') {
+  if (fs.existsSync(${JSON.stringify(join(root, "keychain-delete-denied"))})) process.exit(77);
+  const denied=${JSON.stringify(join(root, "keychain-denied-service"))};
+  if(fs.existsSync(denied)&&fs.readFileSync(denied,'utf8')===option('-s'))process.exit(77);
+  const noop=${JSON.stringify(join(root, "keychain-noop-service"))};
+  if (!fs.existsSync(${JSON.stringify(join(root, "keychain-delete-noop"))})&&
+      !(fs.existsSync(noop)&&fs.readFileSync(noop,'utf8')===option('-s')))fs.rmSync(file, { force: true });
+}
 else process.exit(2);
 `;
 }
 
-/** Only the external OS Keychain executable is substituted; desktop/core/daemons remain real. */
+/** Fixed test-owned external command; production purge/absence checks remain real. */
+export function desktopFixturePurgeProgram(root: string): string {
+  const codex = new URL("../../../cli/src/desktop/codex-keyring.ts", import.meta.url).href;
+  const purge = new URL("../../../cli/src/uninstall/keyring-purge.ts", import.meta.url).href;
+  return `
+    const fixtureFs=await import('node:fs/promises');
+    const {execFile:fixtureExecFile}=await import('node:child_process');
+    const {promisify:fixturePromisify}=await import('node:util');
+    const fixtureCore=await import('@omnesis/core');
+    const {purgeDesktopCodexKeyring:fixturePurgeCodex}=await import(${JSON.stringify(codex)});
+    const {purgeConfigDirKeyring:fixturePurgeRoot,defaultKeyringPurgeDeps:fixtureDefaultPurge}=await import(${JSON.stringify(purge)});
+    const fixtureExecutable=${JSON.stringify(join(root, "tools/security"))};
+    const fixtureInfo=await fixtureFs.lstat(fixtureExecutable);
+    if(!fixtureInfo.isFile()||fixtureInfo.isSymbolicLink()||fixtureInfo.nlink!==1||
+       (fixtureInfo.mode&0o077)!==0||(process.getuid&&fixtureInfo.uid!==process.getuid())||
+       await fixtureFs.realpath(fixtureExecutable)!==fixtureExecutable)throw new Error('The fixture OS command is not owned');
+    const fixtureExecute=fixturePromisify(fixtureExecFile);
+    const fixtureRun=async(command,args)=>{
+      if(command!=='security'&&command!=='/usr/bin/security')throw new Error('Unexpected fixture OS command');
+      try {
+        const result=await fixtureExecute(fixtureExecutable,args,{env:process.env,timeout:10000,maxBuffer:65536});
+        return {code:0,stdout:result.stdout,stderr:result.stderr};
+      }catch(error){
+        if(typeof error.code==='number')return {code:error.code,stdout:error.stdout??'',stderr:error.stderr??''};
+        throw new Error('The fixture OS command could not finish',{cause:error});
+      }
+    };
+    const fixturePurge=async(current)=>{
+      if(current.configDir!==profile.configDir||current.instance!==profile.instance||current.secretService!==profile.secretService)
+        throw new Error('The fixture keyring scope changed');
+      await fixturePurgeCodex(current,async(args)=>(await fixtureRun('security',[...args])).code);
+      return fixturePurgeRoot(${JSON.stringify(join(root, "home"))},current.configDir,{
+        ...fixtureDefaultPurge(${JSON.stringify(join(root, "home"))}),
+        clearMarker:(kind,options)=>fixtureCore.clearMarkerKeyringState(kind,{...options,runCommand:fixtureRun}),
+        deleteRootKey:async(options)=>{
+          const store=fixtureCore.createSecretStore({...options,runCommand:fixtureRun});
+          if(store.backend!=='macos-keychain'||!(await store.status()).available)return false;
+          await store.delete(fixtureCore.OMNESIS_INSTALL_ROOT_KEY);
+          return true;
+        },
+      },{service:current.secretService,backend:'macos-keychain',exclusiveService:true});
+    };
+  `;
+}
+
+/** Only fixed outcome enums reach test diagnostics; never echo an unexpected response body. */
+export function desktopFixtureRetirementFailure(result: {
+  status?: unknown;
+  data?: unknown;
+  keyring?: unknown;
+}): Error {
+  const status =
+    ["retired", "not-installed", "key-cleanup-pending"].find((value) => value === result.status) ??
+    "unknown";
+  const data = ["erased", "retained", "absent"].find((value) => value === result.data) ?? "unknown";
+  const keyring =
+    ["cleared", "pending", "retained", "unchanged"].find((value) => value === result.keyring) ??
+    "unknown";
+  const reason =
+    keyring === "pending"
+      ? "KEY_CLEANUP_PENDING"
+      : data !== "erased"
+        ? "DATA_NOT_ERASED"
+        : keyring !== "cleared"
+          ? "KEY_CLEANUP_UNCONFIRMED"
+          : status !== "retired"
+            ? "STATUS_UNCONFIRMED"
+            : "UNVERIFIED_RETIREMENT";
+  return new Error(
+    `Fixture retirement incomplete: reason=${reason},data=${data},keyring=${keyring}`,
+  );
+}
+
+/** Linux source harness: fixed fake OS credentials, real desktop/core/daemons; native macOS proof is separate. */
 export class DesktopRuntimeFixture {
   private constructor(
     readonly root: string,
@@ -114,6 +194,10 @@ export class DesktopRuntimeFixture {
       gatewayEnv?: NodeJS.ProcessEnv;
     } = {},
   ) {
+    if (process.platform !== "linux")
+      throw new Error(
+        "The source desktop fixture requires Linux and its fake OS keyring; use the native macOS qualification separately",
+      );
     const root = await realpath(await mkdtemp(join(tmpdir(), "omnesis-managed-desktop-e2e-")));
     const relay = createServer((request, response) => {
       response.setHeader("content-type", "application/json");
@@ -444,8 +528,10 @@ export class DesktopRuntimeFixture {
             if(['codex','claude-code'].includes(backend?.type))throw new Error('The source fixture cannot prove vendor process ownership');
           }
           const {removeDesktopInstall,finishDesktopErase}=await import(${JSON.stringify(removal)});
+          ${desktopFixturePurgeProgram(this.root)}
           const signal=new AbortController().signal;
           const result=await removeDesktopInstall(profile,{eraseData:true,confirmationId:${JSON.stringify(plan.confirmationId)},signal},{
+            purge:fixturePurge,
             executeErase:async(current,id,signal,operations)=>finishDesktopErase(current,id,signal,{
               ...operations,
               authorize:(actual,purpose,operationId)=>{
@@ -456,9 +542,9 @@ export class DesktopRuntimeFixture {
           });
           process.stdout.write(JSON.stringify(result));
         `),
-        ) as { data?: string; keyring?: string };
-        if (result.data !== "erased" || result.keyring !== "cleared")
-          throw new Error("Fixture runtime did not finish retiring");
+        ) as { status?: unknown; data?: unknown; keyring?: unknown };
+        if (result.status !== "retired" || result.data !== "erased" || result.keyring !== "cleared")
+          throw desktopFixtureRetirementFailure(result);
       }
       await rm(this.root, { recursive: true, force: true });
     } finally {

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { z } from "zod";
+import { restoreFailureCode, RestoreWorkerFailure } from "./failure.js";
 import type { ManagedDesktopDataScope } from "@omnesis/core";
 export type DesktopRestoreDataScope = Omit<ManagedDesktopDataScope, "format">;
 import { runRestoreProcess } from "./process-launcher.js";
@@ -26,6 +27,7 @@ export { authenticateSqlCipherPages } from "./sqlcipher-page-auth.js";
 const resultSchema = z
   .object({
     sourcesPaused: z.number().int().nonnegative().safe(),
+    recordings: z.number().int().nonnegative().safe(),
     foreignDevicesRetained: z.number().int().nonnegative().safe(),
     targetDevicesPreserved: z.number().int().nonnegative().safe(),
     targetLabs: z.object({ brain: z.boolean(), tasks: z.boolean(), watches: z.boolean() }).strict(),
@@ -138,9 +140,13 @@ async function runWorker<T>(
       reply.ok !== true ||
       !("result" in reply)
     )
-      throw new Error("The backup database could not be prepared safely");
+      throw new RestoreWorkerFailure(
+        typeof reply === "object" && reply !== null && "failureCode" in reply
+          ? (restoreFailureCode(reply.failureCode) ?? "invalid-reply")
+          : "invalid-reply",
+      );
     const parsed = schema.safeParse(reply.result);
-    if (!parsed.success) throw new Error("The backup database could not be prepared safely");
+    if (!parsed.success) throw new RestoreWorkerFailure("invalid-result");
     return parsed.data;
   } finally {
     active = false;

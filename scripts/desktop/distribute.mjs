@@ -9,6 +9,7 @@ import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hashFile, inventoryBundle, refreshRuntimeInventory } from "./native-inventory.mjs";
 import { parseArguments } from "./arguments.mjs";
+import { assertReleaseApplication } from "./release-application.mjs";
 
 /** Bundle containers must be sealed after the native code they enclose. */
 export function nestedCodeBundles(entries) {
@@ -47,6 +48,7 @@ export async function distribute({
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
+  await assertReleaseApplication(app, run);
   const entries = await inventoryBundle(app, architecture);
   const exec = (command, args) => run(command, args, { stdio: "inherit" });
   const nodeEntitlements = fileURLToPath(new URL("./node-entitlements.plist", import.meta.url));

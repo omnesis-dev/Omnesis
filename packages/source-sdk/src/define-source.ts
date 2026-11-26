@@ -41,6 +41,7 @@ import { validateContractDeclaration, type SourceContractDeclaration } from "./s
 import { isDerivedFromSchema, toSourceParams } from "./config-schema.js";
 import { nodePathProbe } from "./path-probe-node.js";
 import { executionModeOf, type ExecutionMode } from "./execution-mode.js";
+import type { SourcePermissionDeclaration } from "./permissions.js";
 import type { ConnectionState } from "./connection-state.js";
 import type { AccountDescriptor } from "./account-descriptor.js";
 import type { AuthResult, AuthSession } from "./auth-session.js";
@@ -244,6 +245,8 @@ export interface SourceInstance<TCursor extends SyncCursor = SyncCursor> {
    * Missing inputs and incomplete discovery are unavailable, not readable.
    */
   probeReadAccess?(options: { signal: AbortSignal }): Promise<SourceReadAccessResult>;
+  /** Fresh access to declared permission scope, e.g. required roots; never enumeration coverage. */
+  probePermissionAccess?(options: { signal: AbortSignal }): Promise<SourceReadAccessResult>;
   /**
    * Fresh inspection of the encrypted local stores this source keeps on the
    * collector host, run inside the collector daemon for the host's health
@@ -570,7 +573,7 @@ export interface SourceDefinition<
   TCursor extends SyncCursor = SyncCursor,
   TState extends SourceState = SourceState,
   TFields extends Record<string, ConfigField> = NoConfigFields,
-> {
+> extends SourcePermissionDeclaration {
   readonly type: "source";
 
   // ── Metadata ──────────────────────────────────────────────────
@@ -941,7 +944,7 @@ export interface ProviderSourceEntry<
   TCursor extends SyncCursor = SyncCursor,
   TState extends SourceState = SourceState,
   TFields extends Record<string, ConfigField> = NoConfigFields,
-> {
+> extends SourcePermissionDeclaration {
   id: string;
   name: string;
   description: string;
@@ -1076,7 +1079,7 @@ export interface ProviderSourceEntry<
  * });
  * ```
  */
-export interface ProviderDefinition<TContext = unknown> {
+export interface ProviderDefinition<TContext = unknown> extends SourcePermissionDeclaration {
   readonly type: "provider";
 
   // ── Metadata ──────────────────────────────────────────────────

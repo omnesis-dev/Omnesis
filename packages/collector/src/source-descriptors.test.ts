@@ -1034,3 +1034,63 @@ describe("extractDescriptors — the per-machine contract a device advertises", 
     expect(descriptor?.memberScopedParamNames).toEqual([]);
   });
 });
+
+describe("permission metadata transport", () => {
+  it("inherits provider requirements, preserves explicit none, and never serializes probe callbacks", () => {
+    const requirements = [
+      {
+        id: "selected-store",
+        kind: "selected-folder" as const,
+        summary: "Read selected store",
+        scope: "Selected folder",
+        blocking: true,
+        actions: [{ kind: "retry-access" as const }],
+      },
+    ];
+    const probePermissionAccess = async () => ({ status: "readable" as const });
+    const create = async () => ({
+      sync: async () => ({ documents: [], cursor: {}, hasMore: false }),
+    });
+    const descriptors = extractDescriptors(
+      defineProvider({
+        provider: { id: "fixture-permissions", name: "Fixture" },
+        authType: "local",
+        permissionRequirements: requirements,
+        probePermissionAccess,
+        sources: [
+          { id: "fixture-inherits", name: "Fixture", description: "Inherited", create },
+          {
+            id: "fixture-none",
+            name: "Fixture",
+            description: "No local access",
+            permissionRequirements: [],
+            create,
+          },
+        ],
+      }),
+    );
+    expect(descriptors[0].permissionRequirements).toEqual(requirements);
+    expect(descriptors[0].probePermissionAccess).toBe(probePermissionAccess);
+    expect(serializeDescriptor(descriptors[0]).permissionRequirements).toEqual(requirements);
+    expect(serializeDescriptor(descriptors[0])).not.toHaveProperty("probePermissionAccess");
+    expect(serializeDescriptor(descriptors[1]).permissionRequirements).toEqual([]);
+  });
+  it("carries file and directory chooser constraints through schema compilation and serialization", () => {
+    const definition = defineSource({
+      id: "fixture-paths",
+      name: "Fixture",
+      description: "Chosen paths",
+      authType: "local",
+      config: configSchema.object({
+        folder: configSchema.path({ label: "Folder", mustExist: "directory" }),
+        file: configSchema.path({ label: "File", mustExist: "file" }),
+      }),
+      create: async () => ({ sync: async () => ({ documents: [], cursor: {}, hasMore: false }) }),
+    });
+    const wire = serializeDescriptor(extractDescriptors(definition)[0]);
+    expect(wire.params?.map((p) => [p.name, p.mustExist])).toEqual([
+      ["folder", "directory"],
+      ["file", "file"],
+    ]);
+  });
+});

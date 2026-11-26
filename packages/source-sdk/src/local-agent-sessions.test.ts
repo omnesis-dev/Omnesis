@@ -1449,6 +1449,7 @@ describe("createLocalAgentSessionSource", () => {
       try {
         expect(lstatSync(archive).isDirectory()).toBe(true);
         const degraded = await makeInstance().sync(null);
+        expect(degraded.permissionDenied).toBe(true);
         expect(degraded.presentExternalIds).toBeUndefined();
         // The live root is still vouched for by name, so a session deleted there
         // is still found this cycle.

@@ -55,6 +55,15 @@ function buildFixturePlan(files) {
 }
 
 describe("Nx change selection", () => {
+  test("desktop restore integration and its fixture select the actual restore E2E", () => {
+    const restored = "packages/collector/src/e2e/desktop-restore.e2e.test.ts";
+    const runtime = "packages/collector/src/e2e/desktop-runtime.e2e.test.ts";
+    for (const file of [restored, "packages/collector/src/e2e/desktop-restore-fixture.ts"]) {
+      expect(behavioralBundles([file])).toContain("desktop-runtime");
+    }
+    expect(bundleTestArgs("desktop-runtime", [runtime, restored])).toEqual([runtime, restored]);
+  });
+
   test("gateway bootstrap changes select startup and ownership lifecycle coverage", () => {
     for (const input of [
       "packages/gateway/src/index.ts",

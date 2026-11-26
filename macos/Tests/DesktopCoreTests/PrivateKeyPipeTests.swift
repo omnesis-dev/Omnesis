@@ -32,7 +32,13 @@ final class PrivateKeyPipeTests: XCTestCase {
         #endif
         let node = fixture.appendingPathComponent("node")
         try verify(node, hash: metadata.executableSha256)
-        XCTAssertEqual(Set(metadata.privateKeyFiles.keys), Set(["package.json", "openssl-private-input.js", "node-command.js", "test.mjs"]))
+        XCTAssertEqual(Set(metadata.privateKeyFiles.keys), Set([
+            "package.json", "openssl-private-input.js", "node-command.js", "test.mjs",
+            "gateway-lock.js", "windows-powershell.js", "managed-runtime-bootstrap.js",
+            "environment.js", "generation.js", "fresh-install-errors.js", "data-operation-frame.js",
+            "snapshot-retention-errors.js", "snapshot-retention-host.js", "snapshot-retention-delete.js",
+            "snapshot-retention-record.js", "snapshot-retention-witness.js", "snapshot-owner.js",
+        ]))
         for (name, hash) in metadata.privateKeyFiles {
             guard !name.contains("/"), !name.contains("..") else { throw CocoaError(.fileReadCorruptFile) }
             try verify(fixture.appendingPathComponent("private-key").appendingPathComponent(name), hash: hash)

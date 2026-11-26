@@ -12,8 +12,8 @@ struct SourceCredentialsView: View {
                 Text("Account access").font(.title2)
                 if let wizard = spec.wizard {
                     Text(wizard.intro)
-                    Text(wizard.why).font(.callout).foregroundStyle(.secondary)
-                    Text("About \(wizard.estMinutes) minutes").font(.caption).foregroundStyle(.secondary)
+                    Text(wizard.why).font(.callout).foregroundStyle(DesktopTheme.secondary)
+                    Text("About \(wizard.estMinutes) minutes").font(.caption).foregroundStyle(DesktopTheme.secondary)
                     if flow.credentialsStep < wizard.steps.count {
                         let step = wizard.steps[flow.credentialsStep]
                         Text("Step \(flow.credentialsStep + 1) of \(wizard.steps.count)").font(.caption)
@@ -24,7 +24,7 @@ struct SourceCredentialsView: View {
                         }
                         HStack {
                             if flow.credentialsStep > 0 { Button("Back") { flow.credentialsStep -= 1 } }
-                            Button("Continue") { flow.credentialsStep += 1 }.buttonStyle(.borderedProminent)
+                            Button("Continue") { flow.credentialsStep += 1 }.buttonStyle(DesktopButtonStyle(primary: true))
                         }
                     } else { fields(spec) }
                 } else { fields(spec) }
@@ -34,19 +34,25 @@ struct SourceCredentialsView: View {
 
     @ViewBuilder private func fields(_ spec: DesktopDescriptor.Credentials) -> some View {
         Text("Paste the values from your provider. Omnesis sends them securely to the selected device.")
-            .font(.callout).foregroundStyle(.secondary)
+            .font(.callout).foregroundStyle(DesktopTheme.secondary)
         ForEach(spec.fields) { field in
             VStack(alignment: .leading, spacing: 6) {
                 Text(field.label + (field.required == false ? " (optional)" : ""))
                 if field.secret == true {
                     SecureField(flow.expand(field.placeholder ?? field.label), text: binding(field.name))
-                } else { TextField(flow.expand(field.placeholder ?? field.label), text: binding(field.name)) }
-                if let hint = field.patternHint { Text(hint).font(.caption).foregroundStyle(.secondary) }
+                        .accessibilityLabel(field.label)
+                        .accessibilityHint(field.required == false ? "Optional" : "Required")
+                } else {
+                    TextField(flow.expand(field.placeholder ?? field.label), text: binding(field.name))
+                        .accessibilityLabel(field.label)
+                        .accessibilityHint(field.required == false ? "Optional" : "Required")
+                }
+                if let hint = field.patternHint { Text(hint).font(.caption).foregroundStyle(DesktopTheme.secondary) }
             }.textFieldStyle(.roundedBorder)
         }
         HStack {
             if let wizard = spec.wizard, !wizard.steps.isEmpty { Button("Back") { flow.credentialsStep = wizard.steps.count - 1 } }
-            Button("Connect account") { Task { await flow.continueCredentials() } }.buttonStyle(.borderedProminent)
+            Button("Connect account") { Task { await flow.continueCredentials() } }.buttonStyle(DesktopButtonStyle(primary: true))
         }
     }
 
@@ -62,7 +68,7 @@ struct SourceChallengeField: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(field.label)
             switch field.kind {
-            case "secret": SecureField(field.placeholder ?? field.label, text: $value)
+            case "secret": SecureField(field.placeholder ?? field.label, text: $value).accessibilityLabel(field.label)
             case "boolean": Toggle(field.label, isOn: Binding(get: { value == "true" }, set: { value = $0 ? "true" : "false" }))
                 .labelsHidden()
             case "select":
@@ -70,11 +76,12 @@ struct SourceChallengeField: View {
                     Text("Choose…").tag("")
                     ForEach(field.options ?? []) { Text($0.label).tag($0.value) }
                 }.labelsHidden()
-            case "list": TextEditor(text: $value).frame(minHeight: 80)
-            case "string", "path", "number": TextField(field.placeholder ?? field.label, text: $value)
-            default: Text("Update Omnesis to complete this sign-in step.").foregroundStyle(.red)
+            case "list": TextEditor(text: $value).frame(minHeight: 80).accessibilityLabel(field.label)
+                .accessibilityHint(field.required == true ? "Required. Enter one value per line." : "Enter one value per line.")
+            case "string", "path", "number": TextField(field.placeholder ?? field.label, text: $value).accessibilityLabel(field.label)
+            default: Text("Update Omnesis to complete this sign-in step.").foregroundStyle(DesktopTheme.danger)
             }
-            if let help = field.help { Text(help).font(.caption).foregroundStyle(.secondary) }
+            if let help = field.help { Text(help).font(.caption).foregroundStyle(DesktopTheme.secondary) }
         }.textFieldStyle(.roundedBorder)
     }
 }

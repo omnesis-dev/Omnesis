@@ -26,6 +26,8 @@ struct DesktopStorageView: View {
 
     var body: some View {
         Form {
+            DesktopRecordingReviewNotice()
+
             Section("Library storage") {
                 if let snapshot {
                     Text(snapshot.pressure.message)
@@ -41,7 +43,7 @@ struct DesktopStorageView: View {
                         .disabled(working || (!noQuota && DesktopStorageSnapshot.quotaBytes(gibibytes: quota) == nil))
                 } else { Text("Storage has not been measured.") }
                 Text("Disk safety reserves still apply. Removing original source files is never part of this cleanup.")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(.callout).foregroundStyle(DesktopTheme.secondary)
                 Button("Refresh measurement") { Task { await refresh(measure: true) } }.disabled(working)
             }
             sourceRetention
@@ -54,17 +56,17 @@ struct DesktopStorageView: View {
                 DatePicker("Before", selection: $before, in: ...Date(), displayedComponents: .date)
                 Text(target == "backups" ? "The newest backup is always kept. Save a separate backup before removing older ones." :
                     "This permanently removes older history. It cannot be undone.")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(.callout).foregroundStyle(DesktopTheme.secondary)
                 Button("Review cleanup…", role: .destructive) { confirmingCleanup = true }.disabled(working || snapshot == nil)
                 ForEach(snapshot?.cleanupJobs ?? []) { job in
                     VStack(alignment: .leading) {
                         Text(job.outcome)
-                        if let message = job.error { Text(message).foregroundStyle(.red) }
+                        if let message = job.error { Text(message).foregroundStyle(DesktopTheme.danger) }
                         if job.active { Button("Cancel cleanup") { Task { await cancel(job.id) } }.disabled(working) }
                     }
                 }
             }
-            if let error { Text(error).foregroundStyle(.red) }
+            if let error { Text(error).foregroundStyle(DesktopTheme.danger) }
             if working { ProgressView("Updating storage…") }
         }.formStyle(.grouped)
             .task { if snapshot == nil { await refresh() } }
@@ -109,7 +111,7 @@ struct DesktopStorageView: View {
                 Toggle("Keep all history from this source", isOn: $keepAllSourceHistory)
                 if !keepAllSourceHistory { TextField("Keep the latest number of days", text: $retentionDays) }
                 Text("Changing this applies to information saved in your library. It does not change the original service or its files.")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(.callout).foregroundStyle(DesktopTheme.secondary)
                 Button("Review source history change…") { confirmingRetention = true }
                     .disabled(working || snapshot == nil ||
                         (!keepAllSourceHistory && DesktopStorageSnapshot.retentionDays(retentionDays) == nil))

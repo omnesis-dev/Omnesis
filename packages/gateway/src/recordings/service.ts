@@ -136,12 +136,16 @@ export interface RecordingServiceDeps {
   ) => DocumentInput | null;
   /** The voice separator, or null while speakers are not told apart. */
   voices?: () => VoiceSeparator | null;
+  voicesReady?: () => Promise<import("./voices/loader.js").VoiceSeparatorReadiness>;
+  voicesRevision?: () => number;
   /**
    * Days a chunk's audio is kept once it is settled; 0 (the default) drops
    * it at once. Read on every pass, so a changed setting applies without a
    * restart, and lowering it drops what is now past it.
    */
   keepAudioDays?: () => number;
+  /** Installed restore gate: unreadable/indeterminate state refuses background work. */
+  reviewRequired?: () => boolean;
   /**
    * Events on the owner's calendar overlapping `[from, toExclusive)`, with who
    * was invited; absent, no calendar suggestion is made.
@@ -176,6 +180,7 @@ export interface RecordingSummary {
   title: string;
   startedAt: string;
   state: RecordingState;
+  reviewRequired?: true;
   /** The chunk count the device declared; null while it records. */
   chunkCount: number | null;
   chunks: RecordingStatus["chunks"];
@@ -242,6 +247,7 @@ export interface RecordingStatus {
   id: string;
   title: string | null;
   state: RecordingState;
+  reviewRequired?: true;
   chunkCount: number | null;
   chunks: {
     received: number;
@@ -346,6 +352,7 @@ export class RecordingTranscriptionService {
       id,
       title: session.title,
       state,
+      ...(this.reviewRequired() ? { reviewRequired: true as const } : {}),
       chunkCount: session.chunkCount,
       chunks: { received, ...counts },
       projected,
@@ -373,6 +380,7 @@ export class RecordingTranscriptionService {
       title: recordingTitle(session),
       startedAt: session.startedAt,
       state: status?.state ?? "recording",
+      ...(this.reviewRequired() ? { reviewRequired: true as const } : {}),
       chunkCount: session.chunkCount,
       chunks: status?.chunks ?? { received: 0, pending: 0, transcribed: 0, failed: 0, silent: 0 },
       durationMs: sumRecordingChunkDurations(this.deps.readDb, session.id),
@@ -588,11 +596,22 @@ export class RecordingTranscriptionService {
     this.timer = null;
   }
 
+  private reviewRequired(): boolean {
+    if (!this.deps.reviewRequired) return false;
+    try {
+      return this.deps.reviewRequired() !== false;
+    } catch {
+      return true;
+    }
+  }
+
   private async pass(): Promise<void> {
+    if (this.reviewRequired()) return;
     await this.finishAbandoned();
+    if (this.reviewRequired()) return;
     await this.purgeExpiredAudio();
     for (;;) {
-      if (this.disposed) return;
+      if (this.disposed || this.reviewRequired()) return;
       const [next] = listDueRecordingChunks(this.deps.readDb, this.now().toISOString(), 1);
       if (!next) break;
       try {
@@ -603,7 +622,7 @@ export class RecordingTranscriptionService {
         log.warn(
           `Recording ${next.sessionId} chunk ${next.seq} failed: ${err instanceof Error ? err.message : String(err)}`,
         );
-        await this.retryLater(next);
+        if (!this.reviewRequired()) await this.retryLater(next);
       }
       // Write a session out as soon as its last chunk settles, not after the
       // whole backlog of every other session.
@@ -625,6 +644,7 @@ export class RecordingTranscriptionService {
   }
 
   private async purgeExpiredAudio(): Promise<void> {
+    if (this.reviewRequired()) return;
     const purged = await this.deps.writeGate.purgeRecordingAudio(
       this.later(-this.keepAudioDays() * DAY_MS),
     );
@@ -638,6 +658,7 @@ export class RecordingTranscriptionService {
       idleBefore,
       SWEEP_BATCH,
     )) {
+      if (this.reviewRequired()) return;
       const finished = await this.deps.writeGate.abandonRecordingSession(
         session.id,
         this.now().toISOString(),
@@ -656,7 +677,7 @@ export class RecordingTranscriptionService {
     // round on the next pass rather than holding this one.
     const done = new Set<string>();
     for (;;) {
-      if (this.disposed) return;
+      if (this.disposed || this.reviewRequired()) return;
       const ready = listUnprojectedRecordingSessions(
         this.deps.readDb,
         missingCutoff,
@@ -679,17 +700,20 @@ export class RecordingTranscriptionService {
   }
 
   private async project(sessionId: string): Promise<void> {
+    if (this.reviewRequired()) return;
     // The revision is read with the session, before the chunks: a change
     // landing after this read bumps it past the one recorded below, and the
     // session comes round again.
     const session = getRecordingSession(this.deps.readDb, sessionId);
     if (!session) return;
-    await this.groupVoices(sessionId);
+    if (!(await this.groupVoices(sessionId))) return;
+    if (this.reviewRequired()) return;
     const chunks = listRecordingChunks(this.deps.readDb, sessionId);
     const marks = listRecordingMarks(this.deps.readDb, sessionId);
     const doc = this.deps.buildDocument(session, chunks, marks, this.speakerIdentities(sessionId));
     if (doc) await this.deps.ingest([doc]);
     else await this.deps.deleteDocument(sessionId);
+    if (this.reviewRequired()) return;
     // A delete that landed while the document was written must not leave
     // the document behind.
     if (!getRecordingSession(this.deps.readDb, sessionId)) {
@@ -710,11 +734,22 @@ export class RecordingTranscriptionService {
    * earlier grouping are numbered after the existing ones: their vectors
    * cannot be compared with deleted ones. Without a separator, or when
    * grouping fails, the vectors are deleted all the same and those windows
-   * stay without a speaker — vectors never wait for a later attempt.
+   * stay without a speaker. A selected local separator still preparing or unavailable
+   * leaves restored vectors pending instead; explicit off remains an owner choice.
    */
-  private async groupVoices(sessionId: string): Promise<void> {
+  private async groupVoices(sessionId: string): Promise<boolean> {
+    if (this.reviewRequired()) return false;
     const ungrouped = listUngroupedRecordingVoices(this.deps.readDb, sessionId);
-    if (ungrouped.length === 0) return;
+    if (ungrouped.length === 0) return true;
+    const revision = this.deps.voicesRevision?.();
+    const readiness = await this.deps.voicesReady?.();
+    if (
+      this.reviewRequired() ||
+      this.deps.voicesRevision?.() !== revision ||
+      readiness === "superseded" ||
+      readiness === "unavailable"
+    )
+      return false;
     const separator = this.deps.voices?.() ?? null;
     let labels: number[] | null = null;
     if (separator) {
@@ -743,7 +778,9 @@ export class RecordingTranscriptionService {
           : { ...w, speaker: base + label + 1 };
       }),
     }));
+    if (this.reviewRequired() || this.deps.voicesRevision?.() !== revision) return false;
     await this.deps.writeGate.assignRecordingVoices(sessionId, chunks);
+    return true;
   }
 
   /** The session's speakers, with the names of the people they are mapped to. */
@@ -766,6 +803,7 @@ export class RecordingTranscriptionService {
     chunk: RecordingChunk,
     audio: Uint8Array,
   ): Promise<SeparatedVoices | null> {
+    if (this.reviewRequired()) return null;
     const separator = this.deps.voices?.() ?? null;
     if (!separator) return null;
     try {
@@ -779,8 +817,14 @@ export class RecordingTranscriptionService {
   }
 
   private async process(chunk: RecordingChunk): Promise<void> {
+    const revision = this.deps.voicesRevision?.();
+    const changed = () => this.deps.voicesRevision?.() !== revision;
+    if ((await this.deps.voicesReady?.()) === "superseded" || this.reviewRequired() || changed())
+      return;
     const age = this.now().getTime() - Date.parse(chunk.receivedAt);
+    if (this.reviewRequired()) return;
     const readiness = await this.deps.readiness();
+    if (this.reviewRequired() || changed()) return;
     if (!readiness.runnable) {
       if (age >= MAX_AGE_MS) return this.giveUp(chunk, "no transcriber could run");
       return this.deps.writeGate.rescheduleRecordingChunk(
@@ -795,6 +839,7 @@ export class RecordingTranscriptionService {
     const session = getRecordingSession(this.deps.readDb, chunk.sessionId);
     if (!audio || !session) return this.giveUp(chunk, "its audio is gone");
     const voices = await this.separateVoices(chunk, audio);
+    if (this.reviewRequired() || changed()) return;
     const outcome = await this.deps.transcribe(
       audio,
       chunk.mimeType ?? "application/octet-stream",
@@ -811,6 +856,7 @@ export class RecordingTranscriptionService {
         },
       },
     );
+    if (this.reviewRequired() || changed()) return;
     // The session may have been deleted while this chunk was transcribed.
     if (!getRecordingChunk(this.deps.readDb, chunk.sessionId, chunk.seq)) return;
 
@@ -850,6 +896,7 @@ export class RecordingTranscriptionService {
 
   /** Count a failed attempt: back off, or give up once out of attempts or time. */
   private async retryLater(chunk: RecordingChunk): Promise<void> {
+    if (this.reviewRequired()) return;
     const attempts = chunk.attempts + 1;
     const age = this.now().getTime() - Date.parse(chunk.receivedAt);
     if (attempts >= MAX_ATTEMPTS || age >= MAX_AGE_MS) {
@@ -865,6 +912,7 @@ export class RecordingTranscriptionService {
   }
 
   private async giveUp(chunk: RecordingChunk, why: string): Promise<void> {
+    if (this.reviewRequired()) return;
     await this.deps.writeGate.settleRecordingChunk(
       chunk.sessionId,
       chunk.seq,

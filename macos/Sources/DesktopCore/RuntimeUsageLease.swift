@@ -14,6 +14,7 @@ public final class DesktopRuntimeUsageLease: @unchecked Sendable {
         let codeUsageProtocol: Int?
         let runtimeLauncher: String?
         let dataUsageProtocol: Int?
+        let processAuthorityProtocol: Int?
         let inventory: [Entry]
     }
 
@@ -55,8 +56,8 @@ public final class DesktopRuntimeUsageLease: @unchecked Sendable {
         }
     }
 
-    /// Older managed SDK descendants pin code but lack the new per-profile data lease.
-    /// Reserve every legacy code epoch before destructive work; unknown membership fails closed.
+    /// Only certified runtime revisions may prove descendant membership through kernel leases.
+    /// Unknown older SDK launchers dropped descriptors, so apparent inactivity is never authority.
     public static func reserveLegacyDataConsumers(cache: URL) throws -> LegacyDataReservation {
         let publication = try openLock(cache.appendingPathComponent(".publication-lock"))
         defer { Darwin.close(publication) }
@@ -67,6 +68,7 @@ public final class DesktopRuntimeUsageLease: @unchecked Sendable {
                 where name.count == 64 && name.allSatisfy({ "0123456789abcdef".contains($0) }) {
                 let runtime = cache.appendingPathComponent(name, isDirectory: true)
                 let manifest = try validatedManifest(runtime)
+                guard manifest.processAuthorityProtocol == 3 else { throw Failure.unsafeLock }
                 if manifest.dataUsageProtocol == 1 { continue }
                 let descriptor = try openLock(cache.appendingPathComponent(".usage-" + name + ".lock"))
                 guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
@@ -87,7 +89,7 @@ public final class DesktopRuntimeUsageLease: @unchecked Sendable {
     public static func acquire(runtime: URL) throws -> DesktopRuntimeUsageLease {
         let epoch = runtime.lastPathComponent
         guard epoch.count == 64, epoch.allSatisfy({ $0.isHexDigit && !$0.isUppercase }),
-              runtime.resolvingSymlinksInPath().path == runtime.standardizedFileURL.path else {
+              (try? DesktopCanonicalPath.resolve(runtime.path)) == runtime.path else {
             throw Failure.invalidPayload
         }
         let cache = runtime.deletingLastPathComponent()
@@ -95,7 +97,7 @@ public final class DesktopRuntimeUsageLease: @unchecked Sendable {
         guard metadata[.type] as? FileAttributeType == .typeDirectory,
               (metadata[.ownerAccountID] as? NSNumber)?.uint32Value == getuid(),
               ((metadata[.posixPermissions] as? NSNumber)?.intValue ?? 0) & 0o077 == 0,
-              cache.resolvingSymlinksInPath().path == cache.standardizedFileURL.path else {
+              (try? DesktopCanonicalPath.resolve(cache.path)) == cache.path else {
             throw Failure.unsafeLock
         }
         let publication = try openLock(cache.appendingPathComponent(".publication-lock"))
@@ -107,6 +109,7 @@ public final class DesktopRuntimeUsageLease: @unchecked Sendable {
             throw Failure.invalidPayload
         }
         let manifest = try validatedManifest(runtime)
+        guard manifest.processAuthorityProtocol == 3 else { throw Failure.invalidPayload }
         let executables = Set(manifest.inventory.filter { $0.executable == true && $0.symlink == nil }.map(\.path))
         let descriptor = try openLock(cache.appendingPathComponent(".usage-" + epoch + ".lock"))
         do {
@@ -133,14 +136,15 @@ public final class DesktopRuntimeUsageLease: @unchecked Sendable {
         -> T? {
         guard epoch != currentEpoch, epoch.count == 64,
               epoch.allSatisfy({ $0.isHexDigit && !$0.isUppercase }),
-              cache.resolvingSymlinksInPath().path == cache.standardizedFileURL.path else { return nil }
+              (try? DesktopCanonicalPath.resolve(cache.path)) == cache.path else { return nil }
         let publication = try openLock(cache.appendingPathComponent(".publication-lock"))
         defer { Darwin.close(publication) }
         try DesktopRuntimePublicationLock.acquire(publication)
         let runtime = cache.appendingPathComponent(epoch, isDirectory: true)
-        guard !hasPendingApplicationLaunch(cache: cache, epoch: epoch) else { return nil }
+        guard !hasPendingApplicationLaunch(cache: cache, epoch: epoch),
+              !DesktopSnapshotGcLease.blocksReclamation(cache: cache, epoch: epoch) else { return nil }
         guard case nil = try readCleanupReceipt(cache.appendingPathComponent(".cleanup-" + epoch + ".json")),
-              (try? validatedManifest(runtime)) != nil else { return nil }
+              (try? validatedManifest(runtime))?.processAuthorityProtocol == 3 else { return nil }
         let usage = try openLock(cache.appendingPathComponent(".usage-" + epoch + ".lock"))
         defer { Darwin.close(usage) }
         guard flock(usage, LOCK_EX | LOCK_NB) == 0 else { return nil }
@@ -149,6 +153,7 @@ public final class DesktopRuntimeUsageLease: @unchecked Sendable {
 
     private struct CleanupReceipt: Codable {
         let format: Int
+        let processAuthorityProtocol: Int
         let owner: String
         let epoch: String
         let device: UInt64
@@ -179,7 +184,7 @@ public final class DesktopRuntimeUsageLease: @unchecked Sendable {
         -> Bool {
         guard epoch != currentEpoch, epoch.count == 64,
               epoch.allSatisfy({ "0123456789abcdef".contains($0) }),
-              cache.resolvingSymlinksInPath().path == cache.standardizedFileURL.path else { return false }
+              (try? DesktopCanonicalPath.resolve(cache.path)) == cache.path else { return false }
         let attributes = try FileManager.default.attributesOfItem(atPath: cache.path)
         guard attributes[.type] as? FileAttributeType == .typeDirectory,
               (attributes[.ownerAccountID] as? NSNumber)?.uint32Value == getuid(),
@@ -193,7 +198,8 @@ public final class DesktopRuntimeUsageLease: @unchecked Sendable {
         defer { Darwin.close(usage) }
         guard flock(usage, LOCK_EX | LOCK_NB) == 0 else { return false }
         let runtime = cache.appendingPathComponent(epoch, isDirectory: true)
-        guard !hasPendingApplicationLaunch(cache: cache, epoch: epoch) else { return false }
+        guard !hasPendingApplicationLaunch(cache: cache, epoch: epoch),
+              !DesktopSnapshotGcLease.blocksReclamation(cache: cache, epoch: epoch) else { return false }
         let receiptPath = cache.appendingPathComponent(".cleanup-" + epoch + ".json")
         let receipt = try readCleanupReceipt(receiptPath)
         let applications = cache.deletingLastPathComponent().appendingPathComponent("applications", isDirectory: true)
@@ -204,7 +210,7 @@ public final class DesktopRuntimeUsageLease: @unchecked Sendable {
         let archiveExists = lstat(archive.path, &archiveInfo) == 0
         if !archiveExists, errno != ENOENT { throw Failure.unsafeLock }
         if archiveExists {
-            guard applications.resolvingSymlinksInPath() == applications.standardizedFileURL,
+            guard (try? DesktopCanonicalPath.resolve(applications.path)) == applications.path,
                   lstat(applications.path, &parentInfo) == 0, parentInfo.st_mode & S_IFMT == S_IFDIR,
                   parentInfo.st_uid == getuid(), parentInfo.st_mode & 0o077 == 0,
                   archiveInfo.st_mode & S_IFMT == S_IFDIR, archiveInfo.st_uid == getuid(),
@@ -212,7 +218,7 @@ public final class DesktopRuntimeUsageLease: @unchecked Sendable {
         }
         if runtimeExists {
             guard runtimeInfo.st_mode & S_IFMT == S_IFDIR, runtimeInfo.st_uid == getuid(),
-                  runtime.resolvingSymlinksInPath().path == runtime.standardizedFileURL.path else { return false }
+                  (try? DesktopCanonicalPath.resolve(runtime.path)) == runtime.path else { return false }
         }
         if let receipt {
             guard receipt.epoch == epoch else { throw Failure.invalidPayload }
@@ -228,7 +234,7 @@ public final class DesktopRuntimeUsageLease: @unchecked Sendable {
                 }
             }
         } else {
-            guard runtimeExists, (try? validatedManifest(runtime)) != nil else { return false }
+            guard runtimeExists, (try? validatedManifest(runtime))?.processAuthorityProtocol == 3 else { return false }
             let identity: DesktopApplicationArchiveOwnership.Identity?
             if archiveExists {
                 guard let verified = try? DesktopApplicationArchiveOwnership.verified(directory: archive, epoch: epoch)
@@ -236,7 +242,8 @@ public final class DesktopRuntimeUsageLease: @unchecked Sendable {
                 identity = verified
             } else { identity = nil }
             let value = CleanupReceipt(
-                format: 2,
+                format: 3,
+                processAuthorityProtocol: 3,
                 owner: "omnesis-desktop-runtime-cleanup",
                 epoch: epoch,
                 device: UInt64(runtimeInfo.st_dev),
@@ -287,7 +294,8 @@ public final class DesktopRuntimeUsageLease: @unchecked Sendable {
               info.st_size > 0, info.st_size <= 4096,
               let data = try handle.read(upToCount: 4097), data.count <= 4096 else { throw Failure.unsafeLock }
         let receipt = try JSONDecoder().decode(CleanupReceipt.self, from: data)
-        guard [1, 2].contains(receipt.format), receipt.owner == "omnesis-desktop-runtime-cleanup" else { throw Failure.invalidPayload }
+        guard receipt.format == 3, receipt.processAuthorityProtocol == 3,
+              receipt.owner == "omnesis-desktop-runtime-cleanup" else { throw Failure.invalidPayload }
         return receipt
     }
 
@@ -299,7 +307,7 @@ public final class DesktopRuntimeUsageLease: @unchecked Sendable {
         var info = stat()
         guard lstat(directory.path, &info) == 0 else { return errno != ENOENT }
         guard info.st_mode & S_IFMT == S_IFDIR, info.st_uid == getuid(), info.st_mode & 0o077 == 0,
-              directory.resolvingSymlinksInPath().path == directory.standardizedFileURL.path,
+              (try? DesktopCanonicalPath.resolve(directory.path)) == directory.path,
               let entries = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil),
               entries.count <= 256 else { return true }
         for entry in entries {
@@ -327,7 +335,7 @@ public final class DesktopRuntimeUsageLease: @unchecked Sendable {
 
     private static func validatedManifest(_ runtime: URL) throws -> Manifest {
         let epoch = runtime.lastPathComponent
-        guard runtime.resolvingSymlinksInPath().path == runtime.standardizedFileURL.path else { throw Failure.invalidPayload }
+        guard (try? DesktopCanonicalPath.resolve(runtime.path)) == runtime.path else { throw Failure.invalidPayload }
         let inventoryDescriptor = Darwin.open(
             runtime.appendingPathComponent("desktop-runtime.json").path,
             O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK
@@ -383,11 +391,12 @@ public final class DesktopRuntimeUsageLease: @unchecked Sendable {
             let command = arguments[1]
             guard !command.isEmpty, !command.contains("\0") else { throw Failure.unsupportedInvocation }
             let candidates: [URL] = if command.contains("/") {
-                [URL(
-                    fileURLWithPath: command,
-                    relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
-                )
-                .standardizedFileURL]
+                [
+                    URL(
+                        fileURLWithPath: command,
+                        relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+                    ),
+                ]
             } else {
                 (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":", omittingEmptySubsequences: false).map {
                     URL(fileURLWithPath: $0.isEmpty ? FileManager.default.currentDirectoryPath : String($0)).appendingPathComponent(command)
@@ -396,8 +405,8 @@ public final class DesktopRuntimeUsageLease: @unchecked Sendable {
             guard let selected = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0.path) }) else {
                 throw Failure.cannotExecute
             }
-            let executable = selected.resolvingSymlinksInPath().standardizedFileURL
-            let parent = runtime.standardizedFileURL.pathComponents
+            let executable = try URL(fileURLWithPath: DesktopCanonicalPath.resolve(selected.path))
+            let parent = runtime.pathComponents
             let components = executable.pathComponents
             let args = Array(arguments.dropFirst(2))
             if components.count > parent.count, Array(components.prefix(parent.count)) == parent {
@@ -423,7 +432,7 @@ public final class DesktopRuntimeUsageLease: @unchecked Sendable {
               path.split(separator: "/", omittingEmptySubsequences: false).allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }),
               path != "runtime-exec", executables.contains(path) else { throw Failure.unsupportedInvocation }
         let target = runtime.appendingPathComponent(path)
-        guard target.resolvingSymlinksInPath().path == target.standardizedFileURL.path,
+        guard (try? DesktopCanonicalPath.resolve(target.path)) == target.path,
               FileManager.default.isExecutableFile(atPath: target.path) else { throw Failure.invalidPayload }
         return target
     }

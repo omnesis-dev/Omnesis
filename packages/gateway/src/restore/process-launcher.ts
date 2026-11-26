@@ -7,6 +7,7 @@ import {
   spawnOwnedChildProcess,
   type ManagedDesktopDataScope,
 } from "@omnesis/core";
+import { RestoreWorkerFailure } from "./failure.js";
 
 export async function runRestoreProcess(
   options: unknown,
@@ -83,12 +84,11 @@ export async function runRestoreProcess(
     await owner.joined;
     if (cancelled || signal.aborted)
       throw new DOMException("Backup restore was cancelled", "AbortError");
-    if (refused || exitCode !== 0)
-      throw new Error("The backup database could not be prepared safely");
+    if (refused || exitCode !== 0) throw new RestoreWorkerFailure("process-exit");
     try {
       return JSON.parse(output) as unknown;
     } catch {
-      throw new Error("The backup database could not be prepared safely");
+      throw new RestoreWorkerFailure("invalid-reply");
     }
   } finally {
     frame.fill(0);

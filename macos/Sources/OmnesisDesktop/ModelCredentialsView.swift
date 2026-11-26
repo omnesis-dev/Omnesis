@@ -44,7 +44,7 @@ private struct DesktopModelCredentialForm: View {
                     .contains { $0.utf8.count > 16384 })
             if loading { ProgressView("Saving credentials…") }
             if savedKey { Text("Credentials saved. Select the tasks you want this provider to serve.").font(.callout) }
-            if let error { Text(error).foregroundStyle(.red) }
+            if let error { Text(error).foregroundStyle(DesktopTheme.danger) }
         }.onDisappear { values.removeAll() }
     }
 

@@ -6,6 +6,11 @@ import { join } from "node:path";
 import { createLogger, ownedProcessCleanupReceipt } from "@omnesis/core";
 import { z } from "zod";
 import {
+  PublicRouteProbe,
+  PUBLIC_ROUTE_REFRESH_MS,
+  type PublicRouteBinding,
+} from "./public-route-probe.js";
+import {
   cleanupReceipt,
   combinedCleanupErrors,
   OwnedCleanupLifecycle,
@@ -165,6 +170,8 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
   private enrollment: CloudRelayManagementStatus["enrollment"] = { state: "unconfigured" };
   private certificateError: CloudRelayManagementError | undefined;
   private publicReady = false;
+  private readonly publicRouteProbe = new PublicRouteProbe();
+  private publicRouteTimer: ReturnType<typeof setTimeout> | undefined;
   private publicError: "public-endpoint-unreachable" | undefined;
   private fingerprint: string | undefined;
   private spkiFingerprint: string | undefined;
@@ -445,6 +452,8 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
     return proof;
   }
   private stopAdmission(): void {
+    this.publicRouteProbe.invalidate();
+    clearTimeout(this.publicRouteTimer);
     this.closed = true;
     this.abort.abort();
     this.connectAbort.abort();
@@ -832,6 +841,8 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
   }
   private launch(force = false): void {
     if (this.closed || this.pending || !this.settings?.enabled) return;
+    this.publicRouteProbe.invalidate();
+    clearTimeout(this.publicRouteTimer);
     clearTimeout(this.timer);
     // Ends a recheck still in flight, so it cannot write over what this launch finds.
     this.abort.abort();
@@ -924,8 +935,10 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
         this.pending = undefined;
         this.revision++;
         if (unregistered) this.forgotten(unregistered.removed);
-        else if (this.settings?.enabled && !this.abort.signal.aborted && !this.cleanup.uncertain)
+        else if (this.settings?.enabled && !this.abort.signal.aborted && !this.cleanup.uncertain) {
           this.scheduleNext(0);
+          this.schedulePublicRouteRefresh();
+        }
       }
     });
     void this.pending.catch(() => {});
@@ -964,12 +977,77 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
     return this.options.probeRetryMs ?? 15_000;
   }
   private reachable(signal: AbortSignal): Promise<boolean> {
-    return (this.options.probe ?? defaultPublicProbe)(this.settings!.publicOrigin, signal).catch(
-      (error: unknown) => {
+    return this.publicRouteBinding()
+      .then((binding) =>
+        this.publicRouteProbe.check(binding, signal, (active) =>
+          (this.options.probe ?? defaultPublicProbe)(this.settings!.publicOrigin, active),
+        ),
+      )
+      .catch((error: unknown) => {
         if (this.cleanup.observe(error)) throw error;
         return false;
-      },
-    );
+      });
+  }
+  private async publicRouteBinding(
+    certificate?: X509Certificate | null,
+  ): Promise<PublicRouteBinding> {
+    if (certificate === undefined) {
+      try {
+        certificate = new X509Certificate(
+          await this.admitted(() =>
+            readFile(
+              this.environment().OMNESIS_ACME_CERT_FILE ??
+                this.environment().OMNESIS_TLS_CERT ??
+                join(this.directory, "public.pem"),
+            ),
+          ),
+        );
+      } catch (error) {
+        if (this.cleanup.observe(error)) throw error;
+        certificate = null;
+      }
+    }
+    const tunnel = this.tunnel?.status();
+    return {
+      identity: JSON.stringify([
+        this.settings?.publicOrigin,
+        certificate?.fingerprint256,
+        this.fingerprintSha256(),
+        tunnel?.state,
+        tunnel?.lastConnectedAt,
+      ]),
+      expiresAt:
+        certificate && !certificate.checkIssued(certificate) && tunnel?.state === "online"
+          ? Date.parse(certificate.validTo)
+          : 0,
+    };
+  }
+  /** Independent from certificate/enrollment renewal; all paths share one physical probe slot. */
+  private schedulePublicRouteRefresh(): void {
+    clearTimeout(this.publicRouteTimer);
+    if (
+      this.closed ||
+      this.options.env.OMNESIS_DESKTOP_MANAGED !== "1" ||
+      !this.settings?.enabled ||
+      this.abort.signal.aborted ||
+      this.cleanup.uncertain
+    )
+      return;
+    const owner = this.abort;
+    this.publicRouteTimer = setTimeout(() => {
+      void this.run(async () => {
+        const ready = await this.reachable(owner.signal);
+        if (owner !== this.abort || owner.signal.aborted) return;
+        if (this.publicReady !== ready) this.revision++;
+        this.publicReady = ready;
+        this.publicError = ready ? undefined : "public-endpoint-unreachable";
+      })
+        .catch(() => undefined)
+        .finally(() => {
+          if (owner === this.abort && !owner.signal.aborted) this.schedulePublicRouteRefresh();
+        });
+    }, PUBLIC_ROUTE_REFRESH_MS);
+    this.publicRouteTimer.unref();
   }
   private async recheck(attempt: number): Promise<void> {
     return this.run(async () => {
@@ -986,6 +1064,8 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
     });
   }
   private async stop(): Promise<void> {
+    this.publicRouteProbe.invalidate();
+    clearTimeout(this.publicRouteTimer);
     this.abort.abort();
     this.google?.cancel();
     this.account?.cancel();
@@ -993,6 +1073,11 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
     this.timer = undefined;
     this.stopTunnel();
     const errors: unknown[] = [];
+    try {
+      await this.publicRouteProbe.join();
+    } catch (error) {
+      if (this.cleanup.observe(error)) errors.push(error);
+    }
     try {
       await this.pending;
     } catch (error) {
@@ -1267,6 +1352,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
           ? this.signupAccess.value
           : undefined;
       let certificate: CloudRelayManagementStatus["certificate"] = { state: "unconfigured" };
+      let publicCertificate: X509Certificate | null = null;
       if (s) {
         try {
           const cert = new X509Certificate(
@@ -1279,6 +1365,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
             ),
           );
           const expiry = Date.parse(cert.validTo);
+          publicCertificate = cert;
           certificate = {
             state:
               expiry <= Date.now()
@@ -1358,6 +1445,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
         tunnel: tunnel ?? { state: s?.enabled ? "connecting" : "disabled" },
         certificate,
         publicMcp: {
+          ...this.publicRouteProbe.snapshot(await this.publicRouteBinding(publicCertificate)),
           lastError: this.publicError,
           ready: this.publicReady && tunnel?.state === "online",
           url: origin ? `${origin}/mcp` : undefined,

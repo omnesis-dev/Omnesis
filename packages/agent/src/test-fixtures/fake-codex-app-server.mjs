@@ -160,6 +160,7 @@ rl.on("line", (line) => {
           notify: [],
           allow_login_shell: false,
           project_doc_max_bytes: 0,
+          web_search: "disabled",
           tools: {
             experimental_request_user_input: { enabled: false },
             update_plan: { enabled: false },

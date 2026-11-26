@@ -10,7 +10,10 @@ import type { DesktopProfile } from "./environment.js";
 
 export const DESKTOP_RESTORE_REVIEW_FILE = "desktop-restore-review.json";
 /** Original policy parameters remain sealed for review, rather than running on restored history. */
-export function pauseDesktopRestoreProcessing(config: OmnesisConfig): {
+export function pauseDesktopRestoreProcessing(
+  config: OmnesisConfig,
+  recordings = 0,
+): {
   config: OmnesisConfig;
   review: DesktopRestoreReview;
 } {
@@ -26,6 +29,14 @@ export function pauseDesktopRestoreProcessing(config: OmnesisConfig): {
       omnesisConfigSchema.parse({
         ...config,
         activityRetention: {},
+        ...(recordings > 0
+          ? {
+              inference: {
+                ...config.inference,
+                recordings: { ...config.inference?.recordings, restoreReviewRequired: true },
+              },
+            }
+          : {}),
         gateway: { ...config.gateway, storage: { ...config.gateway?.storage, retention: [] } },
       }),
     ),
@@ -88,4 +99,13 @@ export async function readDesktopRestoreReview(
     activityRetention: config.activityRetention ?? {},
   };
   return Buffer.byteLength(JSON.stringify(result)) <= 512 * 1024 ? result : undefined;
+}
+
+/** Config digest still binds the complete review; legacy intents without recording counts remain compatible. */
+export function desktopRestoreRecordingsPaused(config: unknown, recordings: number): boolean {
+  const parsed = omnesisConfigSchema.safeParse(config);
+  return (
+    parsed.success &&
+    (recordings === 0 || parsed.data.inference?.recordings?.restoreReviewRequired === true)
+  );
 }

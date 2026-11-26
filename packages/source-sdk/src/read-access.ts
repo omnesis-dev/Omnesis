@@ -17,6 +17,16 @@ type Failure = { status: "denied" | "unavailable"; remediation?: SyncRemediation
 /** Maximum entries examined in one directory; overflow is unavailable. */
 const MAX_READ_ACCESS_DIRECTORY_ENTRIES = 256;
 
+/** Only observed operating-system access refusal, never inferred from an arbitrary read failure. */
+export function isReadAccessDenied(error: unknown): boolean {
+  return Boolean(
+    error &&
+    typeof error === "object" &&
+    "code" in error &&
+    (error.code === "EACCES" || error.code === "EPERM"),
+  );
+}
+
 function failure(error: unknown, options: ReadAccessOptions): Failure {
   const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
   if (!options.signal.aborted && (code === "EACCES" || code === "EPERM")) {
@@ -107,6 +117,29 @@ export async function listReadAccessDirectory(
             entries.push(entry);
           }
           return { status: "unavailable" } as const;
+        } finally {
+          await directory.close();
+        }
+      } catch (error) {
+        return failure(error, options);
+      }
+    }, options.signal)) ?? { status: "unavailable" }
+  );
+}
+
+/** Proves only that one declared directory can be opened and listed; not descendant coverage. */
+export async function probeDirectoryReadAccess(
+  path: string,
+  options: ReadAccessOptions,
+): Promise<SourceReadAccessResult> {
+  return (
+    (await cancellable(async () => {
+      try {
+        const directory = await opendir(path);
+        try {
+          if (options.signal.aborted) return { status: "unavailable" } as const;
+          await directory.read();
+          return { status: options.signal.aborted ? "unavailable" : "readable" } as const;
         } finally {
           await directory.close();
         }

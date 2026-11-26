@@ -19,11 +19,12 @@ import {
   waitForCondition,
   type PairedCollector,
 } from "./multi-collector-harness.js";
+import type { SyncRemediation } from "@omnesis/types";
 
 const REPLICATED = "notes-synth:shared@example.com";
 const EXCLUSIVE = "gmail-synth:shared@example.com";
 
-const REMEDY = {
+const REMEDY: SyncRemediation = {
   summary: "Disk access is required",
   steps: [
     "Open the privacy settings pane.",
@@ -31,6 +32,16 @@ const REMEDY = {
   ],
   executable: "/opt/example/bin/node",
   restartRequired: true,
+  actions: [
+    { kind: "open-system-settings", category: "privacy-security" },
+    { kind: "retry-access" },
+  ],
+  access: {
+    status: "denied",
+    checkedAt: "2026-01-01T00:00:00.000Z",
+    scopeDigest: "a".repeat(64),
+    target: "unverified",
+  },
 };
 
 interface MemberStatus {
@@ -208,6 +219,25 @@ describe("structured remediation on a source's status", () => {
     if (sibling) expect(sibling).not.toMatchObject({ state: "error" });
   }, 60_000);
 
+  test("a retry remains access-degraded until this member actually completes", async () => {
+    linuxbox.ws.emitEvent("sync.status", {
+      sourceId: REPLICATED,
+      deviceId: linuxbox.deviceId,
+      state: "syncing",
+      remediation: REMEDY,
+    });
+    await waitForCondition(
+      async () => (await memberOf(REPLICATED, linuxbox.deviceId))?.state === "syncing",
+      5000,
+      "the retry reached the gateway",
+    );
+    const member = await memberOf(REPLICATED, linuxbox.deviceId);
+    expect(member?.remediation).toEqual(REMEDY);
+    expect(member?.errorMessage).toBe("Collection access is blocked on this computer");
+    expect(await remedyPersistedFor(linuxbox.deviceId)).toBe(true);
+    expect((await memberOf(REPLICATED, macbook.deviceId))?.remediation).toBeUndefined();
+  });
+
   test("the member's own successful sync clears it", async () => {
     linuxbox.ws.emitEvent("sync.status", {
       sourceId: REPLICATED,
@@ -216,7 +246,14 @@ describe("structured remediation on a source's status", () => {
       completedAt: Date.now(),
     });
     await waitForCondition(
-      async () => (await memberOf(REPLICATED, linuxbox.deviceId))?.state !== "error",
+      async () => {
+        const member = await memberOf(REPLICATED, linuxbox.deviceId);
+        return (
+          member !== undefined &&
+          !["error", "syncing"].includes(member.state) &&
+          member.remediation === undefined
+        );
+      },
       5_000,
       "the member recovered",
     );

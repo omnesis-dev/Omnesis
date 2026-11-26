@@ -159,7 +159,15 @@ export async function prepareCodexKeychainTestFixture(options, dependencies = {}
         (!executable.isFile() || executable.isSymbolicLink() || executable.nlink !== 1)
       )
         throw new Error("The existing Codex test executable is unsafe");
-      if (executable && metadata.executableSha256 === (await hashFile(join(output, "codex"))))
+      if (
+        executable &&
+        metadata.executableSha256 === (await hashFile(join(output, "codex"))) &&
+        metadata.packageBinary === spec.binary.replace(/^package\//u, "") &&
+        metadata.packageManifestSha256 ===
+          (await hashFile(join(output, "sdk-package/package.json")).catch(() => null)) &&
+        metadata.executableSha256 ===
+          (await hashFile(join(output, "sdk-package", metadata.packageBinary)).catch(() => null))
+      )
         return output;
     }
     await rm(output, { recursive: true });
@@ -185,6 +193,27 @@ export async function prepareCodexKeychainTestFixture(options, dependencies = {}
     const sourceInfo = await lstat(source);
     if (!sourceInfo.isFile() || sourceInfo.isSymbolicLink() || sourceInfo.nlink !== 1)
       throw new Error("The SDK test executable is unsafe");
+    const manifestPath = join(distribution, "package/package.json");
+    const manifestInfo = await lstat(manifestPath);
+    if (
+      !manifestInfo.isFile() ||
+      manifestInfo.isSymbolicLink() ||
+      manifestInfo.nlink !== 1 ||
+      manifestInfo.size > 65536
+    )
+      throw new Error("The SDK test package identity is unsafe");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    if (
+      manifest.name !== "@openai/codex" ||
+      manifest.version !== `${spec.version}-darwin-${spec.architecture}`
+    )
+      throw new Error("The SDK test package identity does not match its pinned artifact");
+    const packageBinary = spec.binary.replace(/^package\//u, "");
+    const packageTarget = join(stage, "sdk-package", packageBinary);
+    await mkdir(dirname(packageTarget), { recursive: true, mode: 0o700 });
+    await cp(manifestPath, join(stage, "sdk-package/package.json"));
+    await cp(source, packageTarget);
+    await chmod(packageTarget, 0o755);
     await cp(source, join(stage, "codex"));
     await chmod(join(stage, "codex"), 0o755);
     const file = await open(join(stage, "codex-fixture.json"), "wx", 0o600);
@@ -197,6 +226,8 @@ export async function prepareCodexKeychainTestFixture(options, dependencies = {}
           architecture: spec.architecture,
           integrity: spec.integrity,
           executableSha256: await hashFile(join(stage, "codex")),
+          packageBinary,
+          packageManifestSha256: await hashFile(join(stage, "sdk-package/package.json")),
         }),
       );
     } finally {

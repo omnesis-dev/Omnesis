@@ -7,7 +7,13 @@ export const DESKTOP_DATA_INPUT_LIMIT = 72 * 1024 * 1024;
 const refused = () => new Error("The private data-operation request is invalid");
 
 /** One bounded binary frame; stdin remains open as the controller-liveness channel. */
-export function readDesktopDataFrame(input: Readable, signal: AbortSignal): Promise<unknown> {
+export function readDesktopDataFrame(
+  input: Readable,
+  signal: AbortSignal,
+  limit = DESKTOP_DATA_INPUT_LIMIT,
+): Promise<unknown> {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > DESKTOP_DATA_INPUT_LIMIT)
+    return Promise.reject(refused());
   return new Promise((resolve, reject) => {
     let header = Buffer.alloc(0),
       expected: number | undefined,
@@ -34,7 +40,7 @@ export function readDesktopDataFrame(input: Readable, signal: AbortSignal): Prom
         block = block.subarray(take);
         if (header.length < 4) return;
         expected = header.readUInt32BE();
-        if (expected < 1 || expected > DESKTOP_DATA_INPUT_LIMIT) return fail();
+        if (expected < 1 || expected > limit) return fail();
       }
       size += block.length;
       if (size > expected) return fail();

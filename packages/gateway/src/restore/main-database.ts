@@ -14,6 +14,8 @@ import {
 import { runSchemaSetup } from "../data/schema.js";
 import { LATEST_SCHEMA_VERSION, runMigrations } from "../data/migrations.js";
 import { desktopRestoreReviewedTables, desktopRestoreTablePolicy } from "./authority-policy.js";
+
+import { reconcileRestoredRetirements } from "./retirement.js";
 import type { Db } from "../data/types.js";
 
 type Row = Record<string, unknown>;
@@ -23,6 +25,7 @@ interface Column {
   dflt_value: string | null;
 }
 export interface RestoredMainDatabase {
+  recordings: number;
   sourcesPaused: number;
   foreignDevicesRetained: number;
   targetDevicesPreserved: number;
@@ -153,12 +156,14 @@ export function reconcileRestoredMainDatabase(
         case "discard-work":
         case "rebuild-derived":
         case "reconcile-devices":
+        case "reconcile-retirements":
           break;
         default:
           assertNever(policy);
       }
     }
     const devices = reconcileDevices(source, target, output);
+    reconcileRestoredRetirements(source, target, output);
     const sourcesPaused = output.prepare("UPDATE sources SET enabled=0").run().changes;
     output.exec("UPDATE knowledge_candidates SET decision_pending=0, reconsider_at=NULL");
     output.exec(
@@ -208,13 +213,16 @@ export function reconcileRestoredMainDatabase(
       targetIdentity !== privateRegularFile(options.targetPath)
     )
       throw new Error("The library changed while its restore was being prepared");
+    const recordings = Number(
+      output.prepare("SELECT count(*) FROM recording_sessions").pluck().get(),
+    );
     output.close();
     output = undefined;
     fsyncFileSync(options.destinationPath);
     if (sqliteFileLooksPlaintext(options.destinationPath))
       throw new Error("The restored database was not protected");
     completed = true;
-    return { sourcesPaused, ...devices, targetLabs };
+    return { sourcesPaused, ...devices, targetLabs, recordings };
   } catch {
     throw new Error("The backup data could not be reconciled with this Mac's library authority");
   } finally {

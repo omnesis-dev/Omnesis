@@ -66,7 +66,7 @@ function fixture() {
     app,
     info,
     run,
-    dependencies: { run, platform: "darwin" },
+    dependencies: { run, platform: "darwin", inspectSlots: () => [] },
     changePermission: () => {
       addPermission = true;
     },

@@ -7,53 +7,28 @@ import DesktopCore
 /// The registered login item owns only the desktop daemon. Runtime lifecycle
 /// and its single-instance lock remain in the portable desktop package.
 final class BackgroundDelegate: NSObject, NSApplicationDelegate {
-    private var daemon: Process?
+    private var service: BackgroundService?
+    private var terminating = false
     private var runtime: URL?
-    private var presenter: ApplicationPresenter?
-    private var retirement: Process?
+    private var retirement: DesktopBackgroundDaemonProcess?
     private var retirementRequested = false
     private var retryCount = 0
-    private var usageLease: DesktopRuntimeUsageLease?
     func applicationDidFinishLaunching(_ notification: Notification) {
         let mainBundle = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
         Task {
             do {
-                let prepared = try await Task.detached(priority: .utility) {
-                    let runtime = try DesktopRuntimeBootstrap.prepare(appBundle: mainBundle)
-                    return try (runtime, DesktopRuntimeUsageLease.acquire(runtime: runtime))
-                }.value
-                usageLease = prepared.1
-                runtime = prepared.0
-                presenter = ApplicationPresenter(application: mainBundle) { [weak self] moved in
-                    DispatchQueue.main.async { self?.applicationMoved(to: moved) }
-                }
-                launch(prepared.0)
+                let service = BackgroundService(application: mainBundle) { [weak self] location in self?.applicationMoved(to: location) }
+                self.service = service
+                try await service.prepare()
+                runtime = service.runtime
+                // The daemon remains independently supervised if opening presentation fails.
+                try? await BackgroundMainApplication.openIfNeeded(mainBundle)
             } catch { NSApp.terminate(nil) }
         }
     }
 
-    private func launch(_ runtime: URL) {
-        let child = Process()
-        child.executableURL = runtime.appendingPathComponent("runtime-exec")
-        child.arguments = ["--node", runtime.appendingPathComponent("packages/cli/dist/index.js").path, "desktop", "daemon"]
-        child.currentDirectoryURL = runtime
-        child.environment = DesktopRuntimeEnvironment.child(parent: ProcessInfo.processInfo.environment, runtime: runtime)
-        child.standardInput = FileHandle.nullDevice
-        child.standardOutput = FileHandle.nullDevice
-        child.standardError = FileHandle.nullDevice
-        // Another owned daemon may already exist. Keep the native observer resident either way.
-        child.terminationHandler = { [weak self] finished in
-            DispatchQueue.main.async {
-                if self?.daemon === finished { self?.daemon = nil }
-            }
-        }
-        do { try child.run()
-            daemon = child
-        } catch { NSApp.terminate(nil) }
-    }
-
-    private func applicationMoved(to location: URL?) {
+    @MainActor private func applicationMoved(to location: URL?) {
         if let location {
             guard let trash = try? FileManager.default.url(
                 for: .trashDirectory,
@@ -61,50 +36,49 @@ final class BackgroundDelegate: NSObject, NSApplicationDelegate {
                 appropriateFor: location,
                 create: false
             ),
-                DesktopApplicationLocation.isInTrash(location, trash: trash) else { return }
+                (try? DesktopBackgroundApplicationOrigin.canonicalTrashContains(location, trash: trash)) == true else { return }
         }
+        service?.freezeStarts()
         retirementRequested = true
         retireOwnedLibrary()
     }
 
     private func retireOwnedLibrary() {
         guard retirementRequested, retirement == nil, let runtime else { return }
-        let child = Process()
-        child.executableURL = runtime.appendingPathComponent("runtime-exec")
-        child.arguments = [
-            "--node",
-            runtime.appendingPathComponent("packages/cli/dist/index.js").path,
-            "desktop",
-            "system-retire",
-        ]
-        child.currentDirectoryURL = runtime
-        child.environment = DesktopRuntimeEnvironment.child(parent: ProcessInfo.processInfo.environment, runtime: runtime)
-        child.standardInput = FileHandle.nullDevice
-        child.standardOutput = FileHandle.nullDevice
-        child.standardError = FileHandle.nullDevice
-        child.terminationHandler = { [weak self] finished in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.retirement = nil
-                if finished.terminationStatus == 0 { NSApp.terminate(nil) }
-                else if self.retryCount < 5 {
-                    self.retryCount += 1
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in self?.retireOwnedLibrary() }
-                }
-            }
-        }
-        do { try child.run()
-            retirement = child
-        } catch {
-            if retryCount < 5 {
-                retryCount += 1
-                DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in self?.retireOwnedLibrary() }
-            }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let descriptor = try DesktopBackgroundDaemonAuthority.descriptor(
+                    profile: DesktopBackgroundManagedProfile.current(), epoch: runtime.lastPathComponent, activation: nil
+                )
+                let child = try DesktopBackgroundDaemonProcess.launchRetirement(runtime: runtime, descriptor: descriptor)
+                retirement = child
+                service?.registerRetirement(child)
+                let result = await child.waitForExit()
+                guard retirement === child else { return }
+                retirement = nil
+                service?.registerRetirement(nil)
+                if result.clean { NSApp.terminate(nil) }
+                else { retryRetirement() }
+            } catch { retryRetirement() }
         }
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
-        if daemon?.isRunning == true { daemon?.terminate() }
+    private func retryRetirement() {
+        guard retryCount < 5 else { return }
+        retryCount += 1
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in self?.retireOwnedLibrary() }
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !terminating else { return .terminateLater }
+        terminating = true
+        Task { @MainActor [weak self] in
+            if let retirement = self?.retirement { _ = await retirement.stopAndJoin() }
+            await self?.service?.shutdown()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 }
 

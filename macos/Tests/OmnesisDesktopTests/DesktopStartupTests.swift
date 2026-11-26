@@ -10,12 +10,13 @@ import XCTest
 @MainActor
 final class DesktopStartupTests: XCTestCase {
     func testStdoutEOFOfALiveOwnedHelperFailsTheConnectionAndDrainsItsInput() async throws {
-        let base = FileManager.default.temporaryDirectory.appendingPathComponent("omnesis-eof-fixture-\(UUID().uuidString)")
-            .resolvingSymlinksInPath()
+        let selected = FileManager.default.temporaryDirectory.appendingPathComponent("omnesis-eof-fixture-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: selected, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let base = try URL(fileURLWithPath: DesktopCanonicalPath.resolve(selected.path), isDirectory: true)
         let cache = base.appendingPathComponent("runtime")
         try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let manifest = Data(
-            #"{"format":1,"codeUsageProtocol":1,"runtimeLauncher":"runtime-exec","inventory":[{"path":"node","executable":true},{"path":"runtime-exec","executable":true}]}"#
+            #"{"format":1,"codeUsageProtocol":1,"processAuthorityProtocol":3,"runtimeLauncher":"runtime-exec","inventory":[{"path":"node","executable":true},{"path":"runtime-exec","executable":true}]}"#
                 .utf8
         )
         let epoch = SHA256.hash(data: manifest).map { String(format: "%02x", $0) }.joined()

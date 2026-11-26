@@ -40,6 +40,8 @@ function sourceDefToDescriptor(def: SourceDefinition): SourceDescriptor {
   return {
     id: SourceType(def.id),
     name: def.name,
+    permissionRequirements: def.permissionRequirements,
+    probePermissionAccess: def.probePermissionAccess,
     description: def.description,
     provider: { id: ProviderType(providerInfo.id), name: providerInfo.name },
     authType: def.authType,
@@ -125,6 +127,8 @@ function providerSourceToDescriptor(
   return {
     id: SourceType(sourceDef.id),
     name: sourceDef.name,
+    permissionRequirements: sourceDef.permissionRequirements ?? providerDef.permissionRequirements,
+    probePermissionAccess: sourceDef.probePermissionAccess ?? providerDef.probePermissionAccess,
     description: sourceDef.description,
     provider: {
       id: ProviderType(providerDef.provider.id),

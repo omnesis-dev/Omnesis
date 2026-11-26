@@ -269,3 +269,28 @@ describe("buildSourceNotices", () => {
     ).toMatchObject({ kind: "auth-expiring", title: "Connection expires on 12 October 2026" });
   });
 });
+
+test("a retry keeps its known scoped access warning without turning unrelated stale errors into notices", () => {
+  const remediation = {
+    summary: "Review collection access",
+    steps: ["Check the selected source again"],
+    restartRequired: false,
+    access: {
+      status: "denied" as const,
+      checkedAt: "2026-01-01T00:00:00Z",
+      scopeDigest: "a".repeat(64),
+      target: "unverified" as const,
+    },
+  };
+  expect(buildSourceNotices({ ...base, state: "syncing", remediation })).toMatchObject([
+    { kind: "error", title: "Review collection access", severity: "error" },
+  ]);
+  expect(
+    buildSourceNotices({
+      ...base,
+      state: "syncing",
+      remediation: { summary: "Old generic failure", steps: [], restartRequired: false },
+    }),
+  ).toEqual([]);
+  expect(buildSourceNotices({ ...base, state: "synced" })).toEqual([]);
+});

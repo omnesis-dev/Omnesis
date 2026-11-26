@@ -665,6 +665,7 @@ export {
   createSecretStore,
   confirmMacosKeychainEntriesAbsent,
   parseSecretStoreBackend,
+  defaultSecretCommandRunner,
   resolveSecretStoreService,
   inspectInstallRootKey,
   ensureInstallRootKey,
@@ -1395,7 +1396,11 @@ export {
 // are deliberately not on the root barrel.
 
 // ── Structured sync remediation ─────────────────────────────────────────
-export { fullDiskAccessRemediation, syncRemediationSchema } from "./sync-remediation.js";
+export {
+  fullDiskAccessRemediation,
+  syncRemediationSchema,
+  permissionActionSchema,
+} from "./sync-remediation.js";
 export {
   boundSyncIssues,
   syncIssueIdentity,
@@ -1446,6 +1451,9 @@ export { resolveNpmInvocation, type ResolveNpmInvocationOptions } from "./node-c
 export {
   managedDesktopDataOperationInvocation,
   managedDesktopDataConsumerInvocation,
+  managedDesktopCatalogDiscoveryInvocation,
+  managedDesktopSnapshotGcInvocation,
+  assertManagedDesktopSnapshotGcAuthority,
   assertManagedDesktopDataAuthority,
   managedRuntimeSubprocessStdio,
   type ManagedDesktopDataScope,
@@ -1519,3 +1527,26 @@ export {
 } from "./tailscale-embed-wire.js";
 
 export { restoreInstallRootKeyIfAbsent } from "./root-key-recovery.js";
+
+export * from "./source-permissions.js";
+
+export {
+  managedDesktopBackgroundRequired,
+  managedDesktopBackgroundStartInvocation,
+  assertManagedDesktopBackgroundOwner,
+  verifyManagedDesktopBackgroundOwner,
+  verifyManagedDesktopBackgroundRetirement,
+  type ManagedDesktopBackgroundOwner,
+  type ManagedDesktopBackgroundActivation,
+} from "./managed-background.js";
+
+export {
+  managedDesktopBackgroundBindingInvocation,
+  managedDesktopBackgroundRebindInvocation,
+  parseManagedDesktopBackgroundBinding,
+  type ManagedDesktopBackgroundBinding,
+  type ManagedDesktopBackgroundScope,
+} from "./managed-background-rebind.js";
+
+export { managedDesktopKeyRecoveryInvocation } from "./node-command.js";
+export type { ManagedDesktopKeyRecoveryContext } from "./node-command.js";

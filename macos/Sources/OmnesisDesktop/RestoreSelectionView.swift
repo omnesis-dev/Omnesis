@@ -32,7 +32,7 @@ struct DesktopRestoreSelectionView: View {
                 ProgressView("Checking selected file…")
                 Button("Cancel selection") { cancel() }
             }
-            if let error { Text(error).foregroundStyle(.red) }
+            if let error { Text(error).foregroundStyle(DesktopTheme.danger) }
         }.onDisappear { cancel() }
     }
 
@@ -93,13 +93,13 @@ struct DesktopRestoreRecoveryInput: View {
             Text("Use the recovery code saved for this backup. This does not replace the key already protecting this Mac’s library.")
                 .foregroundStyle(.secondary)
             SecureField("Backup recovery code", text: $code).privacySensitive()
-            if code.count > 512 { Text("This recovery code is too long. Check the code saved with this backup.").foregroundStyle(.red) }
+            if code.count > 512 { Text("This recovery code is too long. Check the code saved with this backup.").foregroundStyle(DesktopTheme.danger) }
             Button("Choose a separate recovery file…") { chooseRecoveryFile() }.disabled(reading)
             Text("A separate file is needed only if the backup does not contain its recovery file.")
                 .font(.callout).foregroundStyle(.secondary)
             if let filename { Text(filename).privacySensitive() }
             if reading { ProgressView("Reading recovery file…") }
-            if let error { Text(error).foregroundStyle(.red) }
+            if let error { Text(error).foregroundStyle(DesktopTheme.danger) }
         }.onDisappear {
             generation = UUID()
             readTask?.cancel()

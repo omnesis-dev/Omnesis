@@ -758,3 +758,94 @@ describe("what the operator is told when a flow ends without connecting", () => 
     expect(endedFlowOutcome("denied", undefined).code).toBe("denied");
   });
 });
+
+test("permission command probes selected metadata only and reports fresh denial and recovery", async () => {
+  let status: "readable" | "denied" = "denied";
+  let checks = 0;
+  const handlers = createSourceWsHandlers({
+    sourceManager: fakeManager({
+      descriptors: [
+        fakeDescriptor({
+          permissionRequirements: [
+            {
+              id: "selected-folder",
+              kind: "selected-folder",
+              summary: "Read selected folder",
+              scope: "Chosen directory",
+              blocking: true,
+              actions: [{ kind: "retry-access" }],
+            },
+          ],
+          probePermissionAccess: async ({ params }) => {
+            expect(params).toEqual({ path: "/example/chosen" });
+            checks++;
+            return { status };
+          },
+        }),
+      ],
+    }) as never,
+    gateway: fakeGateway,
+    emitEvent: () => {},
+  });
+  try {
+    expect(
+      await handlers.handle(
+        makeCommand("source.permissions", {
+          descriptorId: "test-source",
+          params: { path: "/example/chosen" },
+        }),
+      ),
+    ).toMatchObject({ status: "denied", target: "unverified" });
+    status = "readable";
+    expect(
+      await handlers.handle(
+        makeCommand("source.permissions", {
+          descriptorId: "test-source",
+          params: { path: "/example/chosen" },
+        }),
+      ),
+    ).toMatchObject({ status: "readable", target: "unverified" });
+    expect(checks).toBe(2);
+  } finally {
+    await handlers.shutdown();
+  }
+});
+
+test.each([undefined, "managed-v1" as const])(
+  "permission reply reports the selected engine capability (%s)",
+  async (publicationGuard) => {
+    const sourceManager = Object.assign(
+      fakeManager({
+        descriptors: [
+          fakeDescriptor({
+            permissionRequirements: [
+              {
+                id: "local-store",
+                kind: "protected-files",
+                summary: "Allow selected store access",
+                scope: "Selected local store",
+                blocking: true,
+                actions: [{ kind: "retry-access" }],
+              },
+            ],
+          }),
+        ],
+      }),
+      { publicationGuard },
+    );
+    const handlers = createSourceWsHandlers({
+      sourceManager: sourceManager as never,
+      gateway: fakeGateway,
+      emitEvent: () => {},
+    });
+    try {
+      const response = await handlers.handle(
+        makeCommand("source.permissions", { descriptorId: "test-source" }),
+      );
+      expect(response).toMatchObject({ status: "unsupported", target: "unverified" });
+      expect((response as { publicationGuard?: string }).publicationGuard).toBe(publicationGuard);
+    } finally {
+      await handlers.shutdown();
+    }
+  },
+);

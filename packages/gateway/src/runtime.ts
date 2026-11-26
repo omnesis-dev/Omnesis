@@ -2317,13 +2317,17 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     import("./sources/omnesis-notes/index.js").OmnesisNotesRuntime | undefined;
   let voiceNoteService: import("./voice-notes/index.js").VoiceNoteService | undefined;
   let recordingService: import("./recordings/index.js").RecordingTranscriptionService | undefined;
-  // Recorded conversations tell speakers apart only in experimental mode, when
-  // `inference.recordings.speakers` asks for it; read at boot.
+  // Preparation follows current reviewed choices; paused restoration never loads voice models.
   const voiceSeparatorSource = createVoiceSeparatorSource({
-    mode: experimentalEnabled()
-      ? (configStore.get().inference?.recordings?.speakers ?? "off")
-      : "off",
+    policy: () => ({
+      mode: configStore.get().inference?.recordings?.speakers ?? "off",
+      enabled: experimentalEnabled(),
+      reviewRequired: configStore.get().inference?.recordings?.restoreReviewRequired === true,
+    }),
     modelsDir: MODELS_DIR,
+  });
+  const stopVoicePolicy = configStore.onChange(() => {
+    voiceSeparatorSource.refresh();
   });
   let agentConversationsRuntime:
     import("./sources/agent-conversations/index.js").AgentConversationsRuntime | undefined;
@@ -2909,6 +2913,8 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
       voiceNoteService = service;
     },
     voiceSeparator: () => voiceSeparatorSource.current(),
+    voiceSeparatorReady: () => voiceSeparatorSource.settled(),
+    voiceSeparatorRevision: () => voiceSeparatorSource.revision(),
     onRecordingService: (service) => {
       recordingService = service;
     },
@@ -4304,6 +4310,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     // is not awaited — it stays queued and is transcribed again after restart.
     voiceNoteService?.dispose();
     recordingService?.dispose();
+    stopVoicePolicy();
     await voiceSeparatorSource.dispose();
     // omnesis-notes: flush pending day-doc upserts (a capture that landed
     // within the debounce window must still project), then drop timers.

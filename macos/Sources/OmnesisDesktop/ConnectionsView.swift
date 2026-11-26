@@ -18,28 +18,7 @@ struct DesktopAssistantsView: View {
                 )
                 .foregroundStyle(.secondary)
                 if let mcp = connections.mcpURL {
-                    GroupBox {
-                        VStack(alignment: .leading, spacing: 14) {
-                            Text("1. Add Omnesis in your assistant").font(.headline)
-                            Text(
-                                "In your assistant’s connected apps settings, add a custom MCP connection named Omnesis. Use this address and choose OAuth sign-in."
-                            )
-                            HStack {
-                                Text(mcp.absoluteString).font(.system(.body, design: .monospaced)).textSelection(.enabled)
-                                Spacer()
-                                Button("Copy address", systemImage: "doc.on.doc") {
-                                    NSPasteboard.general.clearContents()
-                                    NSPasteboard.general.setString(mcp.absoluteString, forType: .string)
-                                }.accessibilityIdentifier("copy-mcp-address")
-                            }
-                            Text("This secure address works both at home and away. You do not need a token or an IP address.")
-                                .font(.callout).foregroundStyle(.secondary)
-                            Link(
-                                "ChatGPT setup guide",
-                                destination: URL(string: "https://developers.openai.com/api/docs/guides/developer-mode")!
-                            )
-                        }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                    }
+                    DesktopChatGPTInstructions(mcpURL: mcp)
                     GroupBox {
                         VStack(alignment: .leading, spacing: 14) {
                             Text("2. Confirm the connection").font(.headline)
@@ -69,9 +48,10 @@ struct DesktopAssistantsView: View {
                         systemImage: "checkmark.circle.fill"
                     )
                     .foregroundStyle(.green)
+                    DesktopChatGPTFinishInstructions()
                 }
                 if let failure = authorization.failure ?? connections.failure {
-                    Text(failure).foregroundStyle(.red).textSelection(.enabled)
+                    Text(failure).foregroundStyle(DesktopTheme.danger).textSelection(.enabled)
                     Button("Check my account connection") { if let api = store.api { Task { await connections.load(api: api) } } }
                 }
                 if connections.loading || authorization.busy { ProgressView("Checking your connection…") }
@@ -128,7 +108,7 @@ struct DesktopAssistantsView: View {
                     Spacer()
                     Button("Allow this connection") {
                         Task { if let api = store.api { await authorization.decide(approve: true, api: api, overview: overview) } }
-                    }.buttonStyle(.borderedProminent)
+                    }.buttonStyle(DesktopButtonStyle(primary: true))
                         .disabled(!authorization.personallyStarted || authorization.allowedSources
                             .isEmpty || (!authorization.allowAnswers && !authorization.allowDirect))
                 }
@@ -158,9 +138,7 @@ struct DesktopPhonePairingView: View {
                 Link("Join the Android test group", destination: URL(string: "https://groups.google.com/g/omnesis-alpha-testers")!)
                 Link("Get Omnesis on Google Play", destination: URL(string: "https://play.google.com/apps/testing/dev.omnesis.android")!)
             }
-            if let phone = pairing.connectedPhone {
-                Label("\(phone.name) is connected", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-            } else if let payload = pairing.payload, let pending = pairing.pending {
+            if let payload = pairing.payload, let pending = pairing.pending {
                 HStack { Spacer()
                     QRCodeView(payload: payload)
                     Spacer()
@@ -169,10 +147,19 @@ struct DesktopPhonePairingView: View {
                 Text("The code includes your secure Omnesis address. It works at home and away.").font(.callout).foregroundStyle(.secondary)
                 Text("Expires \(Date(timeIntervalSince1970: Double(pending.expiresAt) / 1000).formatted(date: .omitted, time: .shortened))")
                     .font(.caption).foregroundStyle(.secondary)
-                ProgressView("Waiting for your phone to connect…")
+                Text("After scanning, finish connecting in the phone app. This window cannot confirm which phone used this code.")
+                    .foregroundStyle(DesktopTheme.secondary)
+            }
+            if !pairing.observedPhones.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Phones currently connected to your library").font(.headline).accessibilityAddTraits(.isHeader)
+                    ForEach(pairing.observedPhones) { phone in
+                        Label(phone.name, systemImage: "iphone")
+                    }
+                }
             }
             if let failure = pairing.failure ?? connections.failure {
-                Text(failure).foregroundStyle(.red).textSelection(.enabled)
+                Text(failure).foregroundStyle(DesktopTheme.danger).textSelection(.enabled)
             }
             if pairing.needsBrowserConfirmation, let origin = connections.gatewayOrigin {
                 Button("Confirm it’s you on your library’s page") {
@@ -183,7 +170,7 @@ struct DesktopPhonePairingView: View {
             HStack {
                 Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
-                if pairing.connectedPhone == nil {
+                Group {
                     Button(pairing.pending == nil ? "Create a scan code" : "Create a new code") {
                         Task {
                             guard let api = store.api else { return }
@@ -191,7 +178,7 @@ struct DesktopPhonePairingView: View {
                             await connections.load(api: api)
                             if let origin = connections.gatewayOrigin { await pairing.start(api: api, gatewayOrigin: origin) }
                         }
-                    }.buttonStyle(.borderedProminent).disabled(pairing.working || connections.loading)
+                    }.buttonStyle(DesktopButtonStyle(primary: true)).disabled(pairing.working || connections.loading)
                 }
             }
         }.padding(30).frame(width: 500)
@@ -201,6 +188,6 @@ struct DesktopPhonePairingView: View {
             .onDisappear { if let api = pairedAPI { Task { await pairing.cancel(api: api)
                 await store.refresh()
             } } }
-            .onChange(of: pairing.connectedPhone?.id) { if pairing.connectedPhone != nil { Task { await store.refresh() } } }
+            .onChange(of: pairing.observedPhones.map(\.id)) { Task { await store.refresh() } }
     }
 }

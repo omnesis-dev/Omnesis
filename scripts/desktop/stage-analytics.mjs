@@ -33,12 +33,14 @@ export async function stageDesktopAnalytics({ target, architecture, build }) {
     throw new Error("The staged analytics binding does not match the reviewed engine");
   const library = join(packageDir, "libduckdb.dylib");
   const info = await lstat(library);
-  if (
-    !info.isFile() ||
-    info.isSymbolicLink() ||
-    info.nlink !== 1 ||
-    JSON.stringify(machoArchitectures(await readFile(library))) !== JSON.stringify([architecture])
-  )
+  if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1)
+    throw new Error("The staged analytics engine is not an owned target library");
+  const architectures = machoArchitectures(await readFile(library));
+  const targetOnly = architectures?.length === 1 && architectures[0] === architecture;
+  // The pinned upstream engine is universal; the verified replacement remains target-only.
+  const reviewedUniversal =
+    architectures?.length === 2 && architectures.includes("x64") && architectures.includes("arm64");
+  if (!targetOnly && !reviewedUniversal)
     throw new Error("The staged analytics engine is not an owned target library");
   await cp(verified.library, library);
   if ((await hashFile(library)) !== verified.provenance.librarySha256)

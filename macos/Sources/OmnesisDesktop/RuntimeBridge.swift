@@ -10,6 +10,8 @@ final class RuntimeBridge {
     typealias Preparation = @Sendable (URL) async throws -> PreparedRuntime
     var onEnvelope: ((BridgeEnvelope) -> Void)?
     var onFailure: ((String) -> Void)?
+    var onApplicationOwnership: ((DesktopBackgroundApplicationOrigin.Evidence) -> Void)?
+    var onStartupBlocked: ((DesktopBackgroundObserver.StartupBlock?) -> Void)?
     private(set) var selectedRuntime: URL?
     var runtimeEpoch: String? {
         selectedRuntime?.lastPathComponent
@@ -31,7 +33,28 @@ final class RuntimeBridge {
     }
 
     func start() async throws {
-        guard process == nil else { return }
+        if process != nil {
+            // Recovery keeps its DATA-free controller. Retry must independently authenticate
+            // the helper again; an ordinary portable status cannot clear this block.
+            guard preparationOverride == nil, let runtime = selectedRuntime else { return }
+            let checking = launchEpoch
+            do {
+                try await DesktopBackgroundObserver
+                    .ensureRunning(appBundle: Bundle.main.bundleURL, runtime: runtime) { [weak self] evidence in
+                        guard self?.launchEpoch == checking else { return }
+                        self?.onApplicationOwnership?(evidence)
+                    }
+                try Task.checkCancellation()
+                guard checking == launchEpoch, process?.isRunning == true else { throw CancellationError() }
+                onStartupBlocked?(nil)
+            } catch let blocked as DesktopBackgroundObserver.StartupBlock {
+                try Task.checkCancellation()
+                guard checking == launchEpoch, process?.isRunning == true else { throw CancellationError() }
+                onStartupBlocked?(blocked)
+                throw blocked
+            }
+            return
+        }
         guard !launching else { return }
         launching = true
         let epoch = launchEpoch
@@ -59,9 +82,24 @@ final class RuntimeBridge {
         guard epoch == launchEpoch else { throw CancellationError() }
         let runtime = prepared.0
         usageLease = prepared.1
-        if preparationOverride == nil { try await DesktopBackgroundObserver.ensureRunning(appBundle: app) }
+        var nativeBlock: DesktopBackgroundObserver.StartupBlock?
+        if preparationOverride == nil {
+            do {
+                try await DesktopBackgroundObserver.ensureRunning(appBundle: app, runtime: runtime) { [weak self] evidence in
+                    guard self?.launchEpoch == epoch else { return }
+                    self?.onApplicationOwnership?(evidence)
+                }
+            } catch let blocked as DesktopBackgroundObserver.StartupBlock {
+                try Task.checkCancellation()
+                guard epoch == launchEpoch else { throw CancellationError() }
+                onStartupBlocked?(blocked)
+                guard blocked == .ownerMismatch || blocked == .originRequired else { throw blocked }
+                nativeBlock = blocked
+            }
+        }
         try Task.checkCancellation()
         guard epoch == launchEpoch else { throw CancellationError() }
+        if preparationOverride == nil { onStartupBlocked?(nativeBlock) }
         let executable = runtime.appendingPathComponent("runtime-exec")
         let script = runtime.appendingPathComponent("packages/cli/dist/index.js")
         guard FileManager.default.isExecutableFile(atPath: executable.path),

@@ -2,9 +2,14 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomUUID } from "node:crypto";
+import { assertDesktopProcessAuthority } from "./process-authority.js";
 import { withDesktopInstallLease } from "./bootstrap.js";
 import { assertDesktopMutationAllowed } from "./update-admission.js";
 import { assertDesktopConfigSecretsProtected } from "./config-protection.js";
+import {
+  captureDesktopRestoreBackupRuntime,
+  retainDesktopRestoreBeforeReplacement,
+} from "./snapshot-retention-restore.js";
 import { stopDesktopDaemon } from "./daemon-control.js";
 import {
   DesktopRestoreProtection,
@@ -37,12 +42,15 @@ export async function runDesktopRestoreOperation(
   dependencies: { execute?: typeof runDesktopDataOperation } = {},
 ): Promise<{ operationId: string; sourcesPaused: number; watchesPaused: number }> {
   const operationId = await withDesktopInstallLease(profile, signal, async () => {
+    await assertDesktopProcessAuthority(profile);
     await assertDesktopMutationAllowed(profile);
     await assertDesktopConfigSecretsProtected(profile, signal);
     const protection = await DesktopRestoreProtection.capture(profile, signal);
     try {
       if (!protection.matches(input.protection))
         throw new Error("Preview the changed library again");
+      await retainDesktopRestoreBeforeReplacement(profile, signal);
+      const backupRuntime = await captureDesktopRestoreBackupRuntime(profile);
       const id = randomUUID();
       await writeDesktopRestoreIntent(profile, {
         version: 1,
@@ -56,6 +64,7 @@ export async function runDesktopRestoreOperation(
         archiveSha256: input.archive.sha256,
         archiveBytes: input.archive.bytes,
         backup: null,
+        ...(backupRuntime ? { backupRuntime } : {}),
       });
       await stopDesktopDaemon(profile, signal);
       return id;
@@ -110,6 +119,7 @@ export async function runDesktopRestoreRecovery(
         ["complete", "rolled-back"].includes(intent.phase)
       )
         throw new Error("There is no matching interrupted restore");
+      await assertDesktopProcessAuthority(profile);
       await stopDesktopDaemon(profile, signal);
     });
     const result = await (dependencies.execute ?? runDesktopDataOperation)(

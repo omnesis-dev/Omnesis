@@ -11,10 +11,13 @@ final class DesktopRestoreFlowTests: XCTestCase {
         let fixture = Fixture()
         fixture.cancelReplyAfterCommit = true
         let flow = DesktopRestoreBackupFlow(request: fixture.request)
-        flow.begin(); await idle(flow)
-        flow.select(try selection(fixture)); await idle(flow)
+        flow.begin()
+        await idle(flow)
+        try flow.select(selection(fixture))
+        await idle(flow)
         flow.confirmReplacement = true
-        flow.apply(); await idle(flow)
+        flow.apply()
+        await idle(flow)
         XCTAssertNil(flow.outcome)
         await flow.cancel()
         XCTAssertEqual(flow.status?.status, .pending)
@@ -22,10 +25,14 @@ final class DesktopRestoreFlowTests: XCTestCase {
         XCTAssertFalse(fixture.calls.contains("restoreImportCancel"))
         XCTAssertFalse(flow.startupVerified)
     }
+
     func testFreshHomeRequiresExplicitChoiceBeforeAnyRuntimeMutation() async throws {
         let flow = DesktopRestoreBackupFlow { name, _ in
             if name == "restoreStatus" {
-                return try JSONDecoder().decode(BridgeValue.self, from: Data(#"{"kind":"desktopRestoreStatus","status":"idle","canRecover":false,"recoveryCopyRetained":false}"#.utf8))
+                return try JSONDecoder().decode(
+                    BridgeValue.self,
+                    from: Data(#"{"kind":"desktopRestoreStatus","status":"idle","canRecover":false,"recoveryCopyRetained":false}"#.utf8)
+                )
             }
             XCTFail("The fresh restore preview must not prepare a home without explicit consent")
             return .null
@@ -118,7 +125,7 @@ final class DesktopRestoreFlowTests: XCTestCase {
         try file.append(Data("inert selected archive fixture".utf8))
         try file.finish()
         addTeardownBlock { try? FileManager.default.removeItem(at: path) }
-        let selected = try DesktopRestoreFileSelection.read(path)
+        let selected = try DesktopRestoreFileSelection.read(URL(fileURLWithPath: DesktopCanonicalPath.resolve(path.path)))
         fixture.bytes = selected.bytes
         return selected
     }

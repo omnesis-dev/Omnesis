@@ -64,6 +64,7 @@ export const ENABLE_BANKING_ACCOUNTS_SOURCE_ID = "enable-banking-accounts";
 
 export default defineProvider<EnableBankingContext>({
   provider: { id: "enable-banking", name: "Enable Banking" },
+  permissionRequirements: [],
   authType: "oauth",
   // The flow consumes externally delivered authorization codes via
   // `callbacks.receiveCode` (gateway /oauth/callback or CLI/portal paste) —

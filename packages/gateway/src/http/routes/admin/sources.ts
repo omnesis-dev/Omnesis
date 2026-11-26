@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { sourcePermissionsRequestSchema } from "@omnesis/core";
+import { z } from "zod";
 import {
   buildPage,
   SourceId,
@@ -10,6 +12,7 @@ import {
   type DeviceId,
   type DeviceRecord,
 } from "@omnesis/types";
+import { SourcePermissionsService } from "../../services/SourcePermissionsService.js";
 import { enforceWriteScopeForSourceType, scope } from "../../scope.js";
 import { validateJson } from "../../validate.js";
 import { PairingService } from "../../services/PairingService.js";
@@ -276,6 +279,22 @@ export function mountSourceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
   // Per http-conventions.md "Param placement and naming": POST is
   // action-bearing → params (including descriptorId) live in the body,
   // path is the bare verb at the collection level.
+  const permissions = new SourcePermissionsService(sourceService, deviceService, wsServer);
+  app.post(
+    "/admin/sources/permissions",
+    scope.admin(),
+    validateJson(
+      sourcePermissionsRequestSchema
+        .omit({ expectedScopeDigest: true })
+        .extend({ deviceId: z.uuid() })
+        .strict(),
+    ),
+    async (c) => {
+      const { deviceId, ...input } = c.req.valid("json");
+      return c.json(await permissions.check(deviceId, input));
+    },
+  );
+
   app.post(
     "/admin/sources/discover",
     scope.admin(),

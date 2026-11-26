@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { readDesktopRolePair, persistDesktopRolePair } from "./coordinator-credentials.js";
+import { DesktopProcessAuthorityFailure } from "./process-authority-errors.js";
 import { DesktopFreshInstallFailure } from "./fresh-install-errors.js";
 import { DesktopFreshInstallService } from "./fresh-install.js";
 import {
@@ -14,7 +15,10 @@ import { openDesktopPortal } from "./coordinator-portal.js";
 import { startCommittedDesktopRestore } from "./restore-start.js";
 import { DesktopBackupRestoreService } from "./restore-service.js";
 import { handleDesktopRestore, isDesktopRestoreCommand } from "./coordinator-restore.js";
+import { handleDesktopRetention, isDesktopRetentionCommand } from "./coordinator-retention.js";
 import { DesktopUpdateController } from "./update-controller.js";
+import { desktopStorageAdmission } from "./desktop-state.js";
+import { desktopRemoteRoute } from "./remote-route.js";
 import type {
   DesktopState,
   DesktopStateCommand,
@@ -83,7 +87,8 @@ export class DesktopCoordinator {
     this.update = new DesktopUpdateController(profile, {
       closeTransport: () => this.closeTransport(),
       startCurrent: async (signal) => {
-        await this.deps.startDaemon(profile);
+        await this.deps.backgroundHandoff(profile, signal);
+        await this.deps.startDaemon(profile, undefined, signal);
         if ((await this.deps.readInstall(profile))?.mode === "home") await this.waitForHome(signal);
       },
       ready: (signal) => this.status(signal),
@@ -130,6 +135,13 @@ export class DesktopCoordinator {
           context.signal,
           () => this.closeTransport(),
         );
+      if (isDesktopRetentionCommand(request.command))
+        return handleDesktopRetention(
+          this.profile,
+          request.command,
+          request.params,
+          context.signal,
+        );
       switch (request.command) {
         case "updateStatus":
         case "updateCheck":
@@ -171,6 +183,18 @@ export class DesktopCoordinator {
           return await this.connect(request.params, context);
         case "openPortal":
           return await this.openPortal(context);
+        case "restartCollector": {
+          z.object({})
+            .strict()
+            .parse(request.params ?? {});
+          const blocked = await this.currentLifecycleBlock();
+          if (blocked)
+            throw new Error("Finish the pending library operation before restarting collection");
+          const install = await this.deps.readInstall(this.profile);
+          if (!install || install.phase !== "configured")
+            throw new Error("Configure this Mac before restarting collection");
+          return await this.deps.restartCollector(this.profile, context.signal);
+        }
         case "restart": {
           z.object({})
             .strict()
@@ -206,9 +230,14 @@ export class DesktopCoordinator {
           return assertNever(request.command);
       }
     } catch (error) {
-      if (error instanceof DesktopFreshInstallFailure) throw error;
+      if (
+        error instanceof DesktopFreshInstallFailure ||
+        error instanceof DesktopProcessAuthorityFailure
+      )
+        throw error;
       if (
         context.signal.aborted ||
+        request.command === "restartCollector" ||
         request.command === "remove" ||
         request.command === "removePreview" ||
         request.command.startsWith("fresh") ||
@@ -304,13 +333,23 @@ export class DesktopCoordinator {
         };
       const connection = await this.deps.connection(this.profile);
       const collectorDeviceId = await this.deps.localCollectorDeviceId(this.profile);
+      const storageAdmission = await this.deps.request(this.profile, "/status", { signal }).then(
+        (value) => desktopStorageAdmission(value),
+        (error: unknown) => {
+          if (signal.aborted) throw error;
+          return desktopStorageAdmission(undefined);
+        },
+      );
       const removed = await this.currentLifecycleBlock();
       if (removed) return removed;
       signal.throwIfAborted();
       return {
         phase: "ready",
+        installationId: this.profile.instance,
         mode: "home",
         encrypted: true,
+        storageAdmission,
+        remoteRoute: desktopRemoteRoute(account),
         connection: {
           ...connection,
           collectorDeviceId,
@@ -343,7 +382,8 @@ export class DesktopCoordinator {
       signal: context.signal,
     });
     await this.deps.prepareRuntime(this.profile, context.signal);
-    await this.deps.startDaemon(this.profile);
+    await this.deps.backgroundHandoff(this.profile, context.signal);
+    await this.deps.startDaemon(this.profile, undefined, context.signal);
     if (input.mode === "home") {
       await this.waitForHome(context.signal);
       await this.deps.searchModel(this.profile, { start: true, signal: context.signal });
@@ -367,6 +407,14 @@ export class DesktopCoordinator {
 
   private async connect(params: unknown, context: DesktopProtocolContext): Promise<DesktopState> {
     discoveryParams.parse(params ?? {});
+    if ((await this.deps.readInstall(this.profile))?.phase === "configured") {
+      const handoff = await this.deps.backgroundHandoff(this.profile, context.signal);
+      if (handoff) {
+        await this.deps.startDaemon(this.profile, undefined, context.signal);
+        if (handoff.mode === "home") await this.waitForHome(context.signal);
+        return this.status(context.signal);
+      }
+    }
     if (await startCommittedDesktopRestore(this.profile, context.signal, this.deps))
       return this.status(context.signal);
     const blocked = await this.resumeKeptLibrary(context.signal);
@@ -379,7 +427,7 @@ export class DesktopCoordinator {
           mode: "home",
           message: "Unlock your Mac's Keychain before connecting your account.",
         };
-      await this.deps.startDaemon(this.profile);
+      await this.deps.startDaemon(this.profile, undefined, context.signal);
       await this.waitForHome(context.signal);
       const state = await this.status(context.signal);
       if (state.phase !== "accountRequired" || params === undefined) return state;
@@ -422,6 +470,7 @@ export class DesktopCoordinator {
         signal: context.signal,
       });
       await this.deps.prepareRuntime(this.profile, context.signal);
+      await this.deps.backgroundHandoff(this.profile, context.signal);
     }
     let interactive = await this.savedPair("interactive");
     if (!interactive) interactive = await this.enroll("interactive", relayUrl, ui, context);
@@ -447,7 +496,7 @@ export class DesktopCoordinator {
     await this.persist("collector", collector, context.signal);
     const admitted = await this.joinedState(context.signal);
     if (admitted.phase !== "ready") return admitted;
-    await this.deps.startDaemon(this.profile);
+    await this.deps.startDaemon(this.profile, undefined, context.signal);
     return this.joinedState(context.signal);
   }
 
@@ -551,6 +600,7 @@ export class DesktopCoordinator {
     signal.throwIfAborted();
     return {
       phase: "ready",
+      installationId: this.profile.instance,
       mode: "joined",
       ...(pairing.homeName ? { homeName: pairing.homeName } : {}),
       encrypted: true,

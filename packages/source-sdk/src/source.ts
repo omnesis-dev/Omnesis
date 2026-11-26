@@ -222,6 +222,9 @@ export interface SyncResult<TCursor extends SyncCursor = SyncCursor> {
   /** Optional progress info for UI display */
   progress?: SyncProgress;
 
+  /** An actual file/directory read observed EPERM/EACCES; never a generic gap or corrupt input. */
+  permissionDenied?: true;
+
   /**
    * Problems this page survived.
    *
@@ -370,6 +373,8 @@ export function syncPage<TCursor extends SyncCursor>(
     /** See `SyncResult.presentClaims`. Mutually exclusive with the above. */
     presentClaims?: SnapshotClaim[];
     progress?: SyncProgress;
+    /** Actual read access refusal; see SyncResult.permissionDenied. */
+    permissionDenied?: true;
     /** Omit when this page did not evaluate source health; [] reports recovery. */
     issues?: SyncIssue[];
     /** Coverage claim for the completed sync (only valid when `hasMore` is false). */
@@ -388,6 +393,7 @@ export function syncPage<TCursor extends SyncCursor>(
     hasMore: opts?.hasMore ?? false,
     progress: opts?.progress,
     issues: opts?.issues,
+    permissionDenied: opts?.permissionDenied,
     watermark: opts?.watermark,
   };
 }

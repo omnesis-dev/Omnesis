@@ -112,7 +112,10 @@ function failureNotice(status: DisplaySyncStatus): SourceNotice | null {
       ...(since ? { since } : {}),
     };
   }
-  if (status.state === "error") {
+  if (
+    status.state === "error" ||
+    (status.state === "syncing" && status.remediation?.access?.status === "denied")
+  ) {
     const remediation = status.remediation;
     if (remediation) {
       return {

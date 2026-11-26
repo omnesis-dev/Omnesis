@@ -1198,33 +1198,46 @@
 
         <h3 id="chatgpt">ChatGPT</h3>
         <p>
-          ChatGPT adds a custom MCP server as a developer-mode app. Developer mode is a feature of
-          ChatGPT on the web, and whether your account can use it depends on your plan and, for a
-          workspace, its administrators. ChatGPT connects from OpenAI's servers and only on the
-          standard HTTPS port, 443, so publish the gateway there first, with
+          ChatGPT connects to Omnesis through a custom MCP plugin. Use the secure address shown in
+          <strong>Assistants</strong> in the Mac app or
+          <strong>Settings → Access → Connect an agent</strong> in the portal. It must be a public
+          HTTPS address ending in <code>/mcp</code>, on port 443. An Omnesis account supplies this
+          address; a gateway using another public address can use
           <a href="#tailscale-funnel">Tailscale Funnel</a> or a
-          <a href="setup#public-domain">domain of your own</a>, then:
+          <a href="setup#public-domain">domain of your own</a>.
         </p>
         <ol>
           <li>
-            In ChatGPT on the web, turn on
-            <a href="https://developers.openai.com/api/docs/guides/developer-mode">developer mode</a
-            >.
+            Open <a href="https://chatgpt.com/plugins">ChatGPT plugins</a>, select
+            <strong>+</strong>, then <strong>Add custom MCP server</strong>.
           </li>
           <li>
-            Create an app for a remote MCP server. Enter the MCP URL shown under
-            <strong>Settings → Access → Connect an agent</strong> in the portal, the public HTTPS
-            address ending in <code>/mcp</code>, and choose OAuth as its authentication.
+            Name it <strong>Omnesis</strong>, paste the address into <strong>Server URL</strong>,
+            and choose <strong>OAuth</strong> authentication.
           </li>
           <li>
-            Complete the sign-in ChatGPT opens and
-            <a href="#approving-a-connection">approve the connection</a> in Omnesis.
+            Select <strong>I understand and want to continue</strong>, then
+            <strong>Create as a plugin</strong>. Complete the Omnesis sign-in that opens.
           </li>
-          <li>Enable the app in a new conversation.</li>
+          <li>
+            <a href="#approving-a-connection">Approve the connection</a> in Omnesis: compare the
+            sign-in code, review the sources and permissions, then return to ChatGPT to finish.
+          </li>
+          <li>
+            Open <a href="https://chatgpt.com/plugins?view=personal">your personal plugins</a>,
+            select <strong>+</strong> on Omnesis to install it, then start a new Work chat and
+            mention <strong>@Omnesis</strong>.
+          </li>
         </ol>
         <p>
-          Keep one sign-in attempt open at a time; if several authorization windows appear, close
-          them all and start once more.
+          If <strong>Add custom MCP server</strong> is missing, your account or workspace may not
+          allow custom connections. Check
+          <a
+            href="https://help.openai.com/en/articles/12584461-connecting-custom-mcp-servers-in-chatgpt"
+            >ChatGPT’s connection requirements</a
+          >
+          or ask your workspace owner. Keep one sign-in attempt open at a time; if several
+          authorization windows appear, close them and start again once.
         </p>
 
         <h3 id="codex">Codex</h3>

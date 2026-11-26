@@ -31,6 +31,10 @@ import { z } from "zod";
 import { MULTI_DEVICE_MODES } from "@omnesis/types";
 import { connectionPathSchema } from "./connection-path.js";
 import { sourceContractWireRangeSchema } from "./source-contract-wire.js";
+import {
+  sourcePermissionsRequestSchema,
+  sourcePermissionsResponseSchema,
+} from "./source-permissions.js";
 import { syncRemediationSchema } from "./sync-remediation.js";
 import { syncIssuesSchema, syncIssueAssessmentsSchema } from "./sync-issues.js";
 import { trySourceType } from "./ids.js";
@@ -107,6 +111,7 @@ const deviceCapabilitySchema = z
     memberScopedParams: z.record(sourceTypeSchema, z.array(z.string().min(1).max(128))).optional(),
     syncLease: z.boolean().optional(),
     deviceDoctor: z.literal(true).optional(),
+    sourcePermissions: z.literal(true).optional(),
     pushAppId: z.string().trim().min(1).max(255).optional(),
     agentIntegration: z
       .object({
@@ -685,6 +690,7 @@ export const wsCommandSchemas = {
   hello: command(helloRequest, helloResponse),
   "source.descriptors": command(sourceDescriptorsRequest, sourceDescriptorsResponse),
   "source.validate-param": command(sourceValidateParamRequest, sourceValidateParamResponse),
+  "source.permissions": command(sourcePermissionsRequestSchema, sourcePermissionsResponseSchema),
   "source.discover": command(sourceDiscoverRequest, sourceDiscoverResponse),
   "source.resolve-account": command(sourceResolveAccountRequest, sourceResolveAccountResponse),
   "sources.snapshot.request": command(

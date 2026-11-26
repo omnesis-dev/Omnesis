@@ -166,6 +166,17 @@ describe("Recordings page", () => {
     expect(rows[0]!.querySelector("a")?.getAttribute("href")).toBe(`/portal/recordings/${ID}`);
   });
 
+  test("restore pause is separate from saved recording history", async () => {
+    api.listRecordings.mockResolvedValue({ recordings: [recording({ reviewRequired: true })] });
+    await mount();
+    expect(host.querySelector(".privacy-item-status")?.textContent).toContain("Done");
+    expect(host.textContent).toContain("Automatic work paused after restore");
+    api.getRecordingChunks.mockResolvedValue({ recording: recording({ reviewRequired: true }), chunks: CHUNKS });
+    await mount({ recordingId: ID });
+    expect(host.querySelector(".privacy-item-status")?.textContent).toContain("Done");
+    expect(host.textContent).toContain("Automatic work paused after restore");
+  });
+
   test("says how to record one when there is none", async () => {
     api.listRecordings.mockResolvedValue({ recordings: [] });
     await mount();

@@ -13,6 +13,7 @@ import { DesktopInteractionBroker } from "./protocol.js";
 import { claimDesktopUpdateEpoch } from "./update-claim.js";
 import { writeDesktopActiveRuntime } from "./update-active.js";
 import { readDesktopUpdateState, writeDesktopUpdateState } from "./update-state.js";
+import { listRetainedDesktopSnapshots } from "./snapshot-retention.js";
 import {
   finishDesktopUpdateSnapshot,
   finishDesktopUpdateRollback,
@@ -46,6 +47,17 @@ async function fixture() {
   const profile = desktopProfile(home),
     signal = new AbortController().signal;
   await mkdir(profile.configDir, { recursive: true, mode: 0o700 });
+  await mkdir(`${profile.configDir}.bootstrap`, { mode: 0o700 });
+  await writeFile(
+    join(`${profile.configDir}.bootstrap`, "process-authority.json"),
+    JSON.stringify({
+      version: 3,
+      owner: "omnesis-desktop",
+      instance: profile.instance,
+      secretService: profile.secretService,
+    }),
+    { mode: 0o600 },
+  );
   await writeFile(
     join(profile.configDir, "desktop-install.json"),
     JSON.stringify({
@@ -276,6 +288,9 @@ test("completion requires actual candidate claim, fresh protection/readiness and
     f.context,
   );
   expect(completed.phase).toBe("complete");
+  expect(await listRetainedDesktopSnapshots(f.profile)).toEqual([
+    expect.objectContaining({ pinned: false, order: 1 }),
+  ]);
   expect(f.operations.ready).toHaveBeenCalledOnce();
   expect(f.operations.observe).toHaveBeenCalledTimes(2);
 });

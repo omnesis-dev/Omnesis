@@ -387,6 +387,11 @@
 
         <h2 id="remote-access">Remote access</h2>
         <p>
+          A relay or remote-access connection still needs a running, awake gateway. If its host is a
+          Mac, follow the <a href="install#mac-server">Mac server sleep settings</a>; Wake for
+          network access alone does not keep the library available.
+        </p>
+        <p>
           Each client keeps one gateway address, the one it was paired or configured with, and
           always dials it. No client switches between a LAN address and a Tailscale name by itself,
           so give each one an address that works everywhere it goes: a Tailscale name reaches the

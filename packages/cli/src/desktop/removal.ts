@@ -10,9 +10,10 @@ import {
   assertManagedDesktopDataAuthority,
 } from "@omnesis/core";
 import { purgeConfigDirKeyring, type KeyringPurgeResult } from "../uninstall/keyring-purge.js";
-import { acquireDesktopRestoreSessionLease } from "./restore-owner.js";
-import { removeDesktopRestoreStaging } from "./restore-staging.js";
 import { runDesktopEraseOperation } from "./removal-operation.js";
+import { removeDesktopRestoreStaging } from "./restore-staging.js";
+import { acquireDesktopRestoreSessionLease } from "./restore-owner.js";
+import { assertDesktopProcessAuthority } from "./process-authority.js";
 import { readDesktopInstall, withDesktopInstallLease } from "./bootstrap.js";
 import { acquireDesktopRuntimeLeases } from "./runtime-leases.js";
 import { stopDesktopDaemon } from "./daemon-control.js";
@@ -139,6 +140,7 @@ export async function removeDesktopInstall(
           mode !== "erase-data"
         )
           throw new Error("Finish the requested data removal before changing this installation");
+        await assertDesktopProcessAuthority(profile);
         const root = state.root ?? state.retirement?.root;
         if (!root) throw new Error("The managed installation's ownership cannot be verified");
         const record: DesktopRetirement =
@@ -200,6 +202,7 @@ export async function finishDesktopErase(
 ): Promise<DesktopRemovalResult> {
   const deps = { ...defaults, ...overrides };
   deps.authorize(profile, "erase", operationId);
+  await assertDesktopProcessAuthority(profile);
   return withDesktopInstallLease(profile, signal, async () => {
     const state = await removalState(profile, deps);
     let record = state.retirement;
@@ -285,6 +288,7 @@ export async function resumeRetiredDesktop(
         throw new Error("The retained library changed and must be checked before starting");
     }
     signal.throwIfAborted();
+    await assertDesktopProcessAuthority(profile);
     await unlink(desktopRetirementPath(profile));
     return true;
   });

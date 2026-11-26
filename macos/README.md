@@ -9,6 +9,71 @@ inside a DMG. Mac App Store distribution additionally requires App Sandbox and a
 separate audit of every provider and embedded executable. This project does not
 claim Mac App Store eligibility.
 
+The native visual system lives in `Sources/OmnesisDesktop/DesktopTheme.swift`;
+the shared control states live in `DesktopControls.swift`. The white brand mark
+is the existing website vector, cropped to its own bounds, without an app-icon
+tile inside the window. Navy surfaces remain dark in both system appearances,
+including native window controls. The app does not require transparency effects.
+Modal content uses the same opaque canvas through a shared native sheet wrapper;
+the system continues to manage titlebar and toolbar materials.
+Automatic startup is a required setup step, with a separate pending-approval
+state. A verified owned installation attempts registration once, recording that
+attempt before contacting macOS; later revocation requires explicit repair.
+Source, computer and startup status refresh while the app remains open and after
+it returns to the foreground. These monitors belong to the store, so they also
+run with every main window closed or during a menu-only launch. A role, API or
+installation change cancels and joins the old checks before their replacements
+start; a view cannot stop prerequisite monitoring by disappearing.
+Failed refreshes leave setup unverified without
+disabling existing library reads or treating a network failure as an OS denial.
+If the background owner becomes unavailable after a library was verified, the
+app preserves reads for that same installation and connection while showing
+required repair. A different installation cannot inherit that read connection,
+and a portable ready response cannot clear a native ownership block.
+Home setup also requires fresh storage admission and an observed remote-library
+connection. Optional malformed or legacy evidence leaves these prerequisites
+unverified while preserving protected local reads. A generation-bound native
+timer expires the evidence using wall and monotonic clocks even if status polling
+stalls; an unchanged response cannot renew its deadline. The connection repair
+sheet uses the existing account status and reconnect operations, and only a
+fresh coordinator projection can complete the prerequisite afterward.
+A recovered app can expose an authorized recovered library before installation
+is finished. Its startup row remains pending until authenticated native evidence
+matches the installed app and current installation; an enabled login item alone
+cannot complete this step.
+The helper tracks the installed application object separately from the runtime's
+immutable code epoch. Retained rollback helpers accept an origin only through the
+authenticated native handoff and cannot start collection while origin is unknown.
+Running a retained version while a newer app remains installed leaves an explicit
+installation prerequisite; login-item enabled status alone does not clear it.
+Actual signed handoff, Finder move/replacement/Trash and next-login behavior need
+packaged qualification; pure metadata and owned-process tests do not prove them.
+The source access coach asks only for descriptor-declared scopes. Opening System
+Settings or restarting collection never grants access, and a readable source root
+does not clear a retained error for an unreadable descendant.
+An unverified-access trial additionally requires the selected local collector's
+explicit managed publication-guard capability; a local device ID alone does not
+establish it. Missing or unknown capability requires updating and rechecking.
+Source forms load the selected collector's complete descriptor, rather than using
+another computer's metadata from the fleet list. Missing permission declarations
+remain unverified. An older gateway can forward explicit no-local-permission
+metadata from a newer collector, but adding a source whose access still needs
+verification requires compatible permission-check support on both ends. Existing
+library reads and collection are not blocked by this onboarding limitation.
+Host setup additionally requires disabling automatic system sleep while
+connected to power. A bounded read of the system's AC sleep policy and current
+power source verifies this condition; display sleep and screen locking remain
+independent. Public power-source notifications invalidate stale readiness after
+unplugging, and foreground/periodic checks detect policy changes. Unknown output
+or unsupported UPS policy cannot complete setup. The reusable guide distinguishes
+desktop and laptop settings and links to Apple's steps. Opening it changes no
+settings and supplies no readiness evidence. Disabling idle sleep does not
+override manual sleep, closing a laptop, shutdown or network loss.
+Navigation and toolbar structure follow Apple's
+[SwiftUI app design guidance](https://developer.apple.com/videos/play/wwdc2025/323/),
+with semantic control hierarchy informed by the
+[button guidelines](https://developer.apple.com/design/human-interface-guidelines/buttons).
+
 ## Build and test
 
 Use Node 24 for the portable runtime and Xcode 26 plus XcodeGen for the app.
@@ -20,6 +85,7 @@ the app, prepared before tests run:
 ```sh
 node scripts/desktop/prepare-node-test-fixture.mjs --arch "$(node -p process.arch)" --out macos/.node-fixture
 node scripts/desktop/prepare-codex-keychain-test-fixture.mjs --arch "$(node -p process.arch)" --out macos/.codex-keychain-fixture
+node scripts/desktop/codex-backend-test-fixture.mjs --out macos/.codex-backend-fixture
 swift test --package-path macos
 ```
 
@@ -27,20 +93,44 @@ UI tests use the generated Xcode project and a macOS destination. Admit builds
 and tests through the host's configured native test queue when one is installed.
 The native check bridge and GitHub workflow prepare the fixture automatically;
 tests perform no downloads and never substitute a globally installed Node or Codex.
+Hosted GUI integration tests mount the production SwiftUI root and press its own
+accessibility controls against a scripted loopback HTTP/SSE service. This exercises
+sending, streaming, completion and cancellation without model inference; it is
+distinct from the external XCUITest runner and from packaged first-run qualification.
+The scheme and admitted test bridge disable parallel testing: these cases share
+application windows and process-local test adapters. Keychain component fixtures
+restore their process-local interaction setting and remove only their own items.
+Window captures use ScreenCaptureKit's current-process-only API, without requesting
+Screen Recording access or capturing another application's windows.
 The Codex fixture is the integrity-checked pinned distribution. Its Keychain test
+runs once in the hosted GUI integration target, matching the app's Aqua security
+context; pure SwiftPM tests do not mutate the user Keychain. The hosted test
 uses an invalid fixture value in a new, isolated account, verifies that no
 credential file appears, and deletes only that account. It performs no real
-sign-in or model request; a locked or unavailable Keychain fails the test.
+sign-in or model request; a locked or unavailable Keychain fails the test. The test
+also compares vendor status, the explicit User-domain metadata query and the
+security tool's selector. A successful save alone does not qualify removal or
+absence checks when those views disagree.
 
 The scheme also builds `OmnesisRuntimeExec`, which must be supplied when staging
 the matching runtime. After the native build, assemble a complete development app
 on the target Mac with:
 
 ```sh
-node scripts/desktop/prepare-runtime.mjs --out /tmp/omnesis-runtime --runtime-exec macos/build/Build/Products/Debug/OmnesisRuntimeExec
+node scripts/desktop/prepare-runtime.mjs --out /tmp/omnesis-runtime --cache /tmp/omnesis-runtime-build-cache --runtime-exec macos/build/Build/Products/Debug/OmnesisRuntimeExec
 node scripts/desktop/smoke-runtime.mjs --runtime /tmp/omnesis-runtime
 node scripts/desktop/assemble-app.mjs --runtime /tmp/omnesis-runtime --shell-app macos/build/Build/Products/Debug/Omnesis.app --out /tmp/Omnesis.app --arch "$(node -p process.arch)" --version "$(node -p 'JSON.parse(require("fs").readFileSync("packages/core/package.json")).version')"
 ```
+
+The native build bridge also accepts `scripts/macos-test.sh --build-only --package`
+when the configured native pool admits the build. This explicit scope installs
+locked build dependencies under an isolated home, compiles the production closure,
+assembles an unsigned Release app, and runs the actual bundled-runtime smoke check
+before and after assembly. It copies only public build inputs and retrieves the
+qualification record. Its assembled app is an ephemeral build input; the
+distribution workflow owns archived applications. This check does not sign, notarize,
+publish, or exercise a personal account. The default build-only scope remains the
+native Release build and static analytics library build.
 
 The complete app bundles the compiled runtime under
 `Omnesis.app/Contents/Resources/runtime/`: `node` and
@@ -55,10 +145,19 @@ preview and confirmation to remove older application code. Cleanup keeps the
 current and active versions, pending recovery/update versions, uncertain launch
 reservations and one previous verified application. Kernel-held usage leases
 prevent removing code still in use. Personal data and recovery snapshots are
-retained separately.
+retained separately. The portable runtime tracks at most sixteen verified automatic
+recovery copies from application updates and library restores, preserves pin choices and refuses another update when its copy cannot
+be retained. Explicit snapshot reclamation requires a separate native reservation;
+application-code cleanup never deletes a personal backup.
 The app
 refuses to launch an incomplete bundle; it never substitutes a globally installed
 CLI or another checkout.
+
+Distribution inputs must come from the scheme's Release configuration, including
+its background helper and `OmnesisRuntimeExec`. Use the Release product paths when
+staging and assembling that app. The distribution script rejects Debug or
+unstamped app/helper builds before signing or making a DMG; the Debug example
+above is for isolated development QA.
 
 Managed ChatGPT sign-in uses a dedicated canonical Codex home and strict macOS
 Keychain credential storage. Concurrent workers share that credential namespace
@@ -76,8 +175,10 @@ the shared Apple transport client.
 
 The embedded `OmnesisBackground.app` observes the application's lifecycle and runs
 `desktop daemon`. Opening the app starts this observer independently of login
-preferences. Optional login startup is registered through `SMAppService` in
-Settings. It does not request root access. The observer keeps running after a
+preferences. Required login startup is registered through `SMAppService` once
+the app confirms its owned installation. Pending approval or a disabled service
+leaves setup incomplete and offers explicit repair in System Settings. It does
+not request root access. The observer keeps running after a
 daemon exits, preserves ordinary Finder moves, and requests keep-data retirement
 when its application is trashed or deleted. Pending update/restore recovery intent
 is preserved. Packaged Finder and login behavior still need native qualification.
@@ -105,7 +206,8 @@ measured byte counts; a failed model download offers an explicit retry.
 Phone pairing and assistant connections use the ready Omnesis relay address
 advertised and authorized by the gateway. They never fall back to a LAN address.
 Phone QR payloads are built by the gateway, and closing their sheet withdraws the
-unused code. Assistant approval starts from the connecting app's comparison code
+unused code. The sheet lists currently connected phones without attributing them
+to that code; finish and confirm the connection in the phone app. Assistant approval starts from the connecting app's comparison code
 and requires an explicit source selection. Direct source reading and answers
 without privacy review have separate, visible choices. A required passkey
 confirmation uses the library's secure browser page; the app never bypasses it.
@@ -144,8 +246,9 @@ status, and downloads completed artifacts through authenticated streaming. Save
 creates a new private file and refuses existing destinations and redirects.
 Cancellation removes only the download's own partial file. Readable or mixed
 contents require explicit consent; encrypted data payloads still leave archive
-metadata readable. A download is reported saved only after successful completion
-and synchronization to disk.
+metadata readable. A download is reported saved only after complete TAR framing
+(including the terminating blocks), successful completion and synchronization to
+disk. A clean HTTP EOF without Content-Length cannot certify a truncated archive.
 
 Recovery protection also accepts an existing recovery JSON file and its code.
 The managed home must retain both modern encryption markers matching that key.
@@ -186,3 +289,30 @@ After confirmed data erasure and authoritative Keychain absence, creating a
 fresh installation is a separate confirmed action. It preserves the erase
 receipt, publishes a new identity generation last, and requires a new bridge
 before setup. Retained-library reinstall keeps its existing identity.
+
+Settings → Backups also reads the private bridge's automatic recovery-copy catalog
+and saves per-copy keep choices through `recoveryCopies` / `recoveryCopyPin`.
+It shows retention registration time, preserved interrupted copies and unknown
+older copies separately. Clearing a keep preference never deletes a copy. The portable
+bridge provides a separate verified preview, explicit cleanup, exact-operation retry
+and planned-cleanup cancellation. Its native host retains install, data and code
+publication ownership through deletion; unknown legacy consumers cannot authorize
+cleanup. Personal backup/export downloads remain separate from these local automatic
+recovery copies.
+The native confirmation names the selected copy and the authoritative copy that
+will stay kept, shows its recorded size, and requires a separate acknowledgement.
+Stopping waits for the runtime to drain, then reads the current catalog. An
+unfinished removal offers only the original operation's retry; a planned removal
+can be cancelled while keeping its copy. Unidentified replies never enable removal.
+
+Permission recovery can use the portable `restartCollector` command, independently
+of the whole-library restart for startup settings. Both hosted and joined Macs
+restart only the exact supervised local collector, wait for its exit, then verify
+the replacement's authenticated device identity against the unchanged saved
+credential. This path cannot self-pair or enroll a new identity. It does not
+restart the foreground app, background helper, gateway or another installation.
+Its `permissionRecheckRequired` reply requires a fresh source capability probe;
+collector readiness is not permission authorization. Cancellation can arrive
+after collection has restarted, so the UI refreshes evidence instead of reporting
+an assumed outcome. Pending lifecycle operations and uncertain ownership refuse
+the action.

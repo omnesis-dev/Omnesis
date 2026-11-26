@@ -26,6 +26,9 @@ public struct DesktopState: Codable, Equatable, Sendable {
     public let searchModel: SearchModel?
     public let retired: Bool?
     public let retirement: Retirement?
+    public let installationId: String?
+    public let storageAdmission: DesktopServiceAdmission?
+    public let remoteRoute: DesktopServiceAdmission?
 
     public struct Signup: Codable, Equatable, Sendable {
         public let policy: String?
@@ -53,7 +56,10 @@ public struct DesktopState: Codable, Equatable, Sendable {
         signup: Signup? = nil,
         searchModel: SearchModel? = nil,
         retired: Bool? = nil,
-        retirement: Retirement? = nil
+        retirement: Retirement? = nil,
+        installationId: String? = nil,
+        storageAdmission: DesktopServiceAdmission? = nil,
+        remoteRoute: DesktopServiceAdmission? = nil
     ) {
         self.phase = phase
         self.mode = mode
@@ -65,6 +71,9 @@ public struct DesktopState: Codable, Equatable, Sendable {
         self.searchModel = searchModel
         self.retired = retired
         self.retirement = retirement
+        self.installationId = installationId
+        self.storageAdmission = storageAdmission
+        self.remoteRoute = remoteRoute
     }
 
     /// Opening a library requires verified protection for this Mac and its library home.
@@ -80,7 +89,7 @@ public struct DesktopState: Codable, Equatable, Sendable {
         case .chooseHome: "Choose where your library lives"
         case .preparing: "Preparing your private library"
         case .ready: canOpenLibrary ? "Connected" : "Checking your library’s protection"
-        case .waiting: "Waiting to connect"
+        case .waiting: waitingForLocalLibrary ? "Starting your library" : "Waiting to connect"
         case .error: "Omnesis needs your attention"
         }
     }

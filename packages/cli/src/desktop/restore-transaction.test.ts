@@ -21,8 +21,15 @@ import {
   writeDesktopRestoreIntent,
   desktopRestoreBlocked,
 } from "./restore-intent.js";
+import { withDesktopInstallLease } from "./bootstrap.js";
+import { registerVerifiedDesktopRestoreSnapshot } from "./snapshot-retention.js";
+import { acquireDesktopRuntimeLeases } from "./runtime-leases.js";
 import { desktopRootIdentity } from "./retirement.js";
-import { desktopUpdateSnapshotPath, restoreDesktopUpdateSnapshot } from "./update-snapshot.js";
+import {
+  createDesktopUpdateSnapshot,
+  desktopUpdateSnapshotPath,
+  restoreDesktopUpdateSnapshot,
+} from "./update-snapshot.js";
 import {
   applyDesktopRestoreTransaction,
   recoverDesktopRestoreTransaction,
@@ -65,6 +72,17 @@ beforeEach(async () => {
   stage = join(`${profile.configDir}.bootstrap`, "restore-imports", randomUUID());
   await mkdir(stage, { recursive: true, mode: 0o700 });
   await writeFile(join(stage, "main.enc"), incoming, { mode: 0o600 });
+  await mkdir(`${profile.configDir}.bootstrap`, { recursive: true, mode: 0o700 });
+  await writeFile(
+    join(`${profile.configDir}.bootstrap`, "process-authority.json"),
+    JSON.stringify({
+      version: 3,
+      owner: "omnesis-desktop",
+      instance: profile.instance,
+      secretService: profile.secretService,
+    }),
+    { mode: 0o600 },
+  );
   capture = (p, s) =>
     DesktopRestoreProtection.capture(p, s, {
       read: async () => key,
@@ -348,5 +366,68 @@ test("inline legacy model keys refuse before stop or any recovery snapshot", asy
   expect(stop).not.toHaveBeenCalled();
   expect(snapshot).not.toHaveBeenCalled();
   expect(await readDesktopRestoreIntent(profile)).toBeNull();
+  expect(await readFile(join(profile.configDir, "omnesis.db"), "utf8")).toBe(original);
+});
+
+test("legacy process uncertainty refuses restore before a stopping intent or daemon stop", async () => {
+  await rm(join(`${profile.configDir}.bootstrap`, "process-authority.json"));
+  const stop = vi.fn(() => Promise.resolve(false));
+  await expect(
+    applyDesktopRestoreTransaction(profile, plan, signal(), { ...dependencies(), stop }),
+  ).rejects.toMatchObject({ code: "DESKTOP_PROCESS_AUTHORITY_REQUIRED" });
+  expect(stop).not.toHaveBeenCalled();
+  expect(await readDesktopRestoreIntent(profile)).toBeNull();
+  expect(await readFile(join(profile.configDir, "omnesis.db"), "utf8")).toBe(original);
+});
+
+test("the shared recovery-copy cap refuses a real restore transaction before stop or a new journal", async () => {
+  const root = (await desktopRootIdentity(profile))!;
+  let previousId = "";
+  for (let index = 0; index < 16; index++) {
+    await withDesktopInstallLease(profile, signal(), async () => {
+      const operationId = randomUUID(),
+        leases = await acquireDesktopRuntimeLeases(profile, {
+          expectedRoot: root,
+          signal: signal(),
+        });
+      let backup;
+      try {
+        backup = await createDesktopUpdateSnapshot(profile, {
+          operationId,
+          leases,
+          signal: signal(),
+        });
+      } finally {
+        leases.release();
+      }
+      const intent = {
+        version: 1 as const,
+        owner: "omnesis-desktop" as const,
+        instance: profile.instance,
+        secretService: profile.secretService,
+        operationId,
+        root,
+        phase: "complete" as const,
+        backup,
+        backupRuntime: { epoch: "a".repeat(64), version: "1.2.2" },
+        targetKeyDigest: plan.protection.keyDigest,
+        archiveSha256: "b".repeat(64),
+        archiveBytes: 1234,
+      };
+      await writeDesktopRestoreIntent(profile, intent);
+      await registerVerifiedDesktopRestoreSnapshot(profile, intent, signal());
+      previousId = operationId;
+    });
+  }
+  const protection = await capture(profile, signal());
+  plan = { ...plan, protection: protection.identity() };
+  protection.close();
+  const stop = vi.fn(() => Promise.resolve(false));
+  await expect(
+    applyDesktopRestoreTransaction(profile, plan, signal(), { ...dependencies(), stop }),
+  ).rejects.toMatchObject({ code: "RECOVERY_COPIES_FULL" });
+  expect(stop).not.toHaveBeenCalled();
+  expect((await readDesktopRestoreIntent(profile))?.operationId).toBe(previousId);
+  expect((await readDesktopRestoreIntent(profile))?.phase).toBe("complete");
   expect(await readFile(join(profile.configDir, "omnesis.db"), "utf8")).toBe(original);
 });

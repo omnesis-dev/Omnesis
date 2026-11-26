@@ -9,6 +9,7 @@ import {
   connectivityFailure,
   deadlineFailure,
   directCandidateSchema,
+  localNetworkRefused,
   type DirectCandidate,
 } from "./direct-path.js";
 
@@ -187,8 +188,12 @@ export class AdaptiveGatewayPath {
         return candidate;
       } catch (error) {
         if (error instanceof GatewayTlsIdentityRefused) this.reportRefusedHint(candidate);
-        else if (connectivityFailure(error)) {
-          if (!UNREACHABLE.includes(String((error as { code: unknown }).code))) settled = false;
+        else if (connectivityFailure(error) || localNetworkRefused(error)) {
+          if (
+            !localNetworkRefused(error) &&
+            !UNREACHABLE.includes(String((error as { code: unknown }).code))
+          )
+            settled = false;
         } else if (
           deadlineFailure(attempt, error) ||
           (attempt.aborted && error === attempt.reason) ||

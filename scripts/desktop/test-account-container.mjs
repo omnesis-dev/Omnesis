@@ -68,7 +68,7 @@ try {
   ]);
   const entry = `set -euo pipefail
 mkdir -p "$OMNESIS_ACCOUNT_SOURCE_ROOT"
-tar -C /input --exclude=.git --exclude=.nx --exclude=node_modules --exclude=macos/build --exclude=macos/.node-fixture --exclude=macos/.codex-keychain-fixture --exclude=macos/.analytics-build-fixture -cf - . | tar -C "$OMNESIS_ACCOUNT_SOURCE_ROOT" -xf -
+tar -C /input --exclude=.git --exclude=.nx --exclude=node_modules --exclude=macos/build --exclude=macos/.node-fixture --exclude=macos/.codex-keychain-fixture --exclude=macos/.codex-backend-fixture --exclude=macos/.analytics-build-fixture -cf - . | tar -C "$OMNESIS_ACCOUNT_SOURCE_ROOT" -xf -
 cd "$OMNESIS_ACCOUNT_SOURCE_ROOT"
 node scripts/desktop/container-workspace.mjs
 exec timeout --foreground 900 npm run test:e2e -- packages/collector/src/e2e/desktop-account.e2e.test.ts`;

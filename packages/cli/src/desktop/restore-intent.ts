@@ -53,6 +53,7 @@ export const desktopRestoreIntentSchema = z
         schemaVersion: z.number().int().positive(),
         documents: z.number().int().nonnegative().safe(),
         sources: z.number().int().nonnegative().safe(),
+        recordings: z.number().int().nonnegative().safe().optional(),
         tokenDigest: digest,
         configDigest: digest,
         verifiedAt: z.string().datetime().optional(),
@@ -65,6 +66,10 @@ export const desktopRestoreIntentSchema = z
         epoch: z.string().min(1).max(256).nullable(),
         claimed: z.boolean(),
       })
+      .strict()
+      .optional(),
+    backupRuntime: z
+      .object({ epoch: digest, version: z.string().regex(/^\d+\.\d+\.\d+$/u) })
       .strict()
       .optional(),
     backup: z

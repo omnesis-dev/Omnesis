@@ -25,6 +25,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { appendFileSync, lstatSync } from "node:fs";
+import { isDesktopNativeContract } from "./desktop-native-inputs.mjs";
 
 export const E2E_SHARDS = 8;
 /**
@@ -147,10 +148,12 @@ export function pathLanes(files) {
   const deploys = any(files, deployment);
   return {
     node_macos: any(files, nodeMacOS),
-    desktop: any(
-      files,
-      /^(?:macos\/|ios\/Package\.swift$|ios\/Sources\/Omnesis\/|packages\/cli\/src\/desktop\/|packages\/cli\/src\/commands\/desktop\.ts$|packages\/core\/src\/(?:secret-store|secret-file|models\/)|scripts\/(?:desktop\/|macos-)|\.github\/workflows\/macos-desktop\.yml$)/,
-    ),
+    desktop:
+      files.some(isDesktopNativeContract) ||
+      any(
+        files,
+        /^(?:macos\/|ios\/Package\.swift$|ios\/Sources\/Omnesis\/|packages\/cli\/src\/desktop\/|packages\/cli\/src\/commands\/desktop\.ts$|packages\/core\/src\/(?:secret-store|secret-file|models\/)|scripts\/(?:desktop\/|macos-)|\.github\/workflows\/macos-desktop\.yml$)/,
+      ),
     apple: any(files, appleOnly),
     swift_lint: any(files, appleOnly),
     android_render: any(files, /^android\//),

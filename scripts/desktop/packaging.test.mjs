@@ -1,11 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { access, chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { stagePinnedDuckDbExtensions } from "./pinned-extensions.mjs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { assembleApp, appPlist } from "./assemble-app.mjs";
 import { inventoryBundle, machoArchitectures } from "./native-inventory.mjs";
@@ -62,6 +73,7 @@ async function inputs() {
     nodeVersion: NODE_RUNTIME.version,
     codeUsageProtocol: 1,
     dataUsageProtocol: 1,
+    processAuthorityProtocol: 3,
     runtimeLauncher: "runtime-exec",
     productVersion: "0.7.8",
     inventory: await inventoryBundle(runtime, "arm64"),
@@ -100,6 +112,51 @@ describe("native architecture inventory", () => {
     const root = await temporary();
     await put(root, "native-helper", Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0, 0, 0, 0]));
     await expect(inventoryBundle(root, "arm64")).rejects.toThrow(/ELF/);
+  });
+
+  test("inventories a target Mach-O bundle even when its native module suffix is .so", async () => {
+    const root = await temporary();
+    const bytes = thin("arm64");
+    bytes.writeUInt32BE(8, 12);
+    await put(root, "native-module.so", bytes);
+    const entries = await inventoryBundle(root, "arm64");
+    expect(entries).toEqual([
+      expect.objectContaining({
+        path: "native-module.so",
+        architectures: ["arm64"],
+        bytes: bytes.length,
+      }),
+    ]);
+  });
+
+  test.each([
+    ["ELF", Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0, 0, 0, 0]), /ELF/],
+    ["wrong architecture", thin("x64"), /Wrong native architecture/],
+    ["unrecognized bytes", Buffer.from("invented non-native module"), /Non-macOS native module/],
+    [
+      "unknown CPU",
+      (() => {
+        const bytes = thin("arm64");
+        bytes.writeUInt32BE(0x0100000d, 4);
+        return bytes;
+      })(),
+      /Wrong native architecture/,
+    ],
+  ])("refuses a .so containing %s", async (_label, bytes, error) => {
+    const root = await temporary();
+    await put(root, "native-module.so", bytes);
+    await expect(inventoryBundle(root, "arm64")).rejects.toThrow(error);
+  });
+
+  test("native .so links cannot escape the bundle or dangle", async () => {
+    const root = await temporary();
+    await mkdir(join(root, "bundle"));
+    await put(root, "outside.so", thin("arm64"));
+    await symlink("../outside.so", join(root, "bundle/module.so"));
+    await expect(inventoryBundle(join(root, "bundle"), "arm64")).rejects.toThrow(/escapes/);
+    await rm(join(root, "bundle/module.so"));
+    await symlink("missing.so", join(root, "bundle/module.so"));
+    await expect(inventoryBundle(join(root, "bundle"), "arm64")).rejects.toThrow();
   });
 
   test("refuses escaping and dangling symlinks", async () => {
@@ -141,6 +198,19 @@ describe("app assembly", () => {
     await put(options.runtime, "packages/cli/dist/index.js", "modified after inventory");
     await expect(assembleApp(options)).rejects.toThrow(/differ from their build inventory/);
     await expect(access(options.output)).rejects.toThrow();
+  });
+
+  test("refuses older process ownership protocols before creating an app", async () => {
+    for (const protocol of [undefined, 1, 2, 4]) {
+      const options = await inputs();
+      const manifest = JSON.parse(
+        await readFile(join(options.runtime, "desktop-runtime.json"), "utf8"),
+      );
+      manifest.processAuthorityProtocol = protocol;
+      await put(options.runtime, "desktop-runtime.json", JSON.stringify(manifest));
+      await expect(assembleApp(options)).rejects.toThrow(/does not match/);
+      await expect(access(options.output)).rejects.toThrow();
+    }
   });
 
   test("refuses skewed product versions and an existing output", async () => {
@@ -197,6 +267,158 @@ describe("bundled runtime tools", () => {
     await expect(access(join(root, "output/pkg/index.js"))).resolves.toBeUndefined();
     await expect(access(join(root, "output/.bin"))).rejects.toThrow();
   });
+
+  async function workspaceFixture() {
+    const { localRuntimeClosure } = await import("../runtime/stage-runtime.mjs");
+    const { createRuntimeDependencyPlan } = await import("./runtime-assets.mjs");
+    const root = await temporary();
+    const input = join(root, "input");
+    const target = join(root, "output");
+    const lock = JSON.parse(
+      await readFile(new URL("../../package-lock.json", import.meta.url), "utf8"),
+    );
+    const entries = localRuntimeClosure(["omnesis"]);
+    const plan = createRuntimeDependencyPlan(input, entries, lock);
+    for (const record of plan.links.values()) {
+      const alias = join(input, record.path);
+      await mkdir(dirname(alias), { recursive: true });
+      await symlink(relative(dirname(alias), join(input, record.directory)), alias);
+    }
+    for (const entry of entries) {
+      await put(
+        target,
+        `${entry.dir}/package.json`,
+        JSON.stringify({ name: entry.pkg.name, type: "module", exports: "./index.js" }),
+      );
+      await put(
+        target,
+        `${entry.dir}/index.js`,
+        `export default ${JSON.stringify(entry.pkg.name)};`,
+      );
+    }
+    return { root, input, target, entries, plan, lock };
+  }
+
+  test("copies every current runtime alias while omitting only exact non-runtime workspace links", async () => {
+    const { copyProductionDependencies, assertRuntimeDependencyLinks } =
+      await import("./runtime-assets.mjs");
+    const { execFileSync } = await import("node:child_process");
+    const f = await workspaceFixture();
+    expect(f.plan.links.size).toBe(
+      Object.values(f.lock.packages).filter((record) => record.link === true).length,
+    );
+    expect(f.entries.length).toBeGreaterThan(0);
+    expect([...f.plan.links.values()].some((record) => !record.selected)).toBe(true);
+    await put(
+      f.input,
+      "node_modules/third-party/node_modules/@omnesis/extension/index.js",
+      "// ordinary third-party file",
+    );
+    await put(
+      f.input,
+      "packages/cli/node_modules/nested-dependency/index.js",
+      "// nested dependency",
+    );
+    copyProductionDependencies(
+      join(f.input, "node_modules"),
+      join(f.target, "node_modules"),
+      f.plan,
+    );
+    copyProductionDependencies(
+      join(f.input, "packages/cli/node_modules"),
+      join(f.target, "packages/cli/node_modules"),
+      f.plan,
+    );
+    assertRuntimeDependencyLinks(f.target, f.plan);
+    for (const record of f.plan.links.values()) {
+      const alias = join(f.target, record.path);
+      if (record.selected)
+        expect(await realpath(alias)).toBe(await realpath(join(f.target, record.directory)));
+      else await expect(access(alias)).rejects.toThrow();
+    }
+    expect(
+      await readFile(
+        join(f.target, "node_modules/third-party/node_modules/@omnesis/extension/index.js"),
+        "utf8",
+      ),
+    ).toContain("ordinary third-party");
+    await expect(
+      access(join(f.target, "packages/cli/node_modules/nested-dependency/index.js")),
+    ).resolves.toBeUndefined();
+    const relocated = join(f.root, "relocated");
+    await rename(f.target, relocated);
+    assertRuntimeDependencyLinks(relocated, f.plan);
+    expect(
+      execFileSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          'import value from "@omnesis/core";process.stdout.write(value)',
+        ],
+        { cwd: relocated, encoding: "utf8" },
+      ),
+    ).toBe("@omnesis/core");
+  });
+
+  test.each(["wrong target", "regular file"])(
+    "does not omit a non-runtime workspace slot containing a %s",
+    async (kind) => {
+      const { copyProductionDependencies } = await import("./runtime-assets.mjs");
+      const f = await workspaceFixture();
+      const outside = [...f.plan.links.values()].find((record) => !record.selected);
+      const alias = join(f.input, outside.path);
+      await rm(alias);
+      if (kind === "wrong target") await symlink("../../wrong-target", alias);
+      else await writeFile(alias, "not a workspace alias");
+      expect(() =>
+        copyProductionDependencies(
+          join(f.input, "node_modules"),
+          join(f.target, "node_modules"),
+          f.plan,
+        ),
+      ).toThrow("does not match its lock");
+    },
+  );
+
+  test("a runtime dependency on an excluded private workspace fails before copying", async () => {
+    const { createRuntimeDependencyPlan } = await import("./runtime-assets.mjs");
+    const f = await workspaceFixture();
+    const outside = [...f.plan.links.values()].find((record) => !record.selected);
+    const name = f.lock.packages[outside.directory].name;
+    for (const field of ["dependencies", "optionalDependencies", "peerDependencies"]) {
+      const entries = f.entries.map((entry, index) =>
+        index === 0
+          ? { ...entry, pkg: { ...entry.pkg, [field]: { ...entry.pkg[field], [name]: "*" } } }
+          : entry,
+      );
+      expect(() => createRuntimeDependencyPlan(f.input, entries, f.lock)).toThrow(
+        "missing from the runtime closure",
+      );
+    }
+  });
+
+  test.each(["missing selected", "dangling third-party", "escaping third-party"])(
+    "link preflight rejects %s",
+    async (kind) => {
+      const { copyProductionDependencies, assertRuntimeDependencyLinks } =
+        await import("./runtime-assets.mjs");
+      const f = await workspaceFixture();
+      copyProductionDependencies(
+        join(f.input, "node_modules"),
+        join(f.target, "node_modules"),
+        f.plan,
+      );
+      if (kind === "missing selected")
+        await rm(join(f.target, "node_modules", f.entries[0].pkg.name));
+      else
+        await symlink(
+          kind === "dangling third-party" ? "missing-target" : "../../input",
+          join(f.target, "node_modules/unknown-alias"),
+        );
+      expect(() => assertRuntimeDependencyLinks(f.target, f.plan)).toThrow();
+    },
+  );
 
   test("npm, npx and env-node enter the bundled lease launcher with an empty host PATH", async () => {
     const { copyNodeTools } = await import("./runtime-assets.mjs");
@@ -271,10 +493,22 @@ describe("packaging command boundary", () => {
     const { distribute } = await import("./distribute.mjs");
     const options = await inputs();
     await assembleApp(options);
+    await put(
+      options.output,
+      "Contents/Library/LoginItems/OmnesisBackground.app/Contents/Info.plist",
+      "fixture helper metadata",
+    );
     const installer = join(options.root, "Omnesis.dmg");
     const commands = [];
     const run = (command, args) => {
       commands.push([command, args]);
+      if (command === "/usr/bin/plutil")
+        return JSON.stringify({
+          CFBundleIdentifier: args.at(-1).includes("LoginItems")
+            ? "dev.omnesis.desktop.background"
+            : "dev.omnesis.desktop",
+          OmnesisBuildConfiguration: "Release",
+        });
       if (command === process.execPath) {
         expect(args[0]).toMatch(/smoke-runtime\.mjs$/);
         expect(args.slice(1)).toEqual([

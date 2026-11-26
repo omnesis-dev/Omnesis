@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import {
+  type ProviderCredentialsSpec,
+  type SerializedProviderCredentialsSpec,
+  serializeCredentialsSpec,
+} from "@omnesis/core";
+import type { SourcePermissionDeclaration, SourcePermissionRequirement } from "./permissions.js";
 /**
  * Declarative descriptor for a data source.
  * Provider packages export these so the CLI can drive add/auth flows
  * without knowing source internals.
  */
 
-import {
-  type ProviderCredentialsSpec,
-  type SerializedProviderCredentialsSpec,
-  serializeCredentialsSpec,
-} from "@omnesis/core";
 import type { AccountId, SourceType, ProviderType } from "@omnesis/types";
 import type { AuthResult, AuthSession } from "./auth-session.js";
 import type { AccountDescriptor } from "./account-descriptor.js";
@@ -150,6 +151,8 @@ export interface SourceParam {
   scope?: "source" | "member";
   /** Whether this parameter is required */
   required?: boolean;
+  /** Filesystem selection constraint, without performing any permission grant. */
+  mustExist?: "file" | "directory";
   /** Placeholder/hint shown in input */
   placeholder?: string;
   /**
@@ -342,7 +345,7 @@ export interface SelfIdentitySpec {
  * Declarative descriptor for a data source.
  * Each provider package exports one or more of these.
  */
-export interface SourceDescriptor {
+export interface SourceDescriptor extends SourcePermissionDeclaration {
   /** Source ID — matches the source base ID (e.g. "gmail", "obsidian-notes", "apple-notes") */
   id: SourceType;
   /** Human-readable name (e.g. "Gmail", "Obsidian Notes", "Apple Notes") */
@@ -646,6 +649,7 @@ export interface SourceDescriptor {
  * provider code.
  */
 export interface SerializedDescriptor {
+  permissionRequirements?: SourcePermissionRequirement[];
   id: string;
   name: string;
   description: string;
@@ -732,6 +736,7 @@ export interface SerializedDescriptor {
     /** Omitted means `"source"`; see `SourceParam.scope`. */
     scope?: SourceParam["scope"];
     required?: boolean;
+    mustExist?: "file" | "directory";
     placeholder?: string;
     /** See `SourceParam.help`. */
     help?: string;
@@ -757,6 +762,7 @@ export interface SerializedDescriptor {
 export function serializeDescriptor(d: SourceDescriptor): SerializedDescriptor {
   return {
     id: String(d.id),
+    permissionRequirements: d.permissionRequirements,
     name: d.name,
     description: d.description,
     unitName: d.unitName,
@@ -791,6 +797,7 @@ export function serializeDescriptor(d: SourceDescriptor): SerializedDescriptor {
       type: p.type,
       scope: p.scope,
       required: p.required,
+      mustExist: p.mustExist,
       placeholder: p.placeholder,
       help: p.help,
       pattern: p.pattern,

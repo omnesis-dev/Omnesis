@@ -8,6 +8,7 @@ export type RestoreTablePolicy =
   | "rebuild-derived"
   | "import-data"
   | "reconcile-devices"
+  | "reconcile-retirements"
   | "pause-sources"
   | "review-memberships"
   | "pause-data";
@@ -136,6 +137,11 @@ const groups: Record<
     "transcription_vocabulary_terms",
   ],
   "import-data": [
+    "recording_sessions",
+    "recording_chunks",
+    "recording_marks",
+    "recording_speakers",
+    "recording_suggestion_dismissals",
     "agent_messages",
     "cognition_consumption_edges",
     "cognition_coverage",
@@ -236,6 +242,8 @@ for (const policy of ["keep-target", "discard-work", "rebuild-derived", "import-
   }
 }
 policies.set("devices", "reconcile-devices");
+policies.set("forgotten_devices", "reconcile-retirements");
+policies.set("source_device_archives", "reconcile-retirements");
 policies.set("sources", "pause-sources");
 policies.set("source_devices", "review-memberships");
 policies.set("source_member_config_contracts", "review-memberships");

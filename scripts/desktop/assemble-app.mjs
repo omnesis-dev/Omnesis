@@ -75,6 +75,7 @@ export async function assembleApp({
     manifest.format !== 1 ||
     manifest.codeUsageProtocol !== 1 ||
     manifest.dataUsageProtocol !== 1 ||
+    manifest.processAuthorityProtocol !== 3 ||
     manifest.runtimeLauncher !== "runtime-exec" ||
     manifest.architecture !== architecture ||
     manifest.nodeVersion !== NODE_RUNTIME.version ||

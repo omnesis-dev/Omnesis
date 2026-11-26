@@ -33,6 +33,7 @@ import {
   CodexAppServerRuntime,
   buildCodexEnv,
   parseCodexCliVersion,
+  resolveManagedCodexNativeCommand,
   type CodexRuntimeCommandInfo,
 } from "@omnesis/agent";
 import {
@@ -393,12 +394,21 @@ export class CodexRuntimeInstaller {
     const bin = codexBin(parsed.bin);
     if (!bin || isAbsolute(bin))
       throw new Error("Installed Codex package has an invalid codex bin.");
-    const command = resolve(dirname(packageJsonPath), bin);
+    let command = resolve(dirname(packageJsonPath), bin);
     await assertRealPathWithin(dirname(packageJsonPath), command);
     const commandStat = await lstat(command);
     if (commandStat.isSymbolicLink() || !commandStat.isFile()) {
       throw new Error("Installed Codex command is not a regular file.");
     }
+    if (this.env.OMNESIS_DESKTOP_MANAGED === "1")
+      command = (
+        await resolveManagedCodexNativeCommand({
+          source: "managed",
+          command,
+          packageName: CODEX_RUNTIME_COMPAT.packageName,
+          packageVersion: expectedVersion,
+        })
+      ).command;
     const probe = await this.runOwned(command, ["--version"], {
       env: buildCodexEnv(this.env, join(installDir, ".omnesis-version-probe")),
       timeoutMs: this.probeTimeoutMs,
@@ -655,6 +665,7 @@ async function probeAppServerCompatibility(
 ): Promise<void> {
   opts.signal?.throwIfAborted();
   const runtime = new CodexAppServerRuntime({
+    purpose: "compatibility-probe",
     codexHome: opts.codexHome,
     workspaceDir: opts.workspaceDir,
     commandInfo,
@@ -667,9 +678,8 @@ async function probeAppServerCompatibility(
   let failed = false;
   let failure: unknown;
   try {
-    // listModels forces process spawn, initialize, and a typed model/list
-    // round-trip without starting an inference turn or reading shared auth.
-    await runtime.listModels(opts.timeoutMs);
+    // A dedicated metadata-only client cannot become an authenticated conversation runtime.
+    await runtime.probeProtocolModels(opts.timeoutMs);
   } catch (error) {
     failed = true;
     failure = error;

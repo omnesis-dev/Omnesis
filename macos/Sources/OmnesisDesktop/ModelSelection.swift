@@ -51,7 +51,7 @@ enum DesktopModelSelection {
                 choices.append(.init(id: key + "/" + model, title: "\(name) · \(model)", onHost: local, apply: .assign(key + "/" + model)))
             }
         }
-        if let codex = overview.inference.codex, codex.configured, codex.loggedIn, codex.runtime?.supported == true {
+        if let codex = overview.inference.codex, codex.status == "ok", codex.configured, codex.loggedIn, codex.runtime?.supported == true {
             for model in codex.models where codex.modelRoles?[model]?.contains(role) == true {
                 let label = codex.modelDetails?.first(where: { $0.id == model })?.name ?? model
                 choices.append(.init(id: "codex/" + model, title: "ChatGPT · \(label)", onHost: false, apply: .assign("codex/" + model)))

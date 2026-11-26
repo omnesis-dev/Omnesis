@@ -15,6 +15,7 @@ final class DesktopApplicationDelegate: NSObject, NSApplicationDelegate {
         Task {
             do {
                 try await store.cleanUpUpdateInstaller()
+                await store.stopPrerequisiteMonitoring()
                 sender.reply(toApplicationShouldTerminate: true)
             } catch {
                 store.failure = error.localizedDescription

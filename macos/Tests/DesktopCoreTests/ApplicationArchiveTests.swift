@@ -6,8 +6,9 @@ import XCTest
 
 final class ApplicationArchiveTests: XCTestCase {
     private func fixture() throws -> (app: URL, root: URL, publication: URL, epoch: String) {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("omnesis-app-archive-\(UUID().uuidString)")
-            .resolvingSymlinksInPath()
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("omnesis-app-archive-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let directory = try URL(fileURLWithPath: DesktopCanonicalPath.resolve(temporary.path), isDirectory: true)
         let app = directory.appendingPathComponent("source/Omnesis.app")
         let resources = app.appendingPathComponent("Contents/Resources/runtime")
         let binary = app.appendingPathComponent("Contents/MacOS/Omnesis")

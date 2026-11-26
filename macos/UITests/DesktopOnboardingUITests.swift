@@ -4,6 +4,30 @@
 import XCTest
 
 final class DesktopOnboardingUITests: XCTestCase {
+    func testMenuBarReusesTheMainWindowAndReopensItAfterClosing() {
+        let app = XCUIApplication()
+        app.launch()
+        let main = app.windows.matching(identifier: "Omnesis")
+        let status = app.statusItems["Omnesis"]
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+        for _ in 0 ..< 3 {
+            status.click()
+            let open = app.buttons["Open Omnesis"]
+            XCTAssertTrue(open.waitForExistence(timeout: 5))
+            open.click()
+            let unique = XCTNSPredicateExpectation(predicate: NSPredicate(format: "count == 1"), object: main)
+            XCTAssertEqual(XCTWaiter.wait(for: [unique], timeout: 5), .completed)
+        }
+        app.typeKey("w", modifierFlags: .command)
+        XCTAssertNotEqual(app.state, .notRunning, "Closing the library window must keep the menu-bar app available")
+        status.click()
+        let open = app.buttons["Open Omnesis"]
+        XCTAssertTrue(open.waitForExistence(timeout: 5))
+        open.click()
+        XCTAssertTrue(main.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertEqual(main.count, 1)
+    }
+
     func testIncompleteBundleRefusesToStartDataCollection() {
         let app = XCUIApplication()
         app.launch()

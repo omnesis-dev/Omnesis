@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createHash } from "node:crypto";
+import { assertDesktopProcessAuthority } from "./process-authority.js";
 import { withDesktopInstallLease } from "./bootstrap.js";
 import { assertDesktopConfigSecretsProtected } from "./config-protection.js";
 import { stopDesktopDaemon } from "./daemon-control.js";
@@ -46,6 +47,7 @@ export async function handoffDesktopUpdate(
   let operationId: string | undefined;
   try {
     const requested = await withDesktopInstallLease(profile, options.signal, async () => {
+      await assertDesktopProcessAuthority(profile);
       if ((await readDesktopRetirement(profile)) || (await desktopRestoreBlocked(profile)))
         throw new Error("Finish pending removal or backup recovery before updating");
       const state = await readDesktopUpdateState(profile);

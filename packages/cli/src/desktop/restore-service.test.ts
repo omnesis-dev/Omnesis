@@ -107,6 +107,16 @@ beforeEach(async () => {
     }),
     { mode: 0o600 },
   );
+  await writeFile(
+    join(`${profile.configDir}.bootstrap`, "process-authority.json"),
+    JSON.stringify({
+      version: 3,
+      owner: "omnesis-desktop",
+      instance: profile.instance,
+      secretService: profile.secretService,
+    }),
+    { mode: 0o600 },
+  );
   await writeFile(join(profile.configDir, "omnesis.db"), "invented previous ciphertext", {
     mode: 0o600,
   });
@@ -125,6 +135,7 @@ beforeEach(async () => {
       sourcesPaused: 2,
       foreignDevicesRetained: 1,
       targetDevicesPreserved: 1,
+      recordings: 0,
       targetLabs: { brain: false, tasks: false, watches: false },
     };
   });

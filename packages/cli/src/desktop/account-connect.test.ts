@@ -130,3 +130,20 @@ test("invite errors have fixed actionable messages without exposing provider err
     connectDesktopAccount(f.profile, { termsAccepted: true }, f.context, { request: f.request }),
   ).rejects.not.toThrow("fictional-private-provider-error");
 });
+
+test("malformed optional route evidence cannot break a linked account status", async () => {
+  const f = fixture();
+  f.request.mockResolvedValue({
+    account: { linked: true },
+    tunnel: 42,
+    certificate: null,
+    publicMcp: { ready: "invalid" },
+  });
+  const result = await connectDesktopAccount(
+    f.profile,
+    { intent: "existing", termsAccepted: true },
+    f.context,
+    { request: f.request, sleep: async () => {} },
+  );
+  expect(result.account?.linked).toBe(true);
+});

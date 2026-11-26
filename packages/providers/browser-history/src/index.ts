@@ -55,6 +55,36 @@ function hashUrl(url: string): string {
 }
 
 export default defineStructuredSource<BrowserHistoryCursor>({
+  permissionRequirements: [
+    {
+      id: "selected-history",
+      kind: "protected-files",
+      summary: "Allow access to the selected browser history",
+      scope: "Selected browser history stores",
+      blocking: true,
+      actions: [
+        { kind: "open-system-settings", category: "privacy-security" },
+        { kind: "retry-access" },
+        { kind: "restart-collector" },
+      ],
+    },
+  ],
+  async probePermissionAccess({ accountId, params, signal }) {
+    if (!accountId) return { status: "unavailable" };
+    const browser = getBrowserInfo(accountId);
+    if (!browser) return { status: "unavailable" };
+    return browser.engine === "chromium"
+      ? probeChromiumReadAccess(
+          browser.baseDir,
+          (params.excludeProfiles ?? "")
+            .split(/[\n,]/u)
+            .map((value) => value.trim())
+            .filter(Boolean),
+          { signal },
+        )
+      : probeFileReadAccess(join(browser.baseDir, "History.db"), { signal });
+  },
+
   id: "browser-history",
   name: "Browser History",
   description: "Browsing history from Chrome, Safari, Arc, Brave, Edge, and Vivaldi",

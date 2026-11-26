@@ -57,7 +57,7 @@ struct DesktopUpdatesView: View {
                             }
                         } else {
                             Text("The app cleanup review could not be verified. Review it again before removing anything.")
-                                .foregroundStyle(.red)
+                                .foregroundStyle(DesktopTheme.danger)
                         }
                         Button("Return to update status") { store.command("updateStatus") }.disabled(store.busy)
                     }
@@ -80,7 +80,7 @@ struct DesktopUpdatesView: View {
                         action(
                             "Back up and continue update…",
                             command: "updateInstall",
-                            explanation: "Omnesis will stop this Mac’s library connection and preserve a private backup and the previous app. It then activates the verified installed app, or opens the verified installer in Finder. If Finder opens, drag Omnesis to Applications and open the installed app to continue.",
+                            explanation: "Omnesis will stop this Mac’s library connection and preserve a private backup and the previous app. It then activates the checked app, or opens the checked installer in Finder. If Finder opens, drag Omnesis to Applications and open the installed app to continue.",
                             token: update.confirmation
                         )
                     }
@@ -90,7 +90,7 @@ struct DesktopUpdatesView: View {
                         action(
                             "Return to the previous app…",
                             command: "updateRestore",
-                            explanation: "Restore the verified backup taken before this update and open the retained previous app. Changes made after that backup will be replaced. Omnesis refuses if the previous app or backup cannot be verified.",
+                            explanation: "Restore the protected backup taken before this update and open the retained previous app. Changes made after that backup will be replaced. Omnesis refuses if the previous app or backup cannot be checked.",
                             token: update.confirmation
                         )
                     }
@@ -98,7 +98,7 @@ struct DesktopUpdatesView: View {
                         action(
                             "Finish update",
                             command: "updateFinish",
-                            explanation: "Confirm this version is working. Omnesis will check the library’s actual health before recording completion.",
+                            explanation: "Confirm this version is working. Omnesis will check the library is running correctly before recording completion.",
                             token: update.confirmation
                         )
                     }
@@ -106,7 +106,10 @@ struct DesktopUpdatesView: View {
                         Button("Review older application files") { store.command("updateCleanupPreview") }
                             .disabled(store.busy || !store.state.canOpenLibrary)
                     }
-                } else { Text("Check your installed app and update status.").foregroundStyle(.secondary) }
+                } else {
+                    Text("Check whether an update is available or finish installing an update you already started.")
+                        .foregroundStyle(.secondary)
+                }
                 Button("Check for updates") { store.command("updateCheck") }.disabled(store.busy)
                 if store.busy {
                     ProgressView("Working…")
@@ -116,11 +119,11 @@ struct DesktopUpdatesView: View {
                     }
                     Button("Cancel") { store.command("cancel") }
                 }
-                if let failure = store.failure { Text(failure).foregroundStyle(.red).textSelection(.enabled) }
+                if let failure = store.failure { Text(failure).foregroundStyle(DesktopTheme.danger).textSelection(.enabled) }
             }
             Section("Your information") {
                 Text(
-                    "Updates preserve your encrypted library. A retained app alone cannot undo database changes; returning to an earlier version requires the matching verified backup."
+                    "Updates preserve your encrypted library. A retained app alone cannot undo database changes; returning to an earlier version requires the matching protected backup."
                 )
                 .foregroundStyle(.secondary)
             }

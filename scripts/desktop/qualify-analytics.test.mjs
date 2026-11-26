@@ -4,6 +4,7 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Script } from "node:vm";
 import { afterEach, expect, test, vi } from "vitest";
 import { qualifyDesktopAnalytics } from "./qualify-analytics.mjs";
 
@@ -36,12 +37,14 @@ test("compatibility probes carry their fresh fixture key only on bounded private
   expect(run).toHaveBeenCalledTimes(3);
   const inputs = run.mock.calls.map(([, , options]) => JSON.parse(options.input));
   expect(inputs.map(({ step }) => step)).toEqual([1, 2, 3]);
+  expect(inputs.map(({ engineVersion }) => engineVersion)).toEqual(["v1.5.6", "v1.5.6", "v1.5.6"]);
   expect(new Set(inputs.map(({ key }) => key)).size).toBe(1);
   expect(inputs[0].key).toMatch(/^[a-f0-9]{64}$/u);
   expect(inputs[0].extension).toContain("osx_arm64/httpfs.duckdb_extension");
   expect(inputs[1].extension).toBeUndefined();
   expect(inputs[2].extension).toBe(inputs[0].extension);
   for (const [, args, options] of run.mock.calls) {
+    expect(() => new Script(args[1])).not.toThrow();
     expect(JSON.stringify([args, options.env])).not.toContain(inputs[0].key);
     expect(options.env.OMNESIS_TOKEN).toBeUndefined();
     expect(options.timeout).toBe(60_000);

@@ -151,6 +151,7 @@ export default defineProvider<PlaidContext>({
   // Plaid hosts the whole sign-in page, so the add is a URL the user opens —
   // no embedded widget, and no callback for Omnesis to host. The bank's own
   // OAuth redirect happens entirely between the user's browser and Plaid.
+  permissionRequirements: [],
   authType: "oauth",
   credentials: plaidCredentialsSpec,
 

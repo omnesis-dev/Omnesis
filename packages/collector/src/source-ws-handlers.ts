@@ -14,9 +14,6 @@
  * gateway forwards them to subscribers (SSE on the admin client side).
  */
 
-import type { ChildProcess } from "node:child_process";
-import { spawnAuthProcess, type AuthProcess } from "./auth-process.js";
-import { authSubprocessEnvironment } from "./auth-subprocess-env.js";
 import {
   collectorHostname,
   createLogger,
@@ -34,6 +31,9 @@ import {
   resolveSubprocessEntry,
 } from "@omnesis/core";
 import { serializeDescriptor } from "@omnesis/source-sdk";
+import { authSubprocessEnvironment } from "./auth-subprocess-env.js";
+import { spawnAuthProcess, type AuthProcess } from "./auth-process.js";
+import { CollectorSourcePermissions } from "./source-permissions.js";
 import {
   parseAuthSubprocessEvent,
   type AuthSubprocessEvent,
@@ -41,6 +41,7 @@ import {
 } from "./auth-subprocess-protocol.js";
 import { createCommandDispatch, type TypedCommandHandler } from "./ws-command-dispatch.js";
 import { CollectorOwnedWork, collectorCleanupReceipt } from "./owned-work.js";
+import type { ChildProcess } from "node:child_process";
 import type {
   AuthErrorCode,
   WsCommand,
@@ -129,6 +130,10 @@ export interface SourceWsHandlers {
 export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandlers {
   const { sourceManager, gateway, emitEvent } = deps;
   const work = new CollectorOwnedWork(deps.onOwnershipChanged);
+  const permissions = new CollectorSourcePermissions(
+    sourceManager.getConfigDir(),
+    deps.onOwnershipChanged,
+  );
   let closing: Promise<void> | undefined;
   let closeSettled = false;
   const pendingClose = Object.assign(new Error("Collector source cleanup remains pending"), {
@@ -158,6 +163,18 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
     dispatch.register(type, (payload) => work.run(Symbol(type), async () => handler(payload)));
   }
 
+  register("source.permissions", async (request) => {
+    const descriptor = sourceManager
+      .getDescriptors()
+      .find((entry) => String(entry.id) === request.descriptorId);
+    if (!descriptor) throw new Error("Permission descriptor is unavailable");
+    return permissions.check(
+      request,
+      descriptor,
+      request.sourceId ? sourceManager.getPermissionSource(request.sourceId) : undefined,
+      sourceManager.publicationGuard,
+    );
+  });
   register("source.descriptors", () => handleDescriptors());
   register("source.validate-param", (p) => handleValidateParam(p));
   register("source.discover", (p) => handleDiscover(p));
@@ -183,6 +200,7 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
     cleanupFailure: () =>
       collectorCleanupReceipt(
         work.cleanupFailure(),
+        permissions.cleanupFailure(),
         activeFlows.size ? pendingClose : undefined,
         closing && !closeSettled ? pendingClose : undefined,
       ),
@@ -195,13 +213,18 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
   function shutdownAllFlows(): Promise<void> {
     if (closing) return closing;
     const acceptedWork = work.close();
+    const permissionWork = permissions.close();
     for (const ac of activeImports.values()) ac.abort();
     const flowIds = [...activeFlows.keys()];
     if (flowIds.length)
       log.info(
         `Shutdown: terminating ${flowIds.length} in-flight auth subprocess${flowIds.length === 1 ? "" : "es"}`,
       );
-    closing = Promise.allSettled([acceptedWork, ...flowIds.map((flowId) => terminateFlow(flowId))])
+    closing = Promise.allSettled([
+      acceptedWork,
+      permissionWork,
+      ...flowIds.map((flowId) => terminateFlow(flowId)),
+    ])
       .then((results) => {
         const errors: unknown[] = [];
         for (const result of results)
