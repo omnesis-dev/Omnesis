@@ -306,6 +306,7 @@ test("removing a sign-in removes every stored countersignature that names it, an
     const google = "a".repeat(64),
       accountId = accounts.signInFederated("google", google);
     let account = { accountId, version: 1 };
+    const createdAt = Date.now();
     /** Adds a passkey that countersigned the account as it stood, as an earlier relay stored it. */
     const add = async (label: string) => {
       const names = [
@@ -322,23 +323,37 @@ test("removing a sign-in removes every stored countersignature that names it, an
         { authenticator: parked.authenticator, handle: parked.begin.options.user.id },
         names,
       );
+      // Same-millisecond registrations use random credential IDs as their display tie-breaker.
+      db.prepare("UPDATE omnesis_passkeys SET created_at=? WHERE credential_id=?").run(
+        createdAt,
+        parked.authenticator.id,
+      );
       return parked.authenticator.id;
     };
     const countersigners = () =>
       accounts
         .passkeyKeys(accountId)
         .filter((key) => key.countersignature)
-        .map((key) => key.id);
+        .map((key) => key.id)
+        .sort();
     // First names Google; second names Google and first; third names all three.
     const first = await add("Passkey 1"),
       second = await add("Passkey 2"),
       third = await add("Passkey 3");
-    expect(countersigners()).toEqual([first, second, third]);
+    expect(new Set(accounts.passkeyKeys(accountId).map((key) => key.createdAt))).toEqual(
+      new Set([Math.floor(createdAt / 1000)]),
+    );
+    expect(countersigners()).toEqual([first, second, third].sort());
     // Removing the first passkey takes the two countersignatures that name it.
     accounts.removePasskey(accountId, first, ["google"], account.version);
     account = { accountId, version: accounts.sessionVersion(accountId)! };
     expect(countersigners()).toEqual([]);
-    expect(accounts.passkeyKeys(accountId).map((key) => key.id)).toEqual([second, third]);
+    expect(
+      accounts
+        .passkeyKeys(accountId)
+        .map((key) => key.id)
+        .sort(),
+    ).toEqual([second, third].sort());
     // One that names Google and the two left; unlinking Google takes it too.
     const fourth = await add("Passkey 4");
     expect(countersigners()).toEqual([fourth]);
@@ -349,7 +364,12 @@ test("removing a sign-in removes every stored countersignature that names it, an
     expect(countersigners()).toEqual([fourth]);
     accounts.unlinkFederated(accountId, "google", google, ["google"], account.version);
     expect(countersigners()).toEqual([]);
-    expect(accounts.passkeyKeys(accountId).map((key) => key.id)).toEqual([second, third, fourth]);
+    expect(
+      accounts
+        .passkeyKeys(accountId)
+        .map((key) => key.id)
+        .sort(),
+    ).toEqual([second, third, fourth].sort());
     service.close();
   } finally {
     db.close();

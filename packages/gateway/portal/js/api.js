@@ -1279,6 +1279,7 @@ export const addSource = ({ deviceId, descriptorId, accountIds, params }) =>
 // --- Config (unified omnesis.json) ---
 
 export const getAdminConfig = () => request("GET", "/admin/config");
+export const getTelemetryStatus = () => request("GET", "/admin/telemetry");
 
 /**
  * Returns the raw text body, not JSON — the config view feeds this

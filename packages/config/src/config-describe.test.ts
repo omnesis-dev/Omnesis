@@ -399,6 +399,7 @@ const EXPECTED_INVENTORY = [
   "/sources/*/maxAge [duration]",
   "/sources/*/params [object owned:Sources]",
   "/sources/*/syncInterval [duration]",
+  "/telemetry/enabled [boolean]",
 ];
 
 function inventoryLine(entry: { path: string; kind: string; ownedBy?: string }): string {

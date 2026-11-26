@@ -32,6 +32,39 @@ afterEach(() => {
   for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true });
 });
 describe("source recovery launcher", () => {
+  test.skipIf(process.platform === "win32")(
+    "the installed source front door grants production while preserving explicit test isolation",
+    () => {
+      const dir = mkdtempSync(join(tmpdir(), "omnesis-source-mode-"));
+      scratch.push(dir);
+      const root = join(dir, "source");
+      const bin = join(dir, "bin");
+      mkdirSync(join(root, "node_modules/tsx/dist"), { recursive: true });
+      mkdirSync(bin);
+      writeFileSync(join(root, "node_modules/tsx/dist/loader.mjs"), "");
+      writeFileSync(
+        join(bin, "node"),
+        '#!/bin/sh\nif [ "$1" = --version ]; then echo v24.0.0; else printf "%s" "$OMNESIS_RUNTIME_MODE"; fi\n',
+        { mode: 0o755 },
+      );
+      const launcher = join(dir, "omnesis");
+      writeFileSync(launcher, sourceRecoveryLauncher(root, join(dir, "config")));
+      const env = {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        OMNESIS_RUNTIME_MODE: undefined,
+      };
+      expect(execFileSync("sh", [launcher, "gateway", "serve"], { env, encoding: "utf8" })).toBe(
+        "production",
+      );
+      expect(
+        execFileSync("sh", [launcher, "gateway", "serve"], {
+          env: { ...env, OMNESIS_RUNTIME_MODE: "test" },
+          encoding: "utf8",
+        }),
+      ).toBe("test");
+    },
+  );
   test("keeps the toolchain-free installer's lock helper identical", () => {
     const installer = readFileSync(join(process.cwd(), "scripts", "install.sh"), "utf8");
     const start = installer.indexOf("  cat > \"$UPDATE_LOCK_HELPER_TMP\" <<'EOF'\n");
