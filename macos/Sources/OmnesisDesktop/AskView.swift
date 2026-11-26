@@ -319,6 +319,7 @@ struct DesktopAskView: View {
                                 (chat.model?.configured == true ? "Your model needs attention" : "Choose how Omnesis answers") :
                                 "Ask about your information")
                                 .font(.system(size: 28, weight: .semibold))
+                                .accessibilityIdentifier("chat-empty-title")
                             Text(chat.needsModel
                                 ?
                                 (chat.model?

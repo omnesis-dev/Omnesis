@@ -424,9 +424,19 @@ final class DesktopRenderTests: XCTestCase {
             name: "ask-empty",
             size: CGSize(width: 1080, height: 740)
         ) { hosting in
-            let splits = Self.descendants(hosting).compactMap { $0 as? NSSplitView }
-            XCTAssertFalse(splits.isEmpty, "The native conversation split must be present")
-            XCTAssertTrue(splits.contains { $0.bounds.height >= 700 }, "Ask must fill the window instead of collapsing at the bottom")
+            let window = try XCTUnwrap(hosting.window)
+            let content = window.convertToScreen(hosting.convert(hosting.bounds, to: nil))
+            let title = try DesktopAccessibilityDriver.element("chat-empty-title", in: hosting).accessibilityFrame()
+            let input = try DesktopAccessibilityDriver.element("chat-input", in: hosting).accessibilityFrame()
+            for frame in [title, input] {
+                XCTAssertTrue([frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite))
+                XCTAssertGreaterThan(frame.width, 0)
+                XCTAssertGreaterThan(frame.height, 0)
+                XCTAssertTrue(content.contains(frame), "The empty conversation and composer must remain inside the content")
+            }
+            XCTAssertGreaterThan(input.width, 400, "The actual composer must use the available reading width")
+            XCTAssertLessThan(input.minY - content.minY, 120, "The composer must remain near the bottom of the window")
+            XCTAssertGreaterThan(title.minY - input.maxY, 250, "Ask must fill the window instead of collapsing at the bottom")
         }
     }
 
