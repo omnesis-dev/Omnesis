@@ -296,7 +296,7 @@ test.each([false, true])(
       },
     });
     const request = operations.request;
-    operations.request = vi.fn(async (...args) =>
+    operations.request = vi.fn(async (...args: Parameters<typeof request>) =>
       args[1] === "/admin/config" ? { config: JSON.parse(config) } : request(...args),
     );
     const pending = startCommittedDesktopRestore(profile, new AbortController().signal, operations);
