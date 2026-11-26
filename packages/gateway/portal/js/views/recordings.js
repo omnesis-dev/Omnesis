@@ -13,8 +13,8 @@
  * chunks, any audio kept and its document.
  *
  * Suggestions — attendees and the title of a calendar event the recording
- * overlaps, names heard addressed in it — are offered beside what they would
- * change, and only applied when the owner accepts one.
+ * overlaps — are offered beside what they would change, and only applied
+ * when the owner accepts one.
  */
 
 import { html } from "htm/preact";
@@ -315,9 +315,7 @@ function NameForm({ initial, onSave, onCancel, disabled }) {
 
 /** Why a person is suggested, in a few words. */
 function suggestionReason(suggestion) {
-  return suggestion.source === "mention"
-    ? `Heard: “${suggestion.evidence}”`
-    : `On your calendar: ${suggestion.evidence}`;
+  return `On your calendar: ${suggestion.evidence}`;
 }
 
 /**
@@ -397,7 +395,7 @@ function SpeakerRow({ recordingId, speaker, suggestions = [], onSpeakers, onDism
       : html`<${SpeakerSuggestions}
           suggestions=${suggestions}
           disabled=${busy}
-          onAccept=${(s) => apply(s.personId ? { personId: s.personId } : { name: s.name })}
+          onAccept=${(s) => apply({ personId: s.personId })}
           onDismiss=${async (s) => {
             setBusy(true);
             setError(null);
@@ -608,8 +606,8 @@ function RecordingDetail({ id }) {
 
   const { recording, chunks, speakers, suggestions } = loaded;
   const titleSuggestion = suggestions.find((s) => s.kind === "title") ?? null;
-  const forSpeaker = (n) =>
-    suggestions.filter((s) => s.kind === "person" && (s.speaker === n || s.speaker === null));
+  // Attendees are offered to every unnamed speaker alike.
+  const people = suggestions.filter((s) => s.kind === "person");
 
   // Accepting or dismissing one suggestion can settle others (a person named
   // for one speaker is no longer offered for the rest), so they are read again.
@@ -707,7 +705,7 @@ function RecordingDetail({ id }) {
                 key=${speaker.speaker}
                 recordingId=${id}
                 speaker=${speaker}
-                suggestions=${forSpeaker(speaker.speaker)}
+                suggestions=${people}
                 onDismiss=${dismiss}
                 onSpeakers=${(next) => {
                   if (!next) return;
