@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import Database from "better-sqlite3";
+import { randomBytes } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test } from "vitest";
-import { runSchemaSetup } from "../data/schema.js";
-import { runMigrations } from "../data/migrations.js";
+import { createDatabase } from "../db.js";
 import { desktopRestoreReviewedTables, desktopRestoreTablePolicy } from "./authority-policy.js";
 
 test("every real current gateway table has an explicitly reviewed restore policy", () => {
-  const db = new Database(":memory:");
+  const dir = mkdtempSync(join(tmpdir(), "omnesis-restore-policy-"));
+  const db = createDatabase(join(dir, "current.db"), { encryptionKey: randomBytes(32) });
   try {
-    runSchemaSetup(db);
-    runMigrations(db);
     const tables = db
       .prepare<[], { name: string }>(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
@@ -23,6 +24,7 @@ test("every real current gateway table has an explicitly reviewed restore policy
     for (const name of tables) expect(() => desktopRestoreTablePolicy(name)).not.toThrow();
   } finally {
     db.close();
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 test("an unknown table, virtual table or injected name fails closed", () => {
@@ -103,4 +105,10 @@ test("source identities and personal history have separate review and data polic
   ])
     expect(desktopRestoreTablePolicy(name)).toBe("import-data");
   expect(desktopRestoreTablePolicy("near_dup_signatures")).toBe("rebuild-derived");
+  for (const name of [
+    "conversation_evidence_projections",
+    "knowledge_temporal_document_epochs",
+    "knowledge_temporal_epoch_reset",
+  ])
+    expect(desktopRestoreTablePolicy(name)).toBe("rebuild-derived");
 });

@@ -114,6 +114,9 @@ const groups: Record<
   "rebuild-derived": [
     "canonicalization_state",
     "catalog_table_stats",
+    "conversation_evidence_projections",
+    "knowledge_temporal_document_epochs",
+    "knowledge_temporal_epoch_reset",
     "link_reconcile_state",
     "link_stats",
     "link_stats_counters",

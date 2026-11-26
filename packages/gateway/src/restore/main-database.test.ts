@@ -14,6 +14,18 @@ import {
 } from "../sqlite-encryption.js";
 import { runSchemaSetup } from "../data/schema.js";
 import { runMigrations } from "../data/migrations.js";
+import { runPostMigrationSchemaSetup } from "../data/post-migration-schema.js";
+import { createDatabase } from "../db.js";
+import { readKnowledgeSourceRevision } from "../brain/knowledge/source-revision.js";
+import { registerKnowledgeEvidence } from "../brain/knowledge/storage-evidence.js";
+import { upsertConversationDocument } from "../sources/omnesis-chat/document-writer.js";
+import { buildDocumentInput } from "../sources/omnesis-chat/upsert.js";
+import { renderConversation } from "../sources/omnesis-chat/render.js";
+import {
+  conversationEvidenceProjection,
+  readConversationEvidence,
+  CONVERSATION_AUTHORITY_POLICY,
+} from "../sources/omnesis-chat/evidence-projection.js";
 import {
   createDevice,
   getDevice,
@@ -31,6 +43,7 @@ import {
 import { desktopRestoreReviewedTables } from "./authority-policy.js";
 import { reconcileRestoredMainDatabase, inspectRestoredMainDatabase } from "./main-database.js";
 import type { Db } from "../data/types.js";
+import type { ConversationRecord } from "../agent/conversation-store.js";
 
 let dir: string;
 let sourceKey: Buffer;
@@ -94,6 +107,7 @@ function create(name: string, key: Buffer | null): EncryptedSqliteDatabase {
   db.pragma("synchronous = OFF");
   runSchemaSetup(db as unknown as Db);
   runMigrations(db as unknown as Db);
+  runPostMigrationSchemaSetup(db as unknown as Db);
   chmodSync(join(dir, name), 0o600);
   return db;
 }
@@ -380,7 +394,7 @@ function matchingDevice(db: EncryptedSqliteDatabase, id: string) {
 }
 
 test("real encrypted empty current schema has exactly the reviewed ordinary tables including empty retirement tables", () => {
-  const empty = create("empty.db", destinationKey);
+  const empty = createDatabase(join(dir, "empty.db"), { encryptionKey: destinationKey });
   const tables = empty
     .prepare<[], { name: string }>(
       "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
@@ -394,6 +408,107 @@ test("real encrypted empty current schema has exactly the reviewed ordinary tabl
   expect(
     inspectRestoredMainDatabase({ sourcePath: join(dir, "empty.db"), sourceKey: destinationKey }),
   ).toMatchObject({ devices: 0, sources: 0, documents: 0 });
+});
+
+test("real source-owned conversation seals and temporal epochs are rebuilt with fresh local authority", () => {
+  const record: ConversationRecord = {
+    id: "fictional-archive-dialogue",
+    callerId: "fictional-owner",
+    model: "fixture",
+    backend: "scripted",
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+    title: "Fictional archive dialogue",
+    pinned: false,
+    messages: [
+      { role: "user", parts: [{ kind: "text", text: "Keep this archive note precise." }] },
+      { role: "assistant", parts: [{ kind: "text", text: "Here is the archival summary." }] },
+    ],
+  };
+  const rendered = renderConversation(record);
+  upsertConversationDocument(
+    source as unknown as Db,
+    buildDocumentInput(record),
+    conversationEvidenceProjection(rendered),
+    [],
+  );
+  const id = source
+    .prepare<[string], { id: string }>("SELECT id FROM documents WHERE external_id=?")
+    .get(record.id)!.id;
+  expect(readConversationEvidence(source as unknown as Db, id, rendered.body)).not.toBeNull();
+  const foreignReceipt = registerKnowledgeEvidence(
+    source as unknown as Db,
+    {
+      documentId: id,
+      contentHash: conversationEvidenceProjection(rendered).bodyHash,
+      quote: "Keep this archive note precise.",
+    },
+    Date.parse(record.createdAt),
+  );
+  const foreignRevision = foreignReceipt.revision;
+  expect(foreignRevision).not.toBeNull();
+  source
+    .prepare("INSERT INTO knowledge_temporal_document_epochs(document_id,epoch) VALUES(?,91)")
+    .run(id);
+  source.prepare("UPDATE knowledge_temporal_epoch_reset SET generation=99 WHERE id=1").run();
+  target.prepare("UPDATE knowledge_temporal_epoch_reset SET generation=77 WHERE id=1").run();
+
+  reconcile();
+  const db = result();
+  let freshRevision: string | null;
+  try {
+    expect(db.prepare("SELECT * FROM knowledge_temporal_document_epochs").all()).toEqual([]);
+    expect(db.prepare("SELECT * FROM knowledge_temporal_epoch_reset").all()).toEqual([
+      { id: 1, generation: 0 },
+    ]);
+    expect(db.prepare("SELECT * FROM conversation_evidence_projections").all()).toEqual([]);
+    const restored = db
+      .prepare<[string], { content: string; metadata: string }>(
+        "SELECT content,metadata FROM documents WHERE id=?",
+      )
+      .get(id)!;
+    expect(restored.content).toBe(rendered.body);
+    expect(JSON.parse(restored.metadata).evidenceAuthority).toBe(
+      `unavailable:${CONVERSATION_AUTHORITY_POLICY}`,
+    );
+    expect(readConversationEvidence(db as unknown as Db, id, rendered.body)).toBeNull();
+    freshRevision = readKnowledgeSourceRevision(db as unknown as Db, id);
+    expect(freshRevision).not.toBeNull();
+    expect(freshRevision).not.toBe(foreignRevision);
+    // The local trusted trigger invalidates downstream receipts after the
+    // imported seal is dropped; copied pending work cannot satisfy this check.
+    expect(
+      db
+        .prepare<[string, string | null], { count: number }>(
+          "SELECT count(*) AS count FROM knowledge_cascade_jobs WHERE kind='invalidate' AND target_kind='source' AND target_id=? AND revision=?",
+        )
+        .get(id, freshRevision)?.count,
+    ).toBe(1);
+    db.prepare("DELETE FROM documents WHERE id='doc-invented'").run();
+    expect(
+      db.prepare("SELECT generation FROM knowledge_temporal_epoch_reset WHERE id=1").pluck().get(),
+    ).toBe(1);
+  } finally {
+    db.close();
+  }
+  expect(sqliteFileLooksPlaintext(join(dir, "destination.db"))).toBe(false);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const reopened = createDatabase(join(dir, "destination.db"), {
+      encryptionKey: destinationKey,
+    });
+    try {
+      expect(readKnowledgeSourceRevision(reopened, id)).toBe(freshRevision);
+      expect(reopened.prepare("SELECT * FROM conversation_evidence_projections").all()).toEqual([]);
+      expect(
+        reopened
+          .prepare("SELECT generation FROM knowledge_temporal_epoch_reset WHERE id=1")
+          .pluck()
+          .get(),
+      ).toBe(1);
+    } finally {
+      reopened.close();
+    }
+  }
 });
 
 test("foreign retired provenance stays archived while target retirement and absent archive choices win over an older backup", () => {

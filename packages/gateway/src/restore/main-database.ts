@@ -12,6 +12,7 @@ import {
   type EncryptedSqliteDatabase,
 } from "../sqlite-encryption.js";
 import { runSchemaSetup } from "../data/schema.js";
+import { runPostMigrationSchemaSetup } from "../data/post-migration-schema.js";
 import { LATEST_SCHEMA_VERSION, runMigrations } from "../data/migrations.js";
 import { desktopRestoreReviewedTables, desktopRestoreTablePolicy } from "./authority-policy.js";
 
@@ -129,6 +130,7 @@ export function reconcileRestoredMainDatabase(
     const db = output as unknown as Db;
     runSchemaSetup(db);
     runMigrations(db);
+    runPostMigrationSchemaSetup(db);
     output.pragma("foreign_keys = OFF");
     output.pragma("journal_mode = DELETE");
     // Copy rows into our schema, never the foreign sqlite_master program.
@@ -200,6 +202,9 @@ export function reconcileRestoredMainDatabase(
     for (const trigger of triggers) output.exec(trigger.sql);
     // Reinstall safe singleton/cache seeds without replaying any foreign DDL.
     runSchemaSetup(db);
+    // Rebuild local epoch seeds and invalidate imported conversation seals with
+    // trusted revision/invalidation triggers active; no foreign proof is reused.
+    runPostMigrationSchemaSetup(db);
     const foreignKeys = output.pragma("foreign_key_check");
     if (
       !Array.isArray(foreignKeys) ||
