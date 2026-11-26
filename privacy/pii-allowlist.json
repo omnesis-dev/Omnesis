@@ -6771,6 +6771,7 @@
         "packages/gateway/portal/js/lib/cloud-inference.test.ts",
         "packages/gateway/portal/js/views/access-agent-location.test.ts",
         "packages/gateway/portal/js/views/access-cloud-relay.test.ts",
+        "packages/gateway/portal/js/views/audit/shared.test.ts",
         "packages/gateway/portal/js/views/claude-code-ui.test.ts",
         "packages/gateway/portal/js/views/models-cloud-consent.test.ts",
         "packages/gateway/src/agent/agent-lifecycle.test.ts",
