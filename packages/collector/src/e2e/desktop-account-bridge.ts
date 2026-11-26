@@ -43,9 +43,18 @@ const {desktopCoordinatorDefaults}=await import(${JSON.stringify(moduleUrl("desk
 const {withDesktopInstallLease}=await import(${JSON.stringify(moduleUrl("desktop/bootstrap"))});
 const {runDesktopProtocol}=await import(${JSON.stringify(moduleUrl("desktop/protocol"))});
 const {atomicWriteFile}=await import(${JSON.stringify(core)});
+const {desktopAccountProgress}=await import(${JSON.stringify(new URL("./desktop-account-mixed-fixture.ts", import.meta.url).href)});
 const provisioned=${JSON.stringify(join(fixture.root, "profile-provisioned"))};
 const coordinator=new DesktopCoordinator(profile,{
   relayUrl:()=>${JSON.stringify(fixture.relayUrl)},
+  connectAccount:(current,params,context)=>desktopCoordinatorDefaults.connectAccount(current,params,context,{
+    request:async(...args)=>{
+      const result=await desktopCoordinatorDefaults.request(...args);
+      if(args[1]==='/admin/cloud-relay'||args[1]==='/admin/cloud-relay/connect')
+        await atomicWriteFile(${JSON.stringify(join(fixture.root, "account-progress.json"))},JSON.stringify(desktopAccountProgress(result)),{mode:0o600}).catch(()=>{});
+      return result;
+    },
+  }),
   prepareInstall:async(...args)=>{
     const install=await desktopCoordinatorDefaults.prepareInstall(...args);
     await withDesktopInstallLease(profile,args[1].signal,async()=>{

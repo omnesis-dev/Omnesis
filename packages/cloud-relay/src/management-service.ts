@@ -570,6 +570,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
   private keyOptions(signal?: AbortSignal) {
     const e = this.environment();
     return {
+      configDir: this.options.configDir,
       relayUrl: e.OMNESIS_CLOUD_RELAY_URL!,
       gatewayId: e.OMNESIS_CLOUD_RELAY_GATEWAY_ID!,
       publicOrigin: publicGatewayOrigin(e),
@@ -1228,6 +1229,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
         if (record.createdAt > Date.now() - GATEWAY_RELEASE_DAYS * 86400_000)
           await this.admitted(() =>
             releaseGateway(record, {
+              configDir: this.options.configDir,
               register: this.options.register ?? registerGatewayKey,
               fetch: this.options.fetch,
               signal: AbortSignal.any([this.releaseAbort.signal, AbortSignal.timeout(20_000)]),

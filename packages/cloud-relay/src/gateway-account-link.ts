@@ -4,7 +4,11 @@
 import { createPublicKey, randomBytes } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import { dirname } from "node:path";
-import { atomicWriteFileSync, ownedProcessCleanupReceipt } from "@omnesis/core";
+import {
+  atomicWriteFileSync,
+  ownedProcessCleanupReceipt,
+  serializeSecretFileValue,
+} from "@omnesis/core";
 import { z } from "zod";
 import {
   ManagedAccountBrowser,
@@ -15,6 +19,7 @@ import { bindingOrigin } from "./gateway-binding.js";
 import { gatewayKeyAccount } from "./gateway-key-auth.js";
 import { readOrCreateGatewayOwnerKey, type registerGatewayKey } from "./gateway-key-client.js";
 import { readPrivateJson } from "./google-credentials.js";
+import { gatewayCredentialOptions } from "./gateway-secret-storage.js";
 import { installationRelayUrl } from "./installation-relay.js";
 import { accountId, googleIdentityProvider, type IdentityProvider } from "./identity.js";
 import { CloudRelayManagementFailure } from "./management.js";
@@ -903,18 +908,26 @@ export class GatewayAccountLink {
    */
   async acknowledgeIncidentHold(): Promise<void> {
     const hold = this.hold,
-      acknowledged = this.acknowledged;
+      acknowledged = this.acknowledged,
+      record = this.record;
     if (!hold) return;
     this.acknowledged = [
       ...acknowledged.filter((value) => !hold.certificates.includes(value)),
       ...hold.certificates,
     ].slice(-MAX_INCIDENT_CERTIFICATES);
+    const pendingAcknowledged = this.acknowledged;
     this.hold = undefined;
     try {
       await this.saveIncidents();
     } catch (error) {
-      this.hold = hold;
-      this.acknowledged = acknowledged;
+      if (
+        this.record === record &&
+        this.hold === undefined &&
+        this.acknowledged === pendingAcknowledged
+      ) {
+        this.hold = hold;
+        this.acknowledged = acknowledged;
+      }
       throw error;
     }
   }
@@ -1496,19 +1509,44 @@ export class GatewayAccountLink {
     await this.save({ version: 1, linked: false, ...this.kept() }, signal, record);
   }
   private async save(record: Record, signal: AbortSignal, expected?: Record): Promise<void> {
+    const previous = this.record,
+      generation = this.abort,
+      hold = this.hold,
+      acknowledged = this.acknowledged;
+    const current = () => {
+      signal.throwIfAborted();
+      generation.signal.throwIfAborted();
+      if (
+        this.abort !== generation ||
+        this.record !== previous ||
+        (expected && previous !== expected) ||
+        this.hold !== hold ||
+        this.acknowledged !== acknowledged
+      )
+        throw new Error("Account operation changed");
+    };
+    current();
     await mkdir(dirname(this.options.metadataFile), { recursive: true, mode: 0o700 });
-    signal.throwIfAborted();
-    if (expected && this.record !== expected) throw new Error("Account operation changed");
+    current();
     const stored: Record = {
       ...record,
-      incidentHold: this.hold,
-      acknowledgedIncidents: this.acknowledged.length > 0 ? this.acknowledged : undefined,
+      incidentHold: hold,
+      acknowledgedIncidents: acknowledged.length > 0 ? acknowledged : undefined,
     };
-    atomicWriteFileSync(
-      this.options.metadataFile,
-      JSON.stringify(recordSchema.parse(stored)) + "\n",
-      { mode: 0o600 },
-    );
+    const raw = JSON.stringify(recordSchema.parse(stored)) + "\n";
+    const options = gatewayCredentialOptions(undefined, this.options.env());
+    let serialized = raw;
+    if (options) {
+      if (Buffer.byteLength(raw) > 65_536)
+        throw new Error("Account link metadata exceeds its private credential bound");
+      const encoded = await serializeSecretFileValue(this.options.metadataFile, raw, options);
+      if (!encoded.encrypted)
+        throw new Error("Account link metadata requires an unlocked installation key");
+      serialized = encoded.value;
+    }
+    // Encryption and directory creation may yield; only the same live state can publish.
+    current();
+    atomicWriteFileSync(this.options.metadataFile, serialized, { mode: 0o600 });
     this.record = stored;
     this.unreadable = false;
     this.activated = true;

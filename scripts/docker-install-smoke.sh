@@ -603,7 +603,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { get } from "node:https";
 import { join } from "node:path";
-import { DEFAULT_CONFIG_DIR, isEncryptedSecretFile, readTokenFile } from "@omnesis/core";
+import { loadBootstrapDotEnv } from "@omnesis/config/dotenv-bootstrap";
+
+// Compose exec starts a fresh process. Match the gateway's bootstrap: secure
+// records the backend/passphrase-file selectors in this install's .env.
+loadBootstrapDotEnv();
+const { DEFAULT_CONFIG_DIR, isEncryptedSecretFile, readTokenFile } = await import("@omnesis/core");
 
 const expected = "Standing instructions at backup time.\n";
 const configDir = process.env.OMNESIS_CONFIG_DIR || DEFAULT_CONFIG_DIR;

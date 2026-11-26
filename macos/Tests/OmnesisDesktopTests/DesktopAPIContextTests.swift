@@ -40,6 +40,8 @@ final class DesktopAPIContextTests: XCTestCase {
         let pair = try await ContextHTTPPair.start()
         defer { pair.stop() }
         try await pair.configureA(Self.modelRoutes)
+        let decoded = try await pair.apiA.admin.listModelCredentials()
+        XCTAssertEqual(decoded.map(\.fileKey), ["fixture-key"], "The mounted form must receive the real paginated credentials contract")
         let store = DesktopStore(startRuntime: false)
         store.api = pair.apiA
         let mounted = mount(.models, store: store)
@@ -315,6 +317,11 @@ final class DesktopAPIContextTests: XCTestCase {
         routes["GET /admin/models"] = ["body": overview]
         try await pair.configureA(routes)
         try await pair.configureB([:])
+        let decoded = try await pair.apiA.admin.modelOverview()
+        let decodedChoices = DesktopModelSelection.choices(for: "agent", overview: decoded)
+        XCTAssertEqual(decodedChoices.map(\.id), ["remote/fictional-chat"], "The actual client must decode the off-host fixture choice")
+        XCTAssertEqual(decodedChoices.map(\.title), ["remote · fictional-chat"])
+        XCTAssertEqual(decodedChoices.map(\.onHost), [false], "This selection must require the real off-host consent")
         let store = DesktopStore(startRuntime: false)
         store.api = pair.apiA
         let mounted = mount(.models, store: store)
@@ -323,6 +330,12 @@ final class DesktopAPIContextTests: XCTestCase {
         try await wait { (try? DesktopAccessibilityDriver.element("model-role-picker-agent", in: mounted.host)) != nil }
         func popups(_ view: NSView) -> [NSPopUpButton] {
             (view as? NSPopUpButton).map { [$0] } ?? view.subviews.flatMap(popups)
+        }
+        do {
+            try await wait { popups(mounted.host).contains { $0.itemTitles.contains("remote · fictional-chat") } }
+        } catch {
+            try writeRolePickerDiagnostics(mounted.host, nativePopups: popups(mounted.host))
+            throw error
         }
         let picker = try XCTUnwrap(popups(mounted.host).first { $0.itemTitles.contains("remote · fictional-chat") })
         picker.selectItem(withTitle: "remote · fictional-chat")
@@ -337,6 +350,39 @@ final class DesktopAPIContextTests: XCTestCase {
         await Task.yield()
         _ = oldConfirmation.accessibilityPerformPress()
         try await assertNoWrites(pair)
+    }
+
+    private func writeRolePickerDiagnostics(_ root: NSView, nativePopups: [NSPopUpButton]) throws {
+        let picker = try DesktopAccessibilityDriver.element("model-role-picker-agent", in: root)
+        var pending = [picker.object], seen: Set<ObjectIdentifier> = [], nodes: [[String: Any]] = []
+        while let object = pending.popLast(), nodes.count < 128 {
+            guard seen.insert(ObjectIdentifier(object)).inserted else { continue }
+            let element = DesktopAccessibilityDriver.Element(object: object)
+            nodes.append([
+                "type": String(reflecting: Swift.type(of: object)), "role": element.accessibilityRole()?.rawValue ?? "none",
+                "identifier": String((element.accessibilityIdentifier() ?? "").prefix(160)),
+                "label": String((element.accessibilityLabel() ?? "").prefix(240)),
+                "text": String((element.accessibilityTextValue() ?? "").prefix(240)),
+                "enabled": element.isAccessibilityEnabled(),
+            ])
+            pending.append(contentsOf: element.accessibilityChildren().map { $0 as AnyObject })
+            if let view = object as? NSView { pending.append(contentsOf: view.subviews) }
+        }
+        let facts: [String: Any] = [
+            "stage": "native-role-picker-items", "decodedChoice": "remote/fictional-chat",
+            "rolePickerNodes": nodes, "subtreeBoundReached": !pending.isEmpty,
+            "nativePopups": nativePopups.prefix(32).map { popup in
+                [
+                    "type": String(reflecting: Swift.type(of: popup)),
+                    "items": popup.itemTitles.prefix(64).map { String($0.prefix(240)) },
+                ] as [String: Any]
+            },
+        ]
+        let directory = URL(fileURLWithPath: "/tmp/omnesis-macos-snapshots", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let destination = directory.appendingPathComponent("api-context-off-host-picker.txt")
+        try JSONSerialization.data(withJSONObject: facts, options: [.sortedKeys]).write(to: destination, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
     }
 
     private func assertNoWrites(_ pair: ContextHTTPPair) async throws {
@@ -417,7 +463,7 @@ final class DesktopAPIContextTests: XCTestCase {
     private static let credentials: [String: Any] = ["items": [[
         "fileKey": "fixture-key", "providerType": "http", "providerName": "Fictional provider A", "configured": true,
         "spec": ["fields": [["name": "apiKey", "label": "Fixture API key", "secret": true]]],
-    ]]]
+    ]], "pageInfo": ["hasMore": false, "limit": 100]]
     private static let modelRoutes: [String: Any] = [
         "GET /admin/models": ["body": models], "GET /admin/model-credentials": ["body": credentials],
         "POST /admin/model-credentials/fixture-key": ["body": [:]],

@@ -26,7 +26,12 @@ import { closeEnrollmentFixture } from "./enrollment-fixture-cleanup.js";
 import { DesktopRuntimeFixture } from "./desktop-runtime-fixture.js";
 import { installDesktopAccountBridge } from "./desktop-account-bridge.js";
 import { startDesktopAccountDns } from "./desktop-account-dns.js";
-import { joinedRequest, protectedSourceGateway } from "./desktop-account-mixed-fixture.js";
+import {
+  desktopAccountFailureCode,
+  desktopAccountProgress,
+  joinedRequest,
+  protectedSourceGateway,
+} from "./desktop-account-mixed-fixture.js";
 import { addRestoreMaildirSource } from "./desktop-restore-fixture.js";
 import { waitForCondition } from "./multi-collector-harness.js";
 
@@ -156,6 +161,32 @@ describe.skipIf(!nonce)("actual desktop account onboarding and owned collection"
         return "continue";
       },
     );
+    if (linked.phase !== "ready") {
+      let progress: unknown = "unavailable";
+      try {
+        const text = await readFile(join(home.root, "account-progress.json"), "utf8");
+        if (text.length > 4096) throw new Error("The safe fixture progress exceeded its bound");
+        const recorded = JSON.parse(text) as Record<string, unknown>;
+        // Revalidate the persisted finite projection before including it in a test failure.
+        const error = (value: unknown) => (value === "none" ? undefined : value);
+        progress = desktopAccountProgress({
+          account: { linked: recorded.linked },
+          connect: {
+            state: recorded.connect,
+            step: recorded.step,
+            error: error(recorded.connectError),
+          },
+          enrollment: { state: recorded.enrollment, error: error(recorded.enrollmentError) },
+          tunnel: { state: recorded.tunnel, lastError: error(recorded.tunnelError) },
+          certificate: { state: recorded.certificate, lastError: error(recorded.certificateError) },
+        });
+      } catch {
+        /* Never print a raw filesystem or JSON error. */
+      }
+      throw new Error(
+        `Account fixture refused: ${JSON.stringify({ failure: desktopAccountFailureCode(linked.message), progress })}`,
+      );
+    }
     expect(linked).toMatchObject({ phase: "ready", mode: "home", encrypted: true });
     expect(await home.request("/health")).toMatchObject({
       status: "ok",

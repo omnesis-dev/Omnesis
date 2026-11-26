@@ -59,7 +59,7 @@ final class DesktopOnboardingUITests: XCTestCase {
         XCTAssertFalse(useThisMac.isEnabled)
         let warning = app.staticTexts["home-location-warning"]
         XCTAssertTrue(warning.waitForExistence(timeout: 5))
-        XCTAssertTrue(warning.label.contains("Moving your library to another Mac is not available yet"))
+        XCTAssertTrue(warning.label.contains("Moving your library to another computer is not available yet"))
         app.checkBoxes["confirm-first-library"].click()
         XCTAssertTrue(useThisMac.isEnabled)
     }

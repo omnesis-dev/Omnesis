@@ -15,6 +15,7 @@ final class DesktopAPIContext: Identifiable {
         let join: () async -> Void
     }
 
+    @MainActor
     private final class Completion {
         private var finished = false
         private var waiters: [CheckedContinuation<Void, Never>] = []

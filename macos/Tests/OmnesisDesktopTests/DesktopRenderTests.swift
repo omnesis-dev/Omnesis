@@ -61,6 +61,94 @@ final class DesktopRenderTests: XCTestCase {
         }
     }
 
+    func testOrdinaryMinimumLibraryWindowKeepsNativeControlsAndRequiredActionsOnScreen() async throws {
+        let store = try await minimumWindowStore()
+        store.sources = try JSONDecoder().decode([DesktopSource].self, from: Data(
+            #"[{"id":"example:notes","type":"Example notes","accountId":"Example notebook","enabled":true,"deviceId":"fixture-device"}]"#
+                .utf8
+        ))
+        store.destination = .sources
+        try await DesktopSnapshotRenderer.renderVisibleWindow(
+            DesktopRootView().environment(store).frame(minWidth: 860, minHeight: 600),
+            name: "minimum-library", size: CGSize(width: 860, height: 600)
+        ) { hosting in
+            XCTAssertTrue(try DesktopAccessibilityDriver.contains("Example notebook", in: hosting))
+            try DesktopSnapshotRenderer.assertRequiredBannerLayout(hosting, below: ["library-brand-title"])
+            let review = try DesktopAccessibilityDriver.element("required-setup-review", in: hosting)
+            XCTAssertTrue(review.isAccessibilityEnabled())
+            XCTAssertTrue(review.accessibilityPerformPress())
+            try await Task.sleep(for: .milliseconds(100))
+            XCTAssertEqual(store.destination, .setup, "The visible required action must navigate through its real handler")
+            try DesktopSnapshotRenderer.assertRequiredBannerLayout(hosting, below: ["library-brand-title"])
+            // Return through ordinary store navigation so both appearances cover the source list.
+            store.destination = .sources
+        }
+    }
+
+    func testOrdinaryFittedSettingsKeepsTabsScrollingAndRequiredRepairReachable() async throws {
+        let store = try await minimumWindowStore()
+        try await DesktopSnapshotRenderer.renderVisibleWindow(
+            DesktopSettingsView().environment(store),
+            name: "minimum-settings", size: CGSize(width: 720, height: 600)
+        ) { hosting in
+            let window = try XCTUnwrap(hosting.window)
+            func assertRepairVisible() throws {
+                let repair = try DesktopAccessibilityDriver.element("setup-review-storage", in: hosting)
+                XCTAssertTrue(repair.isAccessibilityEnabled())
+                XCTAssertGreaterThan(repair.accessibilityFrame().width, 0)
+                XCTAssertGreaterThan(repair.accessibilityFrame().height, 0)
+                XCTAssertTrue(
+                    window.convertToScreen(window.contentLayoutRect).contains(repair.accessibilityFrame()),
+                    "The required repair must be visible in the real fitted settings viewport"
+                )
+            }
+            try assertRepairVisible()
+            let scroll = try XCTUnwrap(Self.descendants(hosting).compactMap { $0 as? NSScrollView }.first {
+                !$0.isHiddenOrHasHiddenAncestor && ($0.documentView?.bounds.height ?? 0) > $0.contentView.bounds.height
+            })
+            let document = try XCTUnwrap(scroll.documentView)
+            let original = scroll.contentView.bounds.origin
+            let bottom = document.isFlipped ? document.bounds.maxY - scroll.contentView.bounds.height : document.bounds.minY
+            scroll.contentView.scroll(to: NSPoint(x: original.x, y: bottom))
+            scroll.reflectScrolledClipView(scroll.contentView)
+            try await Task.sleep(for: .milliseconds(100))
+            XCTAssertNotEqual(scroll.contentView.bounds.origin.y, original.y, "The fitted General form must actually scroll")
+            scroll.contentView.scroll(to: original)
+            scroll.reflectScrolledClipView(scroll.contentView)
+            try await Task.sleep(for: .milliseconds(100))
+            try assertRepairVisible()
+            for (title, tab) in [("Privacy", "privacy"), ("General", "general")] {
+                let control = try XCTUnwrap(DesktopAccessibilityDriver.elements(in: hosting).first {
+                    $0.accessibilityLabel() == title && $0.isAccessibilityEnabled()
+                        && ($0.accessibilityRole() == .button || $0.accessibilityRole() == .radioButton)
+                }, "The fitted settings window must expose its real \(title) tab control")
+                XCTAssertTrue(window.frame.contains(control.accessibilityFrame()))
+                XCTAssertTrue(control.accessibilityPerformPress())
+                try await Task.sleep(for: .milliseconds(100))
+                XCTAssertEqual(store.settingsTab, tab, "Tab navigation must invoke its actual control")
+            }
+            try assertRepairVisible()
+        }
+    }
+
+    private func minimumWindowStore() async throws -> DesktopStore {
+        let startup = DesktopAutomaticStartup(read: { .enabled }, register: {})
+        let power = DesktopMacServerPowerFlow(probe: { DesktopMacServerPowerObservation(status: .ready) })
+        let store = DesktopStore(startRuntime: false, automaticStartup: startup, serverPower: power, nativeOwnerVerified: true)
+        let expiry = floor(Date().timeIntervalSince1970 * 1000) + 60000
+        store.state = try DesktopState(
+            phase: .ready, mode: "home",
+            connection: JSONDecoder().decode(DesktopConnection.self, from: Data(
+                #"{"url":"https://gateway.example.com","token":"fixture-only"}"#.utf8
+            )), encrypted: true, installationId: "desktop-0000000000000001",
+            storageAdmission: .init(state: "blocked", validUntil: expiry), remoteRoute: .init(state: "ready", validUntil: expiry)
+        )
+        store.homeServices.receive(store.state)
+        startup.refresh()
+        await power.refresh()
+        return store
+    }
+
     func testMountedSettingsKeepsSectionOrderWhenPrerequisitePollCompletes() async throws {
         let startup = DesktopAutomaticStartup(read: { .enabled }, register: {})
         let power = DesktopMacServerPowerFlow(probe: { DesktopMacServerPowerObservation(status: .ready) })

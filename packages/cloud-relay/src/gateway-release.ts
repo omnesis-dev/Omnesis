@@ -34,11 +34,17 @@ export const GATEWAY_RELEASE_DAYS = 30;
  */
 export async function releaseGateway(
   record: GatewayRelease,
-  options: { register: typeof registerGatewayKey; fetch?: typeof fetch; signal: AbortSignal },
+  options: {
+    register: typeof registerGatewayKey;
+    fetch?: typeof fetch;
+    signal: AbortSignal;
+    configDir?: string;
+  },
 ): Promise<void> {
   let session;
   try {
     session = await options.register({
+      ...(options.configDir === undefined ? {} : { configDir: options.configDir }),
       relayUrl: record.relayUrl,
       gatewayId: record.gatewayId,
       publicOrigin: record.publicOrigin,

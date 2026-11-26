@@ -2,13 +2,15 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createPublicKey, generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, writeFile, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, writeFile, readFile, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT, type JWK } from "jose";
 import { afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
+import * as core from "@omnesis/core";
 import { passkeyAuthenticator } from "../test/passkey-authenticator.js";
 import { GatewayAccountLink, PasskeyNotOnAccount } from "./gateway-account-link.js";
+import * as credentialScope from "./gateway-secret-storage.js";
 import { gatewayKeyAccount } from "./gateway-key-auth.js";
 import { GatewaySignInVerifier, type TrustedSignIn } from "./gateway-sign-in-proof.js";
 import {
@@ -55,6 +57,9 @@ beforeEach(async () => {
 afterEach(async () => {
   filesystem.afterMkdir = undefined;
   vi.useRealTimers();
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  core.clearSecretFileKeyCacheForTests();
   await rm(directory, { recursive: true, force: true });
 });
 const opaque = () => randomBytes(32).toString("base64url"),
@@ -164,6 +169,187 @@ async function fixture() {
     ownerAccountId,
   };
 }
+
+/** File-backed test OS adapter; envelope crypto, metadata parsing and owner binding stay real. */
+async function managedFixture() {
+  directory = await realpath(directory);
+  const f = await fixture();
+  const service = "dev.omnesis.fixture.account-link";
+  Object.assign(f.env, {
+    OMNESIS_DESKTOP_MANAGED: "1",
+    OMNESIS_CONFIG_DIR: directory,
+    OMNESIS_SECRET_SERVICE: service,
+  });
+  for (const [key, value] of Object.entries(f.env))
+    if (["OMNESIS_DESKTOP_MANAGED", "OMNESIS_CONFIG_DIR", "OMNESIS_SECRET_SERVICE"].includes(key))
+      vi.stubEnv(key, value);
+  const original = credentialScope.gatewayCredentialOptions;
+  vi.spyOn(credentialScope, "gatewayCredentialOptions").mockImplementation(
+    (configDir, env = process.env) => {
+      const selected = original(configDir, env);
+      if (!selected) return undefined;
+      if (selected.configDir !== directory || selected.service !== service)
+        throw new Error("Unexpected fixture credential scope");
+      return { ...selected, backend: "file" };
+    },
+  );
+  const secrets = { configDir: directory, service, backend: "file" as const };
+  await core.ensureInstallRootKey(secrets);
+  await core.primeSecretFileKeyCache(secrets);
+  return { ...f, secrets };
+}
+function heldEncryption(metadataFile: string) {
+  let entered!: () => void, release!: () => void;
+  const ready = new Promise<void>((done) => {
+    entered = done;
+  });
+  const joined = new Promise<void>((done) => {
+    release = done;
+  });
+  const actual = core.serializeSecretFileValue;
+  let selected = false;
+  vi.spyOn(core, "serializeSecretFileValue").mockImplementation(async (...args) => {
+    const value = await actual(...args);
+    if (args[0] === metadataFile && !selected) {
+      selected = true;
+      entered();
+      await joined;
+    }
+    return value;
+  });
+  return { ready, release };
+}
+
+test("managed account records are encrypted, survive fresh initialization, and still refuse plaintext", async () => {
+  const f = await managedFixture();
+  await f.link();
+  const serialized = await readFile(f.options.metadataFile, "utf8");
+  expect(core.isEncryptedSecretFile(serialized)).toBe(true);
+  expect(serialized.includes(f.accountId)).toBe(false);
+  core.clearSecretFileKeyCacheForTests();
+  await core.primeSecretFileKeyCache(f.secrets);
+  const restored = new GatewayAccountLink(f.options);
+  await restored.initialize();
+  expect(restored.verifiedAccountId()).toBe(f.accountId);
+  expect(restored.status().linked).toBe(true);
+  const decoded = await core.readSecretJsonFile(f.options.metadataFile, f.secrets);
+  core.atomicWriteFileSync(f.options.metadataFile, JSON.stringify(decoded), { mode: 0o600 });
+  const unprotected = new GatewayAccountLink(f.options);
+  await unprotected.initialize();
+  expect(unprotected.verifiedAccountId()).toBeUndefined();
+  expect(unprotected.status().linked).toBe(false);
+  expect(unprotected.status().lastError).toBe("account-link-failed");
+});
+
+test("managed cancellation during directory creation cannot prepare or publish a late record", async () => {
+  const f = await managedFixture();
+  await f.link();
+  const before = await readFile(f.options.metadataFile, "utf8");
+  const encode = vi.spyOn(core, "serializeSecretFileValue");
+  filesystem.afterMkdir = () => {
+    filesystem.afterMkdir = undefined;
+    f.manager.cancel();
+    return Promise.resolve();
+  };
+  await expect(f.manager.setEnrollmentPolicy("ask")).rejects.toThrow();
+  expect(encode).not.toHaveBeenCalled();
+  expect((await readFile(f.options.metadataFile, "utf8")) === before).toBe(true);
+});
+
+test("managed cancellation after real encryption cannot publish prepared bytes", async () => {
+  const f = await managedFixture();
+  await f.link();
+  const before = await readFile(f.options.metadataFile, "utf8");
+  const held = heldEncryption(f.options.metadataFile);
+  const result = f.manager.setEnrollmentPolicy("ask").then(
+    () => false,
+    () => true,
+  );
+  try {
+    await held.ready;
+    f.manager.cancel();
+  } finally {
+    held.release();
+  }
+  expect(await result).toBe(true);
+  expect((await readFile(f.options.metadataFile, "utf8")) === before).toBe(true);
+});
+
+test("managed late encrypted state cannot overwrite a newer committed account record", async () => {
+  const f = await managedFixture();
+  await f.link();
+  const held = heldEncryption(f.options.metadataFile);
+  const stale = f.manager.setEnrollmentPolicy("automatic").then(
+    () => false,
+    () => true,
+  );
+  try {
+    await held.ready;
+    await f.manager.setEnrollmentPolicy("ask");
+  } finally {
+    held.release();
+  }
+  expect(await stale).toBe(true);
+  const restored = new GatewayAccountLink(f.options);
+  await restored.initialize();
+  expect(restored.status().linked).toBe(true);
+  expect(restored.enrollmentPolicy()).toBe("ask");
+});
+
+test("a stale managed acknowledgement cannot replace a newer incident hold", async () => {
+  const f = await managedFixture();
+  await f.link();
+  await f.manager.holdForCertificateIncident([ROGUE]);
+  const held = heldEncryption(f.options.metadataFile);
+  const pending = f.manager.acknowledgeIncidentHold().then(
+    () => false,
+    () => true,
+  );
+  await held.ready;
+  try {
+    await f.manager.holdForCertificateIncident([SECOND_ROGUE]);
+  } finally {
+    held.release();
+  }
+  expect(await pending).toBe(true);
+  expect(f.manager.incidentHold()?.certificates).toEqual([SECOND_ROGUE]);
+  const restarted = new GatewayAccountLink(f.options);
+  await restarted.initialize();
+  expect(restarted.incidentHold()?.certificates).toEqual([SECOND_ROGUE]);
+});
+
+test("a stale managed acknowledgement cannot undo acknowledgement committed by a newer policy save", async () => {
+  const f = await managedFixture();
+  await f.link();
+  await f.manager.holdForCertificateIncident([ROGUE]);
+  const held = heldEncryption(f.options.metadataFile);
+  const pending = f.manager.acknowledgeIncidentHold().then(
+    () => false,
+    () => true,
+  );
+  await held.ready;
+  try {
+    await f.manager.setEnrollmentPolicy("ask");
+  } finally {
+    held.release();
+  }
+  expect(await pending).toBe(true);
+  expect(f.manager.incidentHold()).toBeUndefined();
+  const restarted = new GatewayAccountLink(f.options);
+  await restarted.initialize();
+  expect(restarted.incidentHold()).toBeUndefined();
+  expect(restarted.enrollmentPolicy()).toBe("ask");
+});
+
+test("managed saves refuse loss of the real wrapping key without replacing encrypted account state", async () => {
+  const f = await managedFixture();
+  await f.link();
+  const before = await readFile(f.options.metadataFile, "utf8");
+  core.clearSecretFileKeyCacheForTests();
+  await core.createSecretStore(f.secrets).delete("install-root-key-v1");
+  await expect(f.manager.setEnrollmentPolicy("ask")).rejects.toThrow();
+  expect((await readFile(f.options.metadataFile, "utf8")) === before).toBe(true);
+});
 
 test("a verified account link persists privately across restart and unlink leaves gateway identity intact", async () => {
   const f = await fixture();

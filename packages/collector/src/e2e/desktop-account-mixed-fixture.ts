@@ -86,3 +86,94 @@ export async function joinedRequest(
   `),
   );
 }
+
+/** Fixed public UI branches only; a new/raw message is never a diagnostic payload. */
+export function desktopAccountFailureCode(message: unknown): string {
+  switch (message) {
+    case "Your account could not connect. Check your internet connection and try again.":
+      return "account-connect-failed";
+    case "Omnesis could not finish this step. Unlock your Mac and try again.":
+      return "coordinator-step-failed";
+    case "That invitation code was not accepted. Check the code and try again.":
+      return "invite-invalid";
+    case "That invitation has expired. Ask for a new invitation and try again.":
+      return "invite-expired";
+    case "That invitation has already been used. Sign in to your existing account or use a new invitation.":
+      return "invite-used";
+    case "Account sign-in expired. Start sign-in again.":
+      return "expired";
+    case "The connection service is busy. Try again in a moment.":
+      return "capacity";
+    default:
+      return "unknown";
+  }
+}
+
+/** Content-free fixture observation; never retain names, messages, URLs, credentials or causes. */
+export function desktopAccountProgress(value: unknown) {
+  const record = (raw: unknown): Record<string, unknown> =>
+    raw !== null && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : {};
+  const fixed = (raw: unknown, allowed: readonly string[]) =>
+    typeof raw === "string" && allowed.includes(raw) ? raw : "unknown";
+  const errors = [
+    "relay-service-unavailable",
+    "relay-service-mismatch",
+    "configuration-invalid",
+    "dns-verification-required",
+    "dns-capacity",
+    "dns-allocation-rate",
+    "relay-unreachable",
+    "invite-invalid",
+    "invite-expired",
+    "invite-used",
+    "invitation-required",
+    "enrollment-refused",
+    "hostname-required",
+    "hostname-conflict",
+    "ca-terms-required",
+    "operation-in-progress",
+    "already-connected",
+    "google-unavailable",
+    "google-link-failed",
+    "account-unavailable",
+    "account-link-failed",
+    "tunnel-disconnected",
+    "certificate-setup-failed",
+    "certificate-renewal-failed",
+    "public-endpoint-unreachable",
+    "passkey-origin-unavailable",
+    "passkey-not-confirmed",
+    "passkey-not-on-account",
+    "not-allowed",
+    "capacity",
+    "expired",
+  ];
+  const error = (raw: unknown) => (raw === undefined ? "none" : fixed(raw, errors));
+  const raw = record(value),
+    connect = record(raw.connect),
+    enrollment = record(raw.enrollment),
+    tunnel = record(raw.tunnel),
+    certificate = record(raw.certificate),
+    account = record(raw.account);
+  return {
+    linked: typeof account.linked === "boolean" ? account.linked : null,
+    connect: fixed(connect.state, ["idle", "waiting", "registering", "linking", "done", "failed"]),
+    step: fixed(connect.step, ["registering", "certificate", "tunnel"]),
+    connectError: error(connect.error),
+    enrollment: fixed(enrollment.state, ["unconfigured", "pending", "enrolled", "failed"]),
+    enrollmentError: error(enrollment.error),
+    tunnel: fixed(tunnel.state, ["disabled", "offline", "connecting", "online"]),
+    tunnelError: error(tunnel.lastError),
+    certificate: fixed(certificate.state, [
+      "unconfigured",
+      "bootstrap",
+      "valid",
+      "expiring",
+      "expired",
+      "failed",
+    ]),
+    certificateError: error(certificate.lastError),
+  };
+}

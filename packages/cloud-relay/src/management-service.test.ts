@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateKeyPairSync } from "node:crypto";
@@ -26,6 +26,7 @@ import { signInvite } from "./invites.js";
 import { GatewayAccountLink } from "./gateway-account-link.js";
 import { GatewayUnregistered, readOrCreateGatewayOwnerKey } from "./gateway-key-client.js";
 import * as privateCredentials from "./google-credentials.js";
+import { readGatewayTlsPrivateKey } from "./gateway-private-key.js";
 
 let directory: string, manager: GatewayCloudRelayManagement | undefined;
 /** Requests no test answered; any one fails the test, even when the gateway swallows the error. */
@@ -664,6 +665,57 @@ test("hourly refresh keeps a fresh certificate and retries a failed endpoint wit
   expect(JSON.stringify(await manager.status())).not.toContain("private-endpoint-details");
   expect((await manager.status()).certificate.lastError).toBeUndefined();
 });
+test("manager registration forwards the configuration scope to the real encrypted TLS key reader", async () => {
+  const configDir = await realpath(directory);
+  await core.ensureInstallRootKey({ backend: "file", configDir });
+  await core.primeSecretFileKeyCache({ backend: "file", configDir });
+  const pem = generateKeyPairSync("ec", { namedCurve: "prime256v1" })
+    .privateKey.export({ type: "pkcs8", format: "pem" })
+    .toString();
+  const register = vi.fn<NonNullable<CloudRelayManagerOptions["register"]>>(async (options) => {
+    // The unchanged production reader refuses an encrypted key if this scope is missing.
+    expect(
+      (await readGatewayTlsPrivateKey(options.privateKeyFile, options.configDir)) === pem,
+    ).toBe(true);
+    return {
+      token: "fictional-registration-session",
+      accountId: "a".repeat(64),
+      expiresAt: 4000000000,
+    };
+  });
+  const f = fixture({
+    configDir,
+    register,
+    controller: async (env) => {
+      const path = env.OMNESIS_ACME_KEY_FILE;
+      if (!path) throw new Error("The fixture public TLS key path was not selected");
+      await core.writeSecretTextFile(path, pem, { configDir });
+      expect(core.isEncryptedSecretFile(await readFile(path, "utf8"))).toBe(true);
+      return {
+        renew: async () => true,
+        close: async () => {},
+        cleanupFailure: () => undefined,
+        fingerprintSha256: () => "b".repeat(64),
+        spkiFingerprintSha256: () => "c".repeat(64),
+      };
+    },
+  });
+  vi.stubEnv("OMNESIS_SECRET_STORE", "file");
+  try {
+    manager = await GatewayCloudRelayManagement.open(f.options);
+    await manager.configure(input);
+    await manager.enable();
+    await idle();
+    expect((await manager.status()).enrollment.state).toBe("enrolled");
+    expect(register).toHaveBeenCalledOnce();
+  } finally {
+    await manager?.close();
+    manager = undefined;
+    core.clearSecretFileKeyCacheForTests();
+    vi.unstubAllEnvs();
+  }
+});
+
 test("a missing certificate controller fails managed setup without starting a tunnel", async () => {
   const f = fixture({ controller: vi.fn(async () => undefined) });
   manager = await GatewayCloudRelayManagement.open(f.options);
@@ -2250,6 +2302,7 @@ test(
     expect(f.register).toHaveBeenCalledTimes(registrations + 1);
     expect(f.register).toHaveBeenLastCalledWith(
       expect.objectContaining({
+        configDir: f.options.configDir,
         gatewayId: f.connected.gatewayId,
         publicOrigin: f.connected.publicOrigin,
         sessionFile: join(f.relayDirectory, "session.json"),

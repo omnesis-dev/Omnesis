@@ -7,6 +7,14 @@ import ScreenCaptureKit
 import SwiftUI
 import XCTest
 
+/// Component raster coverage may exceed the attached display; it is not on-screen qualification.
+@MainActor
+private final class DesktopComponentRenderWindow: NSWindow {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        frameRect
+    }
+}
+
 @MainActor
 enum DesktopSnapshotRenderer {
     static func render(
@@ -30,7 +38,7 @@ enum DesktopSnapshotRenderer {
             hosting.sizingOptions = []
             hosting.autoresizingMask = [.width, .height]
             hosting.frame = NSRect(origin: .zero, size: size)
-            let window = NSWindow(
+            let window = DesktopComponentRenderWindow(
                 contentRect: hosting.frame,
                 styleMask: [.titled, .closable, .miniaturizable, .resizable],
                 backing: .buffered,
@@ -65,10 +73,10 @@ enum DesktopSnapshotRenderer {
             if name == "settings-branded" || name == "settings-all-required-ready" || name == "settings-storage-required-first" || name ==
                 "welcome" || name == "sources-library" ||
                 name == "ask-increased-contrast" {
-                try await captureOwnedWindow(window, output: output, name: name, appearance: appearance)
+                try await captureOwnedWindow(window, output: output, name: name, appearance: appearance, componentOnly: true)
             }
             if name == "ready-sidebar" {
-                try await captureOwnedWindow(window, output: output, name: name, appearance: appearance)
+                try await captureOwnedWindow(window, output: output, name: name, appearance: appearance, componentOnly: true)
                 try writeSidebarDiagnostics(hosting, output: output, appearance: appearance)
                 // Compare native layer compositing with cacheDisplay before changing the product layout.
                 hosting.wantsLayer = true
@@ -96,7 +104,69 @@ enum DesktopSnapshotRenderer {
         }
     }
 
-    static func captureOwnedWindow(_ window: NSWindow, output: URL, name: String, appearance: NSAppearance.Name) async throws {
+    /// Ordinary AppKit constraints and real screen coverage are intentionally separate from component rasters.
+    static func renderVisibleWindow(
+        _ view: some View,
+        name: String,
+        size: CGSize,
+        validate: (NSView) async throws -> Void
+    ) async throws {
+        let output = URL(fileURLWithPath: "/tmp/omnesis-macos-snapshots", isDirectory: true)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            let hosting = NSHostingView(rootView: view.omnesisTheme())
+            hosting.sizingOptions = []
+            hosting.autoresizingMask = [.width, .height]
+            hosting.frame = NSRect(origin: .zero, size: size)
+            let window = NSWindow(
+                contentRect: hosting.frame,
+                styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                backing: .buffered,
+                defer: false
+            )
+            window.isReleasedWhenClosed = false
+            window.title = "Omnesis"
+            window.appearance = NSAppearance(named: appearance)
+            window.contentView = hosting
+            defer { window.close() }
+            window.makeKeyAndOrderFront(nil)
+            try await Task.sleep(for: .milliseconds(150))
+            hosting.layoutSubtreeIfNeeded()
+            // Size after the view has installed its native toolbar, using ordinary AppKit constraints.
+            window.setContentSize(size)
+            window.center()
+            try await Task.sleep(for: .milliseconds(150))
+            hosting.layoutSubtreeIfNeeded()
+            window.displayIfNeeded()
+            let screen = try XCTUnwrap(window.screen)
+            XCTAssertTrue(
+                screen.visibleFrame.insetBy(dx: -1, dy: -1).contains(window.frame),
+                "Minimum-window coverage requires the entire native window to fit the visible screen"
+            )
+            XCTAssertEqual(hosting.bounds.size, size, "The ordinary window must retain the requested minimum viewport")
+            XCTAssertGreaterThanOrEqual(window.contentLayoutRect.width, size.width)
+            XCTAssertGreaterThanOrEqual(window.contentLayoutRect.height, size.height)
+            assertOwnedWindowChrome(window)
+            let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+            hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+            let center = bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh / 2)
+            XCTAssertEqual(center?.alphaComponent ?? 0, 1, accuracy: 0.01, "The entire minimum viewport must remain opaque")
+            let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            try png.write(to: output.appendingPathComponent("\(name)-\(appearance.rawValue).png"))
+            try await DesktopAccessibilityDriver.materializeOwnedApplication()
+            try await validate(hosting)
+            try await captureOwnedWindow(window, output: output, name: name, appearance: appearance, requireActive: true)
+        }
+    }
+
+    static func captureOwnedWindow(
+        _ window: NSWindow,
+        output: URL,
+        name: String,
+        appearance: NSAppearance.Name,
+        componentOnly: Bool = false,
+        requireActive: Bool = false
+    ) async throws {
         guard #available(macOS 14.4, *) else {
             throw NSError(
                 domain: "DesktopSnapshot",
@@ -122,6 +192,7 @@ enum DesktopSnapshotRenderer {
         @unknown default: "unknown"
         }
         var state: [String: Any] = [
+            "captureScope": componentOnly ? "component-window-not-visible-screen-qualification" : "ordinary-owned-window",
             "applicationActive": NSApp.isActive, "windowKey": window.isKeyWindow, "windowMain": window.isMainWindow,
             "frontmostIsOwnProcess": frontmostIsOwnProcess, "activationRequested": activationRequested,
             "activationPolicy": policy, "canBecomeKey": window.canBecomeKey, "canBecomeMain": window.canBecomeMain,
@@ -160,7 +231,7 @@ enum DesktopSnapshotRenderer {
         let bitmap = NSBitmapImageRep(cgImage: image)
         let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
         try data.write(to: output.appendingPathComponent("\(name)-window-\(appearance.rawValue).png"))
-        if name == "hosted-chat-ready-to-send" {
+        if name == "hosted-chat-ready-to-send" || requireActive {
             XCTAssertTrue(
                 active,
                 "Primary-control qualification requires this exact app and window to be active; see the owned state artifact"
@@ -185,6 +256,8 @@ enum DesktopSnapshotRenderer {
         let layout = window.contentLayoutRect
         let overlap = max(0, contentFrame.maxY - layout.maxY)
         var facts: [String: Any] = [
+            "windowFrameInScreen": rectangle(window.frame),
+            "screenVisibleFrame": window.screen.map { rectangle($0.visibleFrame) } ?? [:],
             "contentPresent": true, "fullHostingBounds": rectangle(content.bounds),
             "hostingFrameInWindow": rectangle(contentFrame), "usableLayoutInWindow": rectangle(layout),
             "usableLayoutInScreen": rectangle(window.convertToScreen(layout)),
