@@ -331,14 +331,42 @@ final class DesktopAPIContextTests: XCTestCase {
         func popups(_ view: NSView) -> [NSPopUpButton] {
             (view as? NSPopUpButton).map { [$0] } ?? view.subviews.flatMap(popups)
         }
+        let picker: NSPopUpButton
+        var stage = "identified-role-cell"
+        var populationRequested = false
         do {
-            try await wait { popups(mounted.host).contains { $0.itemTitles.contains("remote · fictional-chat") } }
+            let identified = try DesktopAccessibilityDriver.element("model-role-picker-agent", in: mounted.host)
+            let cell = try XCTUnwrap(identified.object as? NSCell, "The identified role must expose its actual native cell")
+            let owned = try XCTUnwrap(cell.controlView as? NSPopUpButton, "The identified cell must belong to its real popup")
+            guard owned.window === mounted.window, owned.isDescendant(of: mounted.host), owned.cell === cell else {
+                throw DesktopAccessibilityDriver.Failure("The role popup must belong to the exact mounted window and cell")
+            }
+            picker = owned
+            stage = "owned-menu-delegate"
+            let menu = try XCTUnwrap(owned.menu, "The exact popup must expose its actual menu")
+            let delegate = try XCTUnwrap(menu.delegate, "The actual menu must expose its existing population delegate")
+            stage = "requested-native-menu-content"
+            // Request this menu's real content; never insert fixture items or replace its delegate.
+            populationRequested = true
+            delegate.menuNeedsUpdate?(menu)
+            menu.update()
+            try await wait { owned.itemTitles.contains("remote · fictional-chat") }
+            stage = "populated-owned-menu"
+            guard owned.window === mounted.window, owned.isDescendant(of: mounted.host), owned.cell === cell,
+                  owned.menu === menu else {
+                throw DesktopAccessibilityDriver.Failure("The populated menu must remain attached to the exact owned role popup")
+            }
         } catch {
-            try writeRolePickerDiagnostics(mounted.host, nativePopups: popups(mounted.host))
+            try writeRolePickerDiagnostics(
+                mounted.host,
+                nativePopups: popups(mounted.host),
+                stage: stage,
+                populationRequested: populationRequested
+            )
             throw error
         }
-        let picker = try XCTUnwrap(popups(mounted.host).first { $0.itemTitles.contains("remote · fictional-chat") })
         picker.selectItem(withTitle: "remote · fictional-chat")
+        XCTAssertEqual(picker.titleOfSelectedItem, "remote · fictional-chat")
         XCTAssertTrue(picker.sendAction(picker.action, to: picker.target))
         try await wait {
             (try? DesktopAccessibilityDriver.element("model-role-save-agent", in: mounted.host).isAccessibilityEnabled()) == true
@@ -352,7 +380,12 @@ final class DesktopAPIContextTests: XCTestCase {
         try await assertNoWrites(pair)
     }
 
-    private func writeRolePickerDiagnostics(_ root: NSView, nativePopups: [NSPopUpButton]) throws {
+    private func writeRolePickerDiagnostics(
+        _ root: NSView,
+        nativePopups: [NSPopUpButton],
+        stage: String,
+        populationRequested: Bool
+    ) throws {
         let picker = try DesktopAccessibilityDriver.element("model-role-picker-agent", in: root)
         var pending = [picker.object], seen: Set<ObjectIdentifier> = [], nodes: [[String: Any]] = []
         while let object = pending.popLast(), nodes.count < 128 {
@@ -369,11 +402,15 @@ final class DesktopAPIContextTests: XCTestCase {
             if let view = object as? NSView { pending.append(contentsOf: view.subviews) }
         }
         let facts: [String: Any] = [
-            "stage": "native-role-picker-items", "decodedChoice": "remote/fictional-chat",
+            "stage": stage, "decodedChoice": "remote/fictional-chat", "populationRequested": populationRequested,
             "rolePickerNodes": nodes, "subtreeBoundReached": !pending.isEmpty,
             "nativePopups": nativePopups.prefix(32).map { popup in
                 [
                     "type": String(reflecting: Swift.type(of: popup)),
+                    "exactWindow": popup.window === root.window, "descendantOfMountedRoot": popup.isDescendant(of: root),
+                    "matchesIdentifiedCell": popup.cell === (picker.object as? NSCell),
+                    "menuPresent": popup.menu != nil,
+                    "delegateType": popup.menu?.delegate.map { String(reflecting: Swift.type(of: $0)) } ?? "none",
                     "items": popup.itemTitles.prefix(64).map { String($0.prefix(240)) },
                 ] as [String: Any]
             },

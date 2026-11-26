@@ -10,6 +10,7 @@ struct DesktopSourceHealthView: View {
     let devices: [DesktopDevice]
     let canSignIn: Bool
     var reviewAccess: (String?) -> Void = { _ in }
+    var checkStatus: (() -> Void)?
     let signIn: (String) -> Void
     @State private var showDetails = false
 
@@ -63,6 +64,16 @@ struct DesktopSourceHealthView: View {
                 Label(source.enabled ? "Status unavailable" : "Paused", systemImage: source.enabled ? "clock" : "pause.circle")
                     .foregroundStyle(DesktopTheme.secondary)
             }
+            if source.enabled, !DesktopSourceActionPolicy(source: source, devices: devices).historical, needsStatusCheck {
+                Text("Omnesis hasn’t confirmed collection status yet. Your saved information is kept.")
+                    .foregroundStyle(DesktopTheme.secondary)
+                if let checkStatus {
+                    Button("Check status", action: checkStatus)
+                        .buttonStyle(DesktopButtonStyle())
+                        .accessibilityIdentifier("source-check-status-\(source.id)")
+                        .accessibilityLabel("Check collection status for \(source.accountId)")
+                }
+            }
         }.font(.callout).frame(maxWidth: 290, alignment: .leading)
             .omnesisSheet(isPresented: $showDetails) {
                 VStack(alignment: .leading, spacing: 20) {
@@ -80,11 +91,17 @@ struct DesktopSourceHealthView: View {
                                             )
                                             .font(.headline)
                                             if let detail = notice.detail { Text(detail).foregroundStyle(DesktopTheme.secondary) }
-                                            ForEach(Array((report.needsAccessRecovery ? [] : notice.steps ?? []).enumerated()), id: \.offset) { index, step in
+                                            ForEach(
+                                                Array((report.needsAccessRecovery ? [] : notice.steps ?? []).enumerated()),
+                                                id: \.offset
+                                            ) { index, step in
                                                 Text("\(index + 1). \(step)").foregroundStyle(DesktopTheme.secondary)
                                             }
                                             if report.needsAccessRecovery {
-                                                Text("Review this source’s collection access. Existing indexed information is kept; opening Settings alone does not verify access.").foregroundStyle(DesktopTheme.secondary)
+                                                Text(
+                                                    "Review this source’s collection access. Existing indexed information is kept; opening Settings alone does not verify access."
+                                                )
+                                                .foregroundStyle(DesktopTheme.secondary)
                                             }
                                         }.textSelection(.enabled)
                                     }
@@ -97,6 +114,15 @@ struct DesktopSourceHealthView: View {
                     }
                 }.padding(28).frame(width: 520, height: 440).omnesisTheme()
             }
+    }
+
+    private var needsStatusCheck: Bool {
+        guard current, let status else { return true }
+        return switch status.state {
+        case "idle", "syncing", "synced", "completed", "paused", "needs-auth", "auth-expiring", "rate-limited",
+             "permission-degraded", "background-access-missing", "stale", "error": false
+        default: true
+        }
     }
 
     private func repairDevice(_ report: DesktopSourceHealth) -> String? {

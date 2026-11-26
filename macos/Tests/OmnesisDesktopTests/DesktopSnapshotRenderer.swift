@@ -109,7 +109,7 @@ enum DesktopSnapshotRenderer {
         _ view: some View,
         name: String,
         size: CGSize,
-        validate: (NSView) async throws -> Void
+        validate: @MainActor (NSView) async throws -> Void
     ) async throws {
         let output = URL(fileURLWithPath: "/tmp/omnesis-macos-snapshots", isDirectory: true)
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)

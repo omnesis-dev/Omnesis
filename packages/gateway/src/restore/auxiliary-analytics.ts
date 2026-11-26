@@ -8,6 +8,12 @@ import { z } from "zod";
 import { fsyncFileSync } from "@omnesis/core";
 import { normalizeAnalyticsColumnType } from "@omnesis/source-sdk";
 import { BUNDLED_DUCKDB_EXTENSION_DIRECTORY } from "../analytics/connection-pool.js";
+import {
+  ensureAnalyticsTemporalProjectionSchema,
+  TEMPORAL_PROJECTIONS_TABLE,
+  TEMPORAL_PROJECTION_SOURCES_TABLE,
+  TEMPORAL_PROJECTION_MOVES_TABLE,
+} from "../analytics/temporal-projection-store.js";
 import { serveRestoreMemoryFile } from "./auxiliary-memory-file.js";
 import type { AuxiliaryRestoreResult, RestoredAuxiliarySource } from "./auxiliary-watch.js";
 
@@ -27,6 +33,16 @@ const columnSchema = z.object({
   is_nullable: z.boolean(),
   column_default: z.string().max(4096).nullable(),
 });
+const constraintSchema = z.object({
+  constraint_type: z.string().max(64),
+  columns: z.string().max(32 * 1024),
+  constraint_text: z.string().max(32 * 1024),
+});
+const temporalTables = new Set([
+  TEMPORAL_PROJECTIONS_TABLE,
+  TEMPORAL_PROJECTION_SOURCES_TABLE,
+  TEMPORAL_PROJECTION_MOVES_TABLE,
+]);
 
 /** Worker-only, catalog is data: no foreign DDL, views, macros, generated expressions or extension loading. */
 export async function rebuildRestoredAnalyticsDatabase(
@@ -140,16 +156,23 @@ export async function rebuildRestoredAnalyticsDatabase(
           )
         ).getRowObjects(),
       );
-    let rowsPreserved = 0,
-      pendingWorkDiscarded = 0;
-    const schemaNames = new Set<string>();
     for (const table of tables) {
-      options.signal.throwIfAborted();
       if (
         !["main", "_omnesis_internal"].includes(table.schema_name) ||
         /\bGENERATED\s+ALWAYS\s+AS\s*\(/i.test(table.sql)
       )
         throw new Error("The analytics backup table needs reviewed schema handling");
+    }
+    await validateTemporalFamily(connection, tables);
+    let rowsPreserved = 0,
+      pendingWorkDiscarded = 0;
+    // Only compiled product DDL creates these constrained internal tables.
+    // Missing siblings can be a first boot interrupted between CREATEs.
+    await connection.run("USE restored");
+    await ensureAnalyticsTemporalProjectionSchema(connection);
+    const schemaNames = new Set<string>();
+    for (const table of tables) {
+      options.signal.throwIfAborted();
       if (!schemaNames.has(table.schema_name)) {
         await connection.run(
           `CREATE SCHEMA IF NOT EXISTS restored.${identifier(table.schema_name)}`,
@@ -169,35 +192,40 @@ export async function rebuildRestoredAnalyticsDatabase(
           ).getRowObjects(),
         );
       const constraints = z
-        .array(z.object({ constraint_type: z.string(), columns: z.string().max(32 * 1024) }))
+        .array(constraintSchema)
         .max(4096)
         .parse(
           (
             await connection.runAndReadAll(
-              `SELECT constraint_type,to_json(constraint_column_names)::VARCHAR AS columns FROM duckdb_constraints() WHERE ${condition}`,
+              `SELECT constraint_type,to_json(constraint_column_names)::VARCHAR AS columns,constraint_text FROM duckdb_constraints() WHERE ${condition}`,
             )
           ).getRowObjects(),
         );
-      const definitions = columns.map((column) => {
-        const type = normalizeAnalyticsColumnType(column.data_type, "Restored analytics");
-        return `${identifier(column.column_name)} ${type}${column.is_nullable ? "" : " NOT NULL"}${defaultValue(column.column_default, type)}`;
-      });
-      for (const constraint of constraints) {
-        if (constraint.constraint_type === "NOT NULL") continue;
-        if (!["PRIMARY KEY", "UNIQUE"].includes(constraint.constraint_type))
-          throw new Error("The analytics backup contains an unreviewed constraint");
-        const names = z
-          .array(name)
-          .min(1)
-          .max(columns.length)
-          .parse(JSON.parse(constraint.columns));
-        if (names.some((value) => !columns.some((column) => column.column_name === value)))
-          throw new Error("Invalid analytics constraint");
-        definitions.push(`${constraint.constraint_type} (${names.map(identifier).join(",")})`);
-      }
       const destinationTable = `restored.${identifier(table.schema_name)}.${identifier(table.table_name)}`;
+      const trustedTemporal = table.schema_name === "main" && temporalTables.has(table.table_name);
+      if (trustedTemporal) {
+        await validateTemporalSchema(connection, table.table_name, columns, constraints);
+      } else {
+        const definitions = columns.map((column) => {
+          const type = normalizeAnalyticsColumnType(column.data_type, "Restored analytics");
+          return `${identifier(column.column_name)} ${type}${column.is_nullable ? "" : " NOT NULL"}${defaultValue(column.column_default, type)}`;
+        });
+        for (const constraint of constraints) {
+          if (constraint.constraint_type === "NOT NULL") continue;
+          if (!["PRIMARY KEY", "UNIQUE"].includes(constraint.constraint_type))
+            throw new Error("The analytics backup contains an unreviewed constraint");
+          const names = z
+            .array(name)
+            .min(1)
+            .max(columns.length)
+            .parse(JSON.parse(constraint.columns));
+          if (names.some((value) => !columns.some((column) => column.column_name === value)))
+            throw new Error("Invalid analytics constraint");
+          definitions.push(`${constraint.constraint_type} (${names.map(identifier).join(",")})`);
+        }
+        await connection.run(`CREATE TABLE ${destinationTable} (${definitions.join(",")})`);
+      }
       const sourceTable = `backup.${identifier(table.schema_name)}.${identifier(table.table_name)}`;
-      await connection.run(`CREATE TABLE ${destinationTable} (${definitions.join(",")})`);
       const names = columns.map(({ column_name }) => identifier(column_name)).join(",");
       const pending =
         table.schema_name === "_omnesis_internal" && table.table_name === "watch_analytics_outbox";
@@ -315,6 +343,98 @@ export async function rebuildRestoredAnalyticsDatabase(
   if (failed) throw operationFailure;
   if (!result) throw new Error("The owned analytics restore did not finish");
   return result;
+}
+async function validateTemporalFamily(
+  connection: DuckDBConnection,
+  tables: z.infer<typeof tableSchema>[],
+): Promise<void> {
+  const present = new Set(
+    tables
+      .filter((table) => table.schema_name === "main" && temporalTables.has(table.table_name))
+      .map((table) => table.table_name),
+  );
+  // Projections and coverage shipped together; the move ledger came later.
+  if (
+    present.size === 0 ||
+    present.size === temporalTables.size ||
+    (present.has(TEMPORAL_PROJECTIONS_TABLE) && present.has(TEMPORAL_PROJECTION_SOURCES_TABLE))
+  )
+    return;
+  // An interrupted first boot may have made only empty tables. Nonempty
+  // unsupported partial layouts must not acquire invented coverage/history.
+  for (const table of present) {
+    const populated = count(
+      (
+        await connection.runAndReadAll(
+          `SELECT count(*) FROM (SELECT 1 FROM backup.main.${identifier(table)} LIMIT 1)`,
+        )
+      ).getRows()[0]?.[0],
+    );
+    if (populated !== 0)
+      throw new Error("The analytics temporal history is missing a required companion table");
+  }
+}
+async function validateTemporalSchema(
+  connection: DuckDBConnection,
+  table: string,
+  columns: z.infer<typeof columnSchema>[],
+  constraints: z.infer<typeof constraintSchema>[],
+): Promise<void> {
+  const condition = `database_name='restored' AND schema_name='main' AND table_name=${literal(table)}`;
+  const expectedColumns = z
+    .array(columnSchema)
+    .min(1)
+    .max(4096)
+    .parse(
+      (
+        await connection.runAndReadAll(
+          `SELECT column_name,data_type,is_nullable,column_default FROM duckdb_columns() WHERE ${condition} ORDER BY column_index`,
+        )
+      ).getRowObjects(),
+    );
+  const describeColumns = (rows: z.infer<typeof columnSchema>[]) =>
+    rows
+      .map((column) =>
+        JSON.stringify([
+          column.column_name,
+          normalizeAnalyticsColumnType(column.data_type, "Restored analytics"),
+          column.is_nullable,
+          column.column_default,
+        ]),
+      )
+      .sort();
+  if (JSON.stringify(describeColumns(columns)) !== JSON.stringify(describeColumns(expectedColumns)))
+    throw new Error("The analytics temporal history needs a reviewed schema migration");
+  const expectedConstraints = z
+    .array(constraintSchema)
+    .max(4096)
+    .parse(
+      (
+        await connection.runAndReadAll(
+          `SELECT constraint_type,to_json(constraint_column_names)::VARCHAR AS columns,constraint_text FROM duckdb_constraints() WHERE ${condition}`,
+        )
+      ).getRowObjects(),
+    );
+  const descriptor = (constraint: z.infer<typeof constraintSchema>) =>
+    JSON.stringify([constraint.constraint_type, constraint.columns, constraint.constraint_text]);
+  const remaining = new Map<string, number>();
+  for (const constraint of expectedConstraints) {
+    const key = descriptor(constraint);
+    remaining.set(key, (remaining.get(key) ?? 0) + 1);
+  }
+  for (const constraint of constraints) {
+    const key = descriptor(constraint);
+    const count = remaining.get(key) ?? 0;
+    if (count === 0)
+      throw new Error("The analytics temporal history contains an unreviewed constraint");
+    remaining.set(key, count - 1);
+  }
+  // Older live tables predate the three vocabulary CHECKs. Their rows still
+  // pass through today's compiled checks on INSERT; no foreign CHECK is run.
+  for (const constraint of expectedConstraints) {
+    if (constraint.constraint_type !== "CHECK" && remaining.get(descriptor(constraint)) !== 0)
+      throw new Error("The analytics temporal history needs a reviewed schema migration");
+  }
 }
 function identifier(value: string): string {
   return `"${value.replace(/"/g, '""')}"`;

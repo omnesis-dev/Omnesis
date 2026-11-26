@@ -336,10 +336,16 @@ export async function applyRestoreArchive(
     const {DesktopRestoreStoreKeys}=await import(${JSON.stringify(moduleUrl("restore-store-keys"))});
     // Diagnostic wrappers observe actual calls; they never replace data, crypto or outcomes.
     let previewStage='unpack-protection';
-    for(const [name,stage] of [['unlock','unlock'],['inspectMain','main'],['prepareAuxiliary','auxiliary'],['prepareConversation','history']]) {
+    for(const [name,stage] of [['unlock','unlock'],['inspectMain','main'],['prepareConversation','history']]) {
       const original=DesktopRestoreEntries.prototype[name];
       DesktopRestoreEntries.prototype[name]=function(...args){previewStage=stage;return original.apply(this,args);};
     }
+    const prepareAuxiliary=DesktopRestoreEntries.prototype.prepareAuxiliary;
+    DesktopRestoreEntries.prototype.prepareAuxiliary=function(...args){
+      const kind=args[1]?.kind;
+      previewStage=kind==='analytics'?'auxiliary-analytics':kind==='watch'?'auxiliary-watch':'auxiliary-unknown';
+      return prepareAuxiliary.apply(this,args);
+    };
     const prepareKeys=DesktopRestoreStoreKeys.prepare;
     DesktopRestoreStoreKeys.prepare=function(...args){previewStage='storage-keys';return prepareKeys.apply(this,args);};
     const signal=new AbortController().signal;

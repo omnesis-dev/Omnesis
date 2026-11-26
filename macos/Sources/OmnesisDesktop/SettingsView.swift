@@ -129,7 +129,7 @@ struct DesktopSettingsView: View {
                     "Closing the window keeps collection running while this Mac is awake. Automatic startup starts Omnesis at sign-in; it does not prevent sleep."
                 )
                 .font(.callout).foregroundStyle(DesktopTheme.secondary)
-            } header: { Text("Launch at sign-in").accessibilityIdentifier("settings-prerequisite-startup") }
+            } header: { Text("Launch at sign-in · Required").accessibilityIdentifier("settings-prerequisite-startup") }
         case .power:
             Section {
                 DesktopMacServerPrerequisite(

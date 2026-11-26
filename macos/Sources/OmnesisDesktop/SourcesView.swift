@@ -21,6 +21,14 @@ struct DesktopSourcesView: View {
         self.observeHealth = observeHealth
     }
 
+    private var checkHealth: (() -> Void)? {
+        guard context?.isCurrent == true else { return nil }
+        return {
+            guard context?.isCurrent == true else { return }
+            healthRevision += 1
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             if let failure = health.failure {
@@ -65,7 +73,10 @@ struct DesktopSourcesView: View {
                                                     params: [:]
                                                 )
                                                 store.presentAccess = true
-                                            }, signIn: { deviceId in repairing = DesktopSourceRepair(source: source, deviceId: deviceId) }
+                                            }, checkStatus: checkHealth, signIn: { deviceId in repairing = DesktopSourceRepair(
+                                                source: source,
+                                                deviceId: deviceId
+                                            ) }
                                         )
                                     }.frame(maxWidth: .infinity, alignment: .leading)
                                     Menu("Actions") {
@@ -128,7 +139,12 @@ struct DesktopSourcesView: View {
                         healthRevision += 1
                     }
                 }
-                Button("Add a source", systemImage: "plus") { showPicker = true }.accessibilityIdentifier("add-source")
+                Button { showPicker = true } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "plus")
+                        Text("Add a source").accessibilityIdentifier("add-source-title")
+                    }
+                }.accessibilityLabel("Add a source").accessibilityIdentifier("add-source")
             }
             .omnesisSheet(isPresented: $showPicker) { SourcePickerView().environment(store) }
             .onChange(of: store.api.map(ObjectIdentifier.init)) {

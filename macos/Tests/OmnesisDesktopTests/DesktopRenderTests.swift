@@ -55,7 +55,9 @@ final class DesktopRenderTests: XCTestCase {
             let header = try DesktopAccessibilityDriver.element("settings-prerequisite-services", in: hosting)
             XCTAssertNotEqual(header.accessibilityIdentifier(), repairElement.accessibilityIdentifier())
             XCTAssertEqual(header.accessibilityLabel(), "Library storage and connection · Required")
-            let startupSection = try DesktopAccessibilityDriver.element("settings-prerequisite-startup", in: hosting).accessibilityFrame()
+            let startupHeader = try DesktopAccessibilityDriver.element("settings-prerequisite-startup", in: hosting)
+            XCTAssertEqual(startupHeader.accessibilityLabel(), "Launch at sign-in · Required")
+            let startupSection = startupHeader.accessibilityFrame()
             XCTAssertGreaterThan(repair.minY, startupSection.maxY, "The incomplete storage repair must precede healthy startup")
             XCTAssertTrue(try DesktopAccessibilityDriver.contains("Automatic sleep is off while plugged in", in: hosting))
         }
@@ -73,6 +75,15 @@ final class DesktopRenderTests: XCTestCase {
             name: "minimum-library", size: CGSize(width: 860, height: 600)
         ) { hosting in
             XCTAssertTrue(try DesktopAccessibilityDriver.contains("Example notebook", in: hosting))
+            let addTitle = try DesktopAccessibilityDriver.element("add-source-title", in: hosting)
+            XCTAssertEqual(addTitle.accessibilityRole(), .staticText)
+            XCTAssertGreaterThan(addTitle.accessibilityFrame().width, 0)
+            XCTAssertGreaterThan(addTitle.accessibilityFrame().height, 0)
+            let window = try XCTUnwrap(hosting.window)
+            XCTAssertTrue(
+                window.frame.contains(addTitle.accessibilityFrame()),
+                "Add a source must be visible text inside the actual toolbar, not only the button accessibility label"
+            )
             try DesktopSnapshotRenderer.assertRequiredBannerLayout(hosting, below: ["library-brand-title"])
             let review = try DesktopAccessibilityDriver.element("required-setup-review", in: hosting)
             XCTAssertTrue(review.isAccessibilityEnabled())
@@ -92,7 +103,7 @@ final class DesktopRenderTests: XCTestCase {
             name: "minimum-settings", size: CGSize(width: 720, height: 600)
         ) { hosting in
             let window = try XCTUnwrap(hosting.window)
-            func assertRepairVisible() throws {
+            @MainActor func assertRepairVisible() throws {
                 let repair = try DesktopAccessibilityDriver.element("setup-review-storage", in: hosting)
                 XCTAssertTrue(repair.isAccessibilityEnabled())
                 XCTAssertGreaterThan(repair.accessibilityFrame().width, 0)
