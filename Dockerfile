@@ -75,6 +75,7 @@ COPY scripts/ci/npm-ci.sh scripts/ci/npm-ci.sh
 COPY scripts/build-projects.mjs scripts/
 COPY scripts/runtime/ scripts/runtime/
 COPY scripts/release/ scripts/release/
+COPY scripts/lib/is-entry-script.mjs scripts/lib/is-entry-script.mjs
 # Published builds set this so an image cannot ship without an optional package
 # npm dropped without an error, such as DuckDB's platform binary or ffmpeg-static
 # (scripts/ci/npm-ci.sh).
