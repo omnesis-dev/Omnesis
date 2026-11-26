@@ -141,9 +141,11 @@ final class RuntimeUsageLeaseTests: XCTestCase {
     private final class Capture: @unchecked Sendable {
         private let lock = NSLock()
         private var value = ""
+        private var ended = false
         func append(_ data: Data) {
             lock.lock()
             defer { lock.unlock() }
+            if data.isEmpty { ended = true }
             value = String((value + (String(data: data, encoding: .utf8) ?? "")).suffix(8192))
         }
 
@@ -155,6 +157,12 @@ final class RuntimeUsageLeaseTests: XCTestCase {
 
         var ready: Bool {
             text.contains("ready")
+        }
+
+        var reachedEOF: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return ended
         }
     }
 
@@ -217,6 +225,7 @@ final class RuntimeUsageLeaseTests: XCTestCase {
             "exclusive-ready-written", "scrub-enter", "scrub-complete", "catalog-parent-enter", "catalog-child-spawned",
             "catalog-socket-observed", "catalog-ready-written", "fork-parent-enter", "fork-child-spawned",
             "fork-child-enter", "fork-child-sent", "fork-parent-message", "fork-ready-written",
+            "fork-parent-initialized", "fork-child-joined", "fork-child-disconnected", "fork-child-error",
         ]
         for mode in [
             "key-recovery",
@@ -240,21 +249,38 @@ final class RuntimeUsageLeaseTests: XCTestCase {
         return "image=\(image); stdoutBytes=\(running.capture.text.utf8.count); stderrBytes=\(running.diagnostics.text.utf8.count); stdout[\(pipeState(running.output.fileHandleForReading))]; stderr[\(pipeState(running.errors.fileHandleForReading))]; stages=\(stages); nativeRefusal=\(running.diagnostics.text.contains("The managed runtime lease could not be established"))"
     }
 
-    private func waitReady(_ running: Running) async throws {
+    private enum ReadinessPhase: String, Sendable { case stdout, forkParent }
+
+    private func waitReady(_ running: Running, phase: ReadinessPhase = .stdout) async throws {
+        let observed: @Sendable () -> Bool = { [capture = running.capture, diagnostics = running.diagnostics] in
+            switch phase {
+            case .stdout: return capture.ready
+            case .forkParent: return diagnostics.text.split(separator: "\n").contains("fixture-stage:fork-parent-initialized")
+            }
+        }
         let deadline = Date().addingTimeInterval(5)
-        while !running.capture.ready, running.process.isRunning, Date() < deadline {
+        while !observed(), running.process.isRunning, Date() < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
-        guard running.capture.ready else {
+        guard observed() else {
             let status = running.process.isRunning ? "running" : String(running.process.terminationStatus)
-            let detail = "fixture readiness failed (" + status + "); stage=" + running.readinessStage + "; " + readinessDiagnostics(running)
-            let observation = await DesktopReadinessFailureDiagnostic
-                .collect(target: running.diagnosticTarget) { [capture = running.capture] in
-                    capture.ready
-                }
+            let detail = "fixture readiness failed (" + status + "); stage=" + running.readinessStage +
+                "; phase=" + phase.rawValue + "; " + readinessDiagnostics(running)
+            let observation = await DesktopReadinessFailureDiagnostic.collect(target: running.diagnosticTarget, captureReady: observed)
             stop(running)
             // A late marker is diagnostic only; the original readiness failure is preserved.
             throw FixtureFailure.detail(detail + "; " + observation)
+        }
+    }
+
+    /// Every writer must physically close before the fixture can assert a complete captured transcript.
+    private func waitCapturedEOF(_ running: Running) async throws {
+        let deadline = Date().addingTimeInterval(5)
+        while !(running.capture.reachedEOF && running.diagnostics.reachedEOF), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        guard running.capture.reachedEOF, running.diagnostics.reachedEOF else {
+            throw FixtureFailure.detail("owned fork pipes did not physically close")
         }
     }
 
@@ -379,21 +405,62 @@ final class RuntimeUsageLeaseTests: XCTestCase {
         XCTAssertEqual(relative.process.terminationStatus, 0, relative.diagnostics.text)
     }
 
+    /// Fork is requested only after the first actual Node process has initialized.
+    /// Each cold startup retains its own original five-second readiness bound.
+    private func forkRecipe() throws -> (code: String, receipt: URL) {
+        let entry = home.appendingPathComponent("invented-fork-child.cjs")
+        let receipt = home.appendingPathComponent("invented-fork-child.json")
+        try Data("""
+        const fs=require('node:fs');
+        fs.writeSync(2,'fixture-stage:fork-child-enter\\n');
+        if(!process.execArgv.includes('--use-system-ca'))process.exit(2);
+        process.once('disconnect',()=>{fs.writeSync(2,'fixture-stage:fork-child-disconnected\\n');process.exit(0)});
+        process.once('message',message=>process.exit(message==='stop'?0:2));
+        process.send({ready:true},error=>{if(error)process.exit(1);fs.writeSync(2,'fixture-stage:fork-child-sent\\n')});
+        setTimeout(()=>process.exit(1),5000);
+        """.utf8).write(to: entry)
+        let code = """
+        const fs=require('node:fs');
+        function stage(name){fs.writeSync(2,'fixture-stage:'+name+'\\n')}
+        stage('fork-parent-enter');
+        if(!process.execArgv.includes('--use-system-ca'))process.exit(2);
+        let child=null,closing=false,failed=false;
+        function stop(){if(closing)return;closing=true;if(!child){stage('fork-child-joined');process.exit(0);return}if(child.connected)child.send('stop',error=>{if(error)child.kill('SIGTERM')});else child.kill('SIGTERM')}
+        process.once('SIGTERM',stop);
+        process.stdin.once('data',request=>{
+          if(request.toString().trim()!=='fork')process.exit(2);
+          child=require('node:child_process').fork(\(String(reflecting: entry.path)),[],{stdio:['ignore','ignore',2,'ipc']});
+          child.once('error',()=>{failed=true;stage('fork-child-error');stop()});
+          child.once('spawn',()=>{try{fs.writeFileSync(\(String(reflecting: receipt
+                  .path + ".partial")),JSON.stringify({pid:child.pid}),{mode:0o600,flag:'wx'});fs.renameSync(\(String(reflecting: receipt
+                .path + ".partial")),\(String(reflecting: receipt
+                .path)));stage('fork-child-spawned')}catch{failed=true;stage('fork-child-error');stop()}});
+          child.once('message',message=>{if(closing||failed)return;if(!message||message.ready!==true){failed=true;child.kill('SIGKILL');return}stage('fork-parent-message');process.stdout.write('ready',()=>stage('fork-ready-written'))});
+          child.once('close',(code,signal)=>{stage('fork-child-joined');process.exit(failed||signal||code===null?1:code)});
+          process.stdin.once('data',stop);
+        });
+        stage('fork-parent-initialized');
+        process.stdin.resume();
+        """
+        return (code, receipt)
+    }
+
     func testNodeCompatibleDefaultSupportsForkIPCAndStdinEvaluation() async throws {
         let runtime = try fixture(tag: "node-compatible")
-        let entry = home.appendingPathComponent("invented-fork-child.cjs")
-        try Data(
-            "require('node:fs').writeSync(2,'fixture-stage:fork-child-enter\\n');if(!process.execArgv.includes('--use-system-ca'))process.exit(2);process.send({ready:true},()=>require('node:fs').writeSync(2,'fixture-stage:fork-child-sent\\n'));process.once('message',()=>process.exit(0));setTimeout(()=>process.exit(1),5000);"
-                .utf8
-        )
-        .write(to: entry)
-        let code = "require('node:fs').writeSync(2,'fixture-stage:fork-parent-enter\\n');if(!process.execArgv.includes('--use-system-ca'))process.exit(2);const child=require('node:child_process').fork(\(String(reflecting: entry.path)),[],{stdio:['ignore','ignore',2,'ipc']});child.once('spawn',()=>process.stderr.write('fixture-stage:fork-child-spawned\\n'));child.once('message',()=>{process.stderr.write('fixture-stage:fork-parent-message\\n');process.stdout.write('ready',()=>process.stderr.write('fixture-stage:fork-ready-written\\n'))});process.stdin.once('data',()=>child.send('stop'));child.once('exit',code=>process.exit(code));process.stdin.resume();"
-        let child = try start(runtime: runtime, arguments: ["-e", code], readinessStage: "fork-parent")
+        let recipe = try forkRecipe()
+        let child = try start(runtime: runtime, arguments: ["-e", recipe.code], readinessStage: "fork-parent")
         defer { stop(child) }
+        try await waitReady(child, phase: .forkParent)
+        XCTAssertFalse(child.capture.ready)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: recipe.receipt.path))
+        try child.input.fileHandleForWriting.write(contentsOf: Data("fork\n".utf8))
         try await waitReady(child)
         try child.input.fileHandleForWriting.write(contentsOf: Data("stop\n".utf8))
         try await waitExited(child)
-        XCTAssertEqual(child.process.terminationStatus, 0, child.diagnostics.text)
+        child.process.waitUntilExit()
+        try await waitCapturedEOF(child)
+        XCTAssertEqual(child.process.terminationStatus, 0, readinessDiagnostics(child))
+        XCTAssertTrue(child.diagnostics.text.contains("fixture-stage:fork-child-joined"))
         let stdin = try start(runtime: runtime, arguments: ["--input-type=module"])
         defer { stop(stdin) }
         try stdin.input.fileHandleForWriting
@@ -406,6 +473,69 @@ final class RuntimeUsageLeaseTests: XCTestCase {
         try stdin.input.fileHandleForWriting.close()
         try await waitExited(stdin)
         XCTAssertEqual(stdin.process.terminationStatus, 0, stdin.diagnostics.text)
+    }
+
+    func testForkReceiptPublicationFailureJoinsChildAndNeverReportsReady() async throws {
+        let runtime = try fixture(tag: "fork-receipt-refused")
+        let recipe = try forkRecipe()
+        try Data("occupied".utf8).write(to: URL(fileURLWithPath: recipe.receipt.path + ".partial"))
+        let parent = try start(runtime: runtime, arguments: ["-e", recipe.code], readinessStage: "fork-parent")
+        defer { stop(parent) }
+        try await waitReady(parent, phase: .forkParent)
+        try parent.input.fileHandleForWriting.write(contentsOf: Data("fork\n".utf8))
+        try await waitExited(parent)
+        parent.process.waitUntilExit()
+        try await waitCapturedEOF(parent)
+        XCTAssertEqual(parent.process.terminationStatus, 1)
+        XCTAssertFalse(parent.capture.ready)
+        XCTAssertTrue(parent.diagnostics.text.contains("fixture-stage:fork-child-error"))
+        XCTAssertTrue(parent.diagnostics.text.contains("fixture-stage:fork-child-joined"))
+        XCTAssertEqual(
+            try DesktopRuntimeUsageLease.withReclaimableEpoch(cache: cache, epoch: runtime.lastPathComponent, currentEpoch: String(
+                repeating: "0",
+                count: 64
+            ), operation: { _ in true }),
+            true
+        )
+    }
+
+    func testActualForkChildDisconnectDrainsAfterOwnedParentDeathAndReleasesEpoch() async throws {
+        let runtime = try fixture(tag: "fork-disconnect")
+        let recipe = try forkRecipe()
+        let parent = try start(runtime: runtime, arguments: ["-e", recipe.code], readinessStage: "fork-parent")
+        defer { stop(parent) }
+        try await waitReady(parent, phase: .forkParent)
+        try parent.input.fileHandleForWriting.write(contentsOf: Data("fork\n".utf8))
+        try await waitReady(parent)
+        let ownedChild = try CatalogFixtureChild(
+            parent: parent.process, receipt: recipe.receipt,
+            images: [runtime.appendingPathComponent("runtime-exec").path, runtime.appendingPathComponent("node").path],
+            node: runtime.appendingPathComponent("node"),
+            joined: { parent.diagnostics.text.contains("fixture-stage:fork-child-joined") }
+        )
+        try ownedChild.tryAdopt()
+        XCTAssertNotNil(ownedChild.identity)
+        addTeardownBlock { try await ownedChild.cleanup(sendExit: {}) }
+        let current = String(repeating: "0", count: 64)
+        XCTAssertNil(try DesktopRuntimeUsageLease.withReclaimableEpoch(
+            cache: cache,
+            epoch: runtime.lastPathComponent,
+            currentEpoch: current,
+            operation: { _ in true }
+        ))
+        try ownedChild.killControllerAfterReady()
+        try await waitExited(parent)
+        parent.process.waitUntilExit()
+        try await ownedChild.cleanup(sendExit: {})
+        try await waitCapturedEOF(parent)
+        XCTAssertEqual(parent.process.terminationReason, .uncaughtSignal)
+        XCTAssertEqual(parent.process.terminationStatus, SIGKILL)
+        XCTAssertTrue(parent.diagnostics.text.contains("fixture-stage:fork-child-disconnected"))
+        XCTAssertEqual(
+            try DesktopRuntimeUsageLease
+                .withReclaimableEpoch(cache: cache, epoch: runtime.lastPathComponent, currentEpoch: current, operation: { _ in true }),
+            true
+        )
     }
 
     func testCleanupRefusesHeldCurrentAndLegacyEpochsAndActuallyRemovesIdleCode() throws {
