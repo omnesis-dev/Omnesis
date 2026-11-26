@@ -16,10 +16,11 @@ import {
   link,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import { join, dirname, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
+import { runInNewContext } from "node:vm";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { spawnOwnedChildProcess, ownedProcessCleanupReceipt } from "@omnesis/core";
 import { inventoryBundle } from "./native-inventory.mjs";
@@ -591,4 +592,133 @@ posix("input readers refuse actual hard links, symlinks and directories", async 
     await expect(reader(join(root, "symbolic.json"), 64)).rejects.toThrow();
     await expect(reader(root, 64)).rejects.toThrow();
   }
+});
+
+posix("relay SQLite 13.2 prebuilt layout without compiled binding is selected", async () => {
+  const input = await inputs();
+  const root = join(input.runtime, "packages/cloud-relay/node_modules/better-sqlite3");
+  await rm(join(root, "build"), { recursive: true });
+  await put(
+    join(root, "prebuilds/darwin-arm64.node"),
+    Buffer.concat([macho(), Buffer.from("prebuilt relay")]),
+  );
+  const path = join(input.runtime, "desktop-runtime.json");
+  const manifest = JSON.parse(await readFile(path));
+  manifest.inventory = (await inventoryBundle(input.runtime, "arm64")).filter(
+    (item) => item.path !== "desktop-runtime.json",
+  );
+  await writeFile(path, JSON.stringify(manifest));
+  await prepareNativeCompositionServices(input);
+  const result = JSON.parse(await readFile(join(input.output, "qa-services.json")));
+  expect(result.sqlite.binding).toBe(
+    "packages/cloud-relay/node_modules/better-sqlite3/prebuilds/darwin-arm64.node",
+  );
+});
+
+async function refreshRuntimeInventory(input) {
+  const path = join(input.runtime, "desktop-runtime.json");
+  const manifest = JSON.parse(await readFile(path));
+  manifest.inventory = (await inventoryBundle(input.runtime, "arm64")).filter(
+    (item) => item.path !== "desktop-runtime.json",
+  );
+  await writeFile(path, JSON.stringify(manifest));
+}
+
+async function pinnedLoaderSelection(root, candidates, relay = true) {
+  // Execute the actual pinned loader with native loading intercepted; no addon runs.
+  const consumer = relay
+    ? createRequire(new URL("../../packages/cloud-relay/src/accounts.ts", import.meta.url))
+    : createRequire(import.meta.url);
+  const manifest = consumer.resolve("better-sqlite3/package.json");
+  expect(JSON.parse(await readFile(manifest)).version).toBe(relay ? "13.2.0" : "13.1.1");
+  const exports = {};
+  const builtinRequire = createRequire(import.meta.url);
+  runInNewContext(await readFile(join(dirname(manifest), "lib/binding.js"), "utf8"), {
+    exports,
+    module: {},
+    __dirname: join(root, "lib"),
+    process: { platform: "darwin", arch: "arm64" },
+    require(name) {
+      if (name === "fs") return { existsSync: (path) => candidates.has(path) };
+      if (name === "path") return builtinRequire("node:path");
+      return name;
+    },
+  });
+  return exports.getBinding();
+}
+
+posix.each([
+  [
+    "Debug",
+    [
+      "build/Debug/better_sqlite3.node",
+      "build/Release/better_sqlite3.node",
+      "prebuilds/darwin-arm64.node",
+    ],
+  ],
+  ["Release", ["build/Release/better_sqlite3.node", "prebuilds/darwin-arm64.node"]],
+  ["prebuilt", ["prebuilds/darwin-arm64.node"]],
+])("relay SQLite %s precedence agrees with the actual pinned loader", async (_name, candidates) => {
+  const input = await inputs();
+  const relativeRoot = "packages/cloud-relay/node_modules/better-sqlite3";
+  const root = join(input.runtime, relativeRoot);
+  await rm(join(root, "build"), { recursive: true });
+  for (const name of candidates)
+    await put(join(root, name), Buffer.concat([macho(), Buffer.from(name)]));
+  const selected = await pinnedLoaderSelection(
+    root,
+    new Set(candidates.map((name) => join(root, name))),
+  );
+  expect(selected).toBe(join(root, candidates[0]));
+  await refreshRuntimeInventory(input);
+  await prepareNativeCompositionServices(input);
+  const result = JSON.parse(await readFile(join(input.output, "qa-services.json")));
+  expect(result.sqlite.binding).toBe(`${relativeRoot}/${candidates[0]}`);
+  expect(result.sqlite.sha256).toBe(sha(await readFile(selected)));
+});
+
+posix.each(["missing", "Debug-wrong-architecture", "Release-wrong-architecture", "Debug-escape"])(
+  "relay SQLite selected binding refuses %s without falling through",
+  async (failure) => {
+    const input = await inputs();
+    const root = join(input.runtime, "packages/cloud-relay/node_modules/better-sqlite3");
+    await rm(join(root, "build"), { recursive: true });
+    if (failure !== "missing") await put(join(root, "prebuilds/darwin-arm64.node"), macho());
+    if (failure.endsWith("wrong-architecture")) {
+      const bytes = macho();
+      bytes.writeUInt32LE(0x01000007, 4);
+      await put(join(root, `build/${failure.split("-")[0]}/better_sqlite3.node`), bytes);
+    }
+    if (failure === "Debug-escape") {
+      await mkdir(join(root, "build/Debug"), { recursive: true });
+      await symlink(
+        relative(
+          join(root, "build/Debug"),
+          join(input.runtime, "node_modules/better-sqlite3/build/Release/better_sqlite3.node"),
+        ),
+        join(root, "build/Debug/better_sqlite3.node"),
+      );
+    }
+    // Wrong-architecture input is already rejected by the unchanged runtime inventory.
+    if (failure.endsWith("wrong-architecture")) {
+      await expect(prepareNativeCompositionServices(input)).rejects.toThrow(
+        /architecture|inventory/u,
+      );
+    } else {
+      await refreshRuntimeInventory(input);
+      await expect(prepareNativeCompositionServices(input)).rejects.toThrow(
+        failure === "missing" ? "binding is missing" : "binding escapes its package",
+      );
+    }
+    await expect(lstat(input.output)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+posix("reviewed SQLite 13.1 loader prefers prebuilt unlike 13.2", async () => {
+  const root = join(await temporary(), "sqlite");
+  const prebuilt = join(root, "prebuilds/darwin-arm64.node");
+  const debug = join(root, "build/Debug/better_sqlite3.node");
+  const candidates = new Set([prebuilt, debug]);
+  expect(await pinnedLoaderSelection(root, candidates, false)).toBe(prebuilt);
+  expect(await pinnedLoaderSelection(root, candidates, true)).toBe(debug);
 });

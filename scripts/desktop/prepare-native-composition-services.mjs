@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { constants } from "node:fs";
+import { constants, existsSync } from "node:fs";
 import { cp, lstat, mkdir, open, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createHash, X509Certificate } from "node:crypto";
 import { builtinModules, createRequire } from "node:module";
@@ -235,9 +235,22 @@ export async function prepareNativeCompositionServices({ runtime, output, archit
       sqlitePackage.version !== lock.packages[lockKey].version
     )
       throw new Error("Relay SQLite differs from its exact workspace lock record");
-    const binding = await realpath(
-      createRequire(sqliteManifest).resolve("./build/Release/better_sqlite3.node"),
-    );
+    // Reviewed pinned loaders differ: 13.1.1 prefers prebuilt, while 13.2.0
+    // prefers Debug then Release. Never audit a fallback when the loader selects a compiled file.
+    if (!["13.1.1", "13.2.0"].includes(sqlitePackage.version))
+      throw new Error("Relay SQLite loader version has not been reviewed");
+    const compiledBindings = [
+      join(sqliteRoot, "build/Debug/better_sqlite3.node"),
+      join(sqliteRoot, "build/Release/better_sqlite3.node"),
+    ];
+    const prebuiltBinding = join(sqliteRoot, `prebuilds/darwin-${architecture}.node`);
+    const candidates =
+      sqlitePackage.version === "13.1.1"
+        ? [prebuiltBinding, ...compiledBindings]
+        : [...compiledBindings, prebuiltBinding];
+    const selectedBinding = candidates.find((path) => existsSync(path));
+    if (!selectedBinding) throw new Error("Relay SQLite binding is missing");
+    const binding = await realpath(selectedBinding);
     if (!inside(sqliteRoot, binding)) throw new Error("Relay SQLite binding escapes its package");
     const bindingBytes = await file(binding, 64 * 1024 * 1024);
     if (!machoArchitectures(bindingBytes)?.includes(architecture))
