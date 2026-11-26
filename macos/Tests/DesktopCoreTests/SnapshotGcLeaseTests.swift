@@ -15,6 +15,8 @@ final class SnapshotGcLeaseTests: XCTestCase {
     private var scope: DesktopDataUsageLease.Scope!
     private var id = ""
     private var children: [Process] = []
+    private var errorReaders: [FileHandle] = []
+    private var startedChildren = Set<ObjectIdentifier>()
 
     override func setUpWithError() throws {
         home = URL(fileURLWithPath: "/tmp").appendingPathComponent("omnesis-snapshot-gc-" + UUID().uuidString)
@@ -76,10 +78,36 @@ final class SnapshotGcLeaseTests: XCTestCase {
 
     override func tearDownWithError() throws {
         for child in children where child.isRunning {
-            kill(child.processIdentifier, SIGKILL)
+            guard kill(child.processIdentifier, SIGKILL) == 0 || errno == ESRCH else {
+                throw FixtureFailure.readiness("Owned fixture cleanup signal refused; readers retained")
+            }
+            let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+            while child.isRunning, ContinuousClock.now < deadline {
+                usleep(10000)
+            }
+            guard !child.isRunning else { throw FixtureFailure.readiness("Owned fixture cleanup unconfirmed; readers retained") }
             child.waitUntilExit()
         }
+        // Joining an already-exited successful launch is nonblocking. Never wait on
+        // an unlaunched Process retained solely for its failed-run reader resources.
+        for child in children where startedChildren.contains(ObjectIdentifier(child)) {
+            child.waitUntilExit()
+        }
+        try closeReadersAfterJoin()
         try FileManager.default.removeItem(at: home)
+    }
+
+    private func closeReadersAfterJoin() throws {
+        guard !children.contains(where: \.isRunning) else {
+            throw FixtureFailure.readiness("Owned fixture still running; readers retained")
+        }
+        var failed = false
+        for reader in errorReaders {
+            reader.readabilityHandler = nil
+            do { try reader.close() } catch { failed = true }
+        }
+        guard !failed else { throw FixtureFailure.readiness("Owned fixture reader closure unconfirmed") }
+        errorReaders.removeAll()
     }
 
     private func makeRuntime(productionHost: Bool = false) throws {
@@ -102,7 +130,7 @@ final class SnapshotGcLeaseTests: XCTestCase {
         try FileManager.default.copyItem(at: XCTUnwrap(tool), to: stage.appendingPathComponent("runtime-exec"))
         try FileManager.default.copyItem(at: node, to: stage.appendingPathComponent("node"))
         try FileManager.default.copyItem(at: inputs.appendingPathComponent("private-key"), to: stage.appendingPathComponent("test-inputs"))
-        let preload = "import{fileURLToPath}from'node:url';Object.defineProperty(process,'execPath',{value:fileURLToPath(new URL('../../../runtime-exec',import.meta.url)),writable:false,configurable:false});"
+        let preload = "import{writeSync}from'node:fs';if(process.env.OMNESIS_TEST_READY_STAGES==='1')writeSync(2,'fixture-stage:snapshot-preload\\n');import{fileURLToPath}from'node:url';Object.defineProperty(process,'execPath',{value:fileURLToPath(new URL('../../../runtime-exec',import.meta.url)),writable:false,configurable:false});"
         try Data(preload.utf8).write(to: stage.appendingPathComponent("packages/core/dist/managed-runtime-bootstrap.js"))
         let host = """
         import{readFileSync,fstatSync}from'node:fs';import{installManagedRuntimeLauncher,assertManagedDesktopSnapshotGcAuthority,managedRuntimeExecutableInvocation}from'../../../../test-inputs/node-command.js';
@@ -165,18 +193,51 @@ final class SnapshotGcLeaseTests: XCTestCase {
         let input: Pipe
         let output: Pipe
         let errors: Pipe
+        let diagnostics: Capture
     }
 
+    private final class Capture: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = ""
+        func append(_ bytes: Data) {
+            lock.lock()
+            defer { lock.unlock() }
+            value = String((value + String(decoding: bytes, as: UTF8.self)).suffix(8192))
+        }
+
+        var text: String {
+            lock.lock()
+            defer { lock.unlock() }
+            return value
+        }
+    }
+
+    private enum FixtureFailure: Error { case readiness(String), unexpectedFixedReply }
+
     private func start(_ executable: URL, _ args: [String]) throws -> Running {
-        let process = Process(), input = Pipe(), output = Pipe(), errors = Pipe()
+        guard errorReaders.count < 16 else { throw FixtureFailure.readiness("Owned fixture reader bound") }
+        let process = Process(), input = Pipe(), output = Pipe(), errors = Pipe(), diagnostics = Capture()
+        // Register before launch: a failed run still owns a live reader callback and pipes.
+        errorReaders.append(errors.fileHandleForReading)
+        children.append(process)
+        guard fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1) == 0 else {
+            throw FixtureFailure.readiness("Owned fixture input setup refused")
+        }
+        process.environment = ProcessInfo.processInfo.environment.merging([
+            "OMNESIS_TEST_READY_STAGES": "1",
+            "OMNESIS_RUNTIME_MODE": "test",
+            "OMNESIS_TELEMETRY": "0",
+            "OMNESIS_E2E_NATIVE_SNAPSHOT": "1",
+        ]) { _, value in value }
+        errors.fileHandleForReading.readabilityHandler = { diagnostics.append($0.availableData) }
         process.executableURL = executable
         process.arguments = args
         process.standardInput = input
         process.standardOutput = output
         process.standardError = errors
         try process.run()
-        children.append(process)
-        return Running(process: process, input: input, output: output, errors: errors)
+        startedChildren.insert(ObjectIdentifier(process))
+        return Running(process: process, input: input, output: output, errors: errors, diagnostics: diagnostics)
     }
 
     private func phaseOne(prepare: String = "") throws -> Running {
@@ -184,11 +245,16 @@ final class SnapshotGcLeaseTests: XCTestCase {
         let encoded = try encodedScope()
         let script = """
         import{acquireGatewayLock}from\(literal(lock));import{spawnSync}from'node:child_process';
+        function stage(name){process.stderr.write('fixture-stage:'+name+'\\n');}
+        stage('phase-one-enter');stage('install-lock-before');
         await acquireGatewayLock(\(literal(scope.configDir + ".bootstrap")),{waitMs:0});
+        stage('install-lock-held');stage('prepare-before');
         \(prepare)
+        stage('prepare-after');stage('reserve-before');
         let result=spawnSync(process.execPath,['--gc-reserve',\(literal(
             id
         )),\(literal(encoded))],{env:process.env,stdio:['ignore','ignore','pipe']});
+        stage('reserve-after');
         if(result.status!==0){process.stderr.write(result.stderr);process.exit(94)}
         process.stdout.write('reserved\\n');process.stdin.resume();process.stdin.once('data',()=>process.execve(process.execPath,[process.execPath,'--gc-snapshot',\(
             literal(id)
@@ -223,11 +289,39 @@ final class SnapshotGcLeaseTests: XCTestCase {
                 if bytes.count > 4096 { break }
             }
         }
-        if !running.process.isRunning {
-            let error = try running.errors.fileHandleForReading.readToEnd() ?? Data()
-            XCTFail("Native fixture exited: " + String(decoding: error, as: UTF8.self))
-        }
-        throw DesktopDataUsageLease.Failure.missingAuthority
+        throw FixtureFailure.readiness(readinessDiagnostics(running, partialBytes: bytes.count))
+    }
+
+    private func requireLine(_ running: Running, _ expected: String) throws {
+        guard try line(running) == expected else { throw FixtureFailure.unexpectedFixedReply }
+    }
+
+    private func readinessDiagnostics(_ running: Running, partialBytes: Int) -> String {
+        var path = [CChar](repeating: 0, count: 4096)
+        let known = proc_pidpath(running.process.processIdentifier, &path, UInt32(path.count)) > 0
+        let actual = known ? String(cString: path) : ""
+        let image = actual == runtime.appendingPathComponent("node").path ? "node" : actual == runtime
+            .appendingPathComponent("runtime-exec").path ? "runtime-exec" : known ? "other" : "unavailable"
+        let allowed: Set = [
+            "snapshot-preload",
+            "phase-one-enter",
+            "install-lock-before",
+            "install-lock-held",
+            "prepare-before",
+            "prepare-after",
+            "reserve-before",
+            "reserve-after",
+        ]
+        let text = running.diagnostics.text
+        let stages = text.split(separator: "\n").compactMap { line -> String? in
+            let prefix = "fixture-stage:"
+            guard line.hasPrefix(prefix) else { return nil }
+            let value = String(line.dropFirst(prefix.count))
+            return allowed.contains(value) ? value : nil
+        }.suffix(16).joined(separator: ",")
+        let state = running.process.isRunning ? "running" : "exited"
+        let code = running.process.isRunning ? "unknown" : String(running.process.terminationStatus)
+        return "Snapshot reserved-line readiness absent; process=\(state); exit=\(code); image=\(image); stdoutPartialBytes=\(partialBytes); stderrBytes=\(text.utf8.count); stages=\(stages); nativeCode=\(DesktopReadinessFailureDiagnostic.nativeRefusalCode(text))"
     }
 
     private func exited(_ child: Process) throws {
@@ -238,18 +332,54 @@ final class SnapshotGcLeaseTests: XCTestCase {
         guard !child.isRunning else {
             kill(child.processIdentifier, SIGKILL)
             child.waitUntilExit()
-            throw DesktopDataUsageLease.Failure.inUse
+            throw FixtureFailure.readiness("Owned fixture exit deadline")
         }
+    }
+
+    func testFailedLaunchReaderIsRetainedUntilOwnedCleanup() throws {
+        XCTAssertThrowsError(try start(home.appendingPathComponent("invented-absent-tool"), []))
+        let reader = try XCTUnwrap(errorReaders.last)
+        let descriptor = reader.fileDescriptor
+        XCTAssertNotNil(reader.readabilityHandler)
+        XCTAssertGreaterThanOrEqual(fcntl(descriptor, F_GETFD), 0)
+        try closeReadersAfterJoin()
+        XCTAssertNil(reader.readabilityHandler)
+        let closed = fcntl(descriptor, F_GETFD), closedErrno = errno
+        XCTAssertEqual(closed, -1)
+        XCTAssertEqual(closedErrno, EBADF)
+    }
+
+    func testLiveChildReaderCannotCloseBeforeActualEOFAndJoin() throws {
+        let child = try start(URL(fileURLWithPath: "/bin/cat"), [])
+        let reader = try XCTUnwrap(errorReaders.last)
+        XCTAssertThrowsError(try closeReadersAfterJoin())
+        XCTAssertNotNil(reader.readabilityHandler)
+        try child.input.fileHandleForWriting.close()
+        try exited(child.process)
+        child.process.waitUntilExit()
+        try closeReadersAfterJoin()
+        XCTAssertNil(reader.readabilityHandler)
+    }
+
+    func testRequiredLineRejectsUnknownReplyBeforeContinuation() throws {
+        let child = try start(node, ["-e", "process.stdout.write('not-reserved\\n');"])
+        var continued = false
+        XCTAssertThrowsError(try {
+            try requireLine(child, "reserved")
+            continued = true
+        }())
+        XCTAssertFalse(continued)
+        try exited(child.process)
     }
 
     func testActualExecveRetainsInstallOwnershipAndReestablishesExclusivePublication() throws {
         let competing = try competitor()
-        XCTAssertEqual(try line(competing), "competitor")
+        try requireLine(competing, "competitor")
         let owner = try phaseOne()
-        XCTAssertEqual(try line(owner), "reserved")
+        try requireLine(owner, "reserved")
         let pid = owner.process.processIdentifier
         try owner.input.fileHandleForWriting.write(contentsOf: Data("go".utf8))
-        XCTAssertEqual(try line(owner), "performed:" + String(pid))
+        try requireLine(owner, "performed:" + String(pid))
         try competing.input.fileHandleForWriting.write(contentsOf: Data("try".utf8))
         try exited(competing.process)
         XCTAssertEqual(
@@ -271,7 +401,7 @@ final class SnapshotGcLeaseTests: XCTestCase {
 
     func testOrphanReservationBlocksBothCodeCleanupPathsWithoutExpiry() throws {
         let owner = try phaseOne()
-        XCTAssertEqual(try line(owner), "reserved")
+        try requireLine(owner, "reserved")
         kill(owner.process.processIdentifier, SIGKILL)
         owner.process.waitUntilExit()
         let cache = runtime.deletingLastPathComponent()
@@ -292,16 +422,16 @@ final class SnapshotGcLeaseTests: XCTestCase {
 
     func testKnownOrphanReservationCanBeRetriedOnlyUnderTheNewActualInstallOwner() throws {
         let original = try phaseOne()
-        XCTAssertEqual(try line(original), "reserved")
+        try requireLine(original, "reserved")
         kill(original.process.processIdentifier, SIGKILL)
         try exited(original.process)
         let resumed = try phaseOne()
-        XCTAssertEqual(try line(resumed), "reserved")
+        try requireLine(resumed, "reserved")
         let path = runtime.deletingLastPathComponent().appendingPathComponent(".snapshot-reservations/" + id + ".json")
         let (_, value) = try DesktopSnapshotGcRecords.read(path)
         XCTAssertEqual((value["pid"] as? NSNumber)?.int32Value, resumed.process.processIdentifier)
         try resumed.input.fileHandleForWriting.write(contentsOf: Data("go".utf8))
-        XCTAssertEqual(try line(resumed), "performed:" + String(resumed.process.processIdentifier))
+        try requireLine(resumed, "performed:" + String(resumed.process.processIdentifier))
         try resumed.input.fileHandleForWriting.write(contentsOf: Data("exit".utf8))
         try exited(resumed.process)
         XCTAssertEqual(resumed.process.terminationStatus, 0)
@@ -309,7 +439,7 @@ final class SnapshotGcLeaseTests: XCTestCase {
 
     func testExplicitCancellationReleasesOnlyTheKnownReservationBeforeItsPlannedIntentDisappears() throws {
         let original = try phaseOne()
-        XCTAssertEqual(try line(original), "reserved")
+        try requireLine(original, "reserved")
         kill(original.process.processIdentifier, SIGKILL)
         try exited(original.process)
         let lock = runtime.appendingPathComponent("test-inputs/gateway-lock.js").absoluteString
@@ -330,7 +460,7 @@ final class SnapshotGcLeaseTests: XCTestCase {
             "-e",
             script,
         ])
-        XCTAssertEqual(try line(cancellation), "cancelled")
+        try requireLine(cancellation, "cancelled")
         try exited(cancellation.process)
         XCTAssertEqual(cancellation.process.terminationStatus, 0)
         let cache = runtime.deletingLastPathComponent()
@@ -347,7 +477,7 @@ final class SnapshotGcLeaseTests: XCTestCase {
 
     func testChangedLedgerRefusesNativeHandoffWithoutConsumingReservation() throws {
         let owner = try phaseOne()
-        XCTAssertEqual(try line(owner), "reserved")
+        try requireLine(owner, "reserved")
         let path = URL(fileURLWithPath: scope.configDir + ".bootstrap/code-retention.json")
         var ledger = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: path)) as? [String: Any])
         var pending = try XCTUnwrap(ledger["pending"] as? [String: Any])
@@ -407,11 +537,11 @@ final class SnapshotGcLeaseTests: XCTestCase {
                 .lastPathComponent)),mode:'redundant-snapshot',phase:'planned',target:witnesses[0],keeper:witnesses[1]}});
         """
         let owner = try phaseOne(prepare: prepare)
-        XCTAssertEqual(try line(owner), "reserved")
+        try requireLine(owner, "reserved")
         try owner.input.fileHandleForWriting.write(contentsOf: Data("go".utf8))
         try exited(owner.process)
         let output = try owner.output.fileHandleForReading.readToEnd() ?? Data()
-        let diagnostic = try String(decoding: owner.errors.fileHandleForReading.readToEnd() ?? Data(), as: UTF8.self)
+        let diagnostic = "nativeCode=" + DesktopReadinessFailureDiagnostic.nativeRefusalCode(owner.diagnostics.text)
         XCTAssertEqual(
             owner.process.terminationStatus,
             0,

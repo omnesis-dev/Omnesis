@@ -224,7 +224,7 @@ final class RuntimeUsageLeaseTests: XCTestCase {
             "preload-enter", "controller-script-enter", "controller-ready-written", "exclusive-host-enter",
             "exclusive-ready-written", "scrub-enter", "scrub-complete", "catalog-parent-enter", "catalog-child-spawned",
             "catalog-socket-observed", "catalog-ready-written", "fork-parent-enter", "fork-child-spawned",
-            "fork-child-enter", "fork-child-sent", "fork-parent-message", "fork-ready-written",
+            "fork-child-enter", "fork-child-sent", "fork-parent-message", "fork-ready-written", "relative-node-enter",
             "fork-parent-initialized", "fork-child-joined", "fork-child-disconnected", "fork-child-error",
         ]
         for mode in [
@@ -246,7 +246,7 @@ final class RuntimeUsageLeaseTests: XCTestCase {
             let stage = String(line.dropFirst(prefix.count))
             return allowed.contains(stage) ? stage : nil
         }.suffix(24).joined(separator: ",")
-        return "image=\(image); stdoutBytes=\(running.capture.text.utf8.count); stderrBytes=\(running.diagnostics.text.utf8.count); stdout[\(pipeState(running.output.fileHandleForReading))]; stderr[\(pipeState(running.errors.fileHandleForReading))]; stages=\(stages); nativeRefusal=\(running.diagnostics.text.contains("The managed runtime lease could not be established"))"
+        return "image=\(image); stdoutBytes=\(running.capture.text.utf8.count); stderrBytes=\(running.diagnostics.text.utf8.count); stdout[\(pipeState(running.output.fileHandleForReading))]; stderr[\(pipeState(running.errors.fileHandleForReading))]; stages=\(stages); nativeRefusal=\(running.diagnostics.text.contains("The managed runtime lease could not be established")); nativeCode=\(DesktopReadinessFailureDiagnostic.nativeRefusalCode(running.diagnostics.text))"
     }
 
     private enum ReadinessPhase: String, Sendable { case stdout, forkParent }
@@ -394,8 +394,9 @@ final class RuntimeUsageLeaseTests: XCTestCase {
                 "--external",
                 "./node",
                 "-e",
-                "process.stdout.write('ready:'+process.execPath);process.stdin.once('data',()=>process.exit(0));process.stdin.resume();",
-            ]
+                "process.stderr.write('fixture-stage:relative-node-enter\\n');process.stdout.write('ready:'+process.execPath);process.stdin.once('data',()=>process.exit(0));process.stdin.resume();",
+            ],
+            readinessStage: "relative-node"
         )
         defer { stop(relative) }
         try await waitReady(relative)

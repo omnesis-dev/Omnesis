@@ -100,6 +100,207 @@ final class DataUsageLeaseTests: XCTestCase {
         XCTAssertFalse(capture.timingSummary.contains("unknown:emitted"))
     }
 
+    func testReadinessStackFactsNeverExposeUnknownContentAndEnforceBound() {
+        let facts = DesktopReadinessFailureDiagnostic
+            .stackFacts(Data("dyld node::Start SSL_read SecTrustEvaluate mach_msg private-fixture-secret /private/unknown".utf8))
+        XCTAssertTrue(facts.contains("dyldMention=true"))
+        XCTAssertTrue(facts.contains("nodeMention=true"))
+        XCTAssertTrue(facts.contains("tlsMention=true"))
+        XCTAssertTrue(facts.contains("securityMention=true"))
+        XCTAssertTrue(facts.contains("kernelMention=true"))
+        XCTAssertFalse(facts.contains("private-fixture-secret"))
+        XCTAssertFalse(facts.contains("/private/unknown"))
+        XCTAssertFalse(DesktopReadinessFailureDiagnostic.stackFacts(Data("unknown-only-secret".utf8)).contains("unknown-only-secret"))
+        XCTAssertEqual(
+            DesktopReadinessFailureDiagnostic.stackFacts(Data(
+                repeating: 0,
+                count: DesktopReadinessFailureDiagnostic.maximumStackBytes + 1
+            )),
+            "bounded=false"
+        )
+    }
+
+    func testReadinessSamplerPolicyRefusesChangedIdentityImageAndBounds() throws {
+        let identity = try DesktopBackgroundProcessIdentity.read(getpid())
+        let node = URL(fileURLWithPath: "/invented/owned/node")
+        let target = DesktopReadinessFailureDiagnostic.Target(identity: identity, node: node)
+        XCTAssertTrue(DesktopReadinessFailureDiagnostic.verifies(target, identity: identity, image: node.path))
+        XCTAssertFalse(DesktopReadinessFailureDiagnostic.verifies(target, identity: nil, image: node.path))
+        XCTAssertFalse(DesktopReadinessFailureDiagnostic.verifies(target, identity: identity, image: "/invented/foreign/node"))
+        let changed = DesktopBackgroundProcessIdentity(
+            pid: identity.pid,
+            parent: identity.parent,
+            startedSeconds: identity.startedSeconds + 1,
+            startedMicroseconds: identity.startedMicroseconds
+        )
+        XCTAssertFalse(DesktopReadinessFailureDiagnostic.verifies(target, identity: changed, image: node.path))
+        XCTAssertNil(DesktopReadinessFailureDiagnostic.refusal(bytes: 32, elapsed: .seconds(1), ownedFile: true))
+        XCTAssertEqual(DesktopReadinessFailureDiagnostic.refusal(bytes: 32, elapsed: .seconds(5), ownedFile: true), "deadline")
+        XCTAssertEqual(
+            DesktopReadinessFailureDiagnostic
+                .refusal(bytes: Int64(DesktopReadinessFailureDiagnostic.maximumStackBytes + 1), elapsed: .seconds(1), ownedFile: true),
+            "oversize"
+        )
+        XCTAssertEqual(DesktopReadinessFailureDiagnostic.refusal(bytes: 32, elapsed: .seconds(1), ownedFile: false), "file-refused")
+    }
+
+    @MainActor
+    func testReadinessSamplerRefusesActualNonNodeIdentityBeforeSpawning() async throws {
+        let target = try DesktopReadinessFailureDiagnostic.Target(
+            identity: DesktopBackgroundProcessIdentity.read(getpid()),
+            node: URL(fileURLWithPath: "/invented/owned/node")
+        )
+        let result = await DesktopReadinessFailureDiagnostic.sample(target)
+        XCTAssertEqual(result, "result=identity-refused")
+    }
+
+    func testSamplerLifecycleMetadataFailureCannotDisableOwnedChildCleanup() throws {
+        let identity = try DesktopBackgroundProcessIdentity.read(getpid())
+        let cases: [(DesktopBackgroundProcessIdentity?, DesktopBackgroundProcessIdentity?, String?)] = [
+            (nil, identity, "/usr/bin/sample"),
+            (identity, nil, "/usr/bin/sample"),
+            (identity, identity, "/invented/other"),
+        ]
+        for (initial, observed, image) in cases {
+            let verified = DesktopReadinessFailureDiagnostic.verifiesSampler(initial: initial, current: observed, image: image)
+            XCTAssertFalse(verified)
+            var lifecycle = DesktopReadinessFailureDiagnostic.SamplerLifecycle()
+            XCTAssertEqual(lifecycle.advance(.running, elapsed: .zero, refused: !verified), .terminate)
+            XCTAssertEqual(lifecycle.advance(.running, elapsed: .milliseconds(999), refused: !verified), .wait)
+            XCTAssertEqual(lifecycle.advance(.running, elapsed: .seconds(1), refused: !verified), .kill)
+            XCTAssertEqual(lifecycle.advance(.joined, elapsed: .milliseconds(1010), refused: !verified), .joined)
+            XCTAssertEqual(lifecycle.advance(.running, elapsed: .seconds(7), refused: !verified), .finished)
+        }
+        var deadline = DesktopReadinessFailureDiagnostic.SamplerLifecycle()
+        XCTAssertEqual(deadline.advance(.running, elapsed: .seconds(4), refused: false), .wait)
+        XCTAssertEqual(deadline.advance(.running, elapsed: .seconds(5), refused: false), .terminate)
+        XCTAssertEqual(deadline.advance(.running, elapsed: .seconds(6), refused: false), .kill)
+        XCTAssertEqual(deadline.advance(.running, elapsed: .seconds(7), refused: false), .unconfirmed)
+        XCTAssertTrue(deadline.finished)
+        XCTAssertTrue(DesktopReadinessFailureDiagnostic.permitsSoleWaiter(defaultHandler: true, autoReaps: false))
+        XCTAssertFalse(DesktopReadinessFailureDiagnostic.permitsSoleWaiter(defaultHandler: false, autoReaps: false))
+        XCTAssertFalse(DesktopReadinessFailureDiagnostic.permitsSoleWaiter(defaultHandler: true, autoReaps: true))
+    }
+
+    func testSamplerLifecycleReapOrECHILDRevokesAllSignalAuthority() {
+        var reaped = DesktopReadinessFailureDiagnostic.SamplerLifecycle()
+        XCTAssertEqual(reaped.advance(.joined, elapsed: .zero, refused: false), .joined)
+        XCTAssertEqual(reaped.advance(.running, elapsed: .seconds(5), refused: true), .finished)
+        var lost = DesktopReadinessFailureDiagnostic.SamplerLifecycle()
+        XCTAssertEqual(lost.advance(.ownershipLost, elapsed: .zero, refused: true), .unconfirmed)
+        XCTAssertEqual(lost.advance(.running, elapsed: .seconds(6), refused: true), .finished)
+        var interrupted = DesktopReadinessFailureDiagnostic.SamplerLifecycle()
+        XCTAssertEqual(interrupted.advance(.interrupted, elapsed: .seconds(5), refused: true), .wait)
+        XCTAssertEqual(interrupted.advance(.interrupted, elapsed: .seconds(7), refused: true), .unconfirmed)
+    }
+
+    @MainActor
+    func testActualPinnedOwnedNodeSamplerPublishesOnlyJoinedBoundedPrivateStack() async throws {
+        try makeRuntime(host: "process.stdout.write('ready');process.stdin.resume();")
+        let process = Process(), output = Pipe(), input = Pipe(), capture = Capture()
+        let node = try XCTUnwrap(fixtureNode)
+        process.executableURL = node
+        process.arguments = ["-e", "process.stdout.write('ready');process.stdin.once('end',()=>process.exit(0));process.stdin.resume();"]
+        process.environment = [
+            "PATH": "/usr/bin:/bin",
+            "OMNESIS_RUNTIME_MODE": "test",
+            "OMNESIS_TELEMETRY": "0",
+            "OMNESIS_E2E_NATIVE_READINESS": "1",
+        ]
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        output.fileHandleForReading.readabilityHandler = { capture.append($0.availableData) }
+        defer { output.fileHandleForReading.readabilityHandler = nil
+            try? output.fileHandleForReading.close()
+        }
+        try process.run()
+        processes.append(process)
+        let owned = try? DesktopBackgroundProcessIdentity.read(process.processIdentifier)
+        var failure: Error?
+        do {
+            guard let owned else { throw TestFailure.diagnostics("Sampler target identity unavailable") }
+            let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+            while !capture.text.contains("ready"), process.isRunning, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            guard capture.text.contains("ready") else { throw TestFailure.diagnostics("Sampler target readiness absent") }
+            let target = DesktopReadinessFailureDiagnostic.Target(identity: owned, node: node)
+            var artifact: URL?
+            let result = await DesktopReadinessFailureDiagnostic.sample(target) { artifact = $0 }
+            // Fixed metadata only; the raw stack is never part of a failing assertion.
+            XCTAssertTrue(result.hasPrefix("result=collected,joined=true;"), result)
+            XCTAssertTrue((try? DesktopBackgroundProcessIdentity.read(process.processIdentifier)) == owned)
+            if let artifact {
+                var info = stat()
+                XCTAssertEqual(lstat(artifact.path, &info), 0)
+                XCTAssertEqual(info.st_mode & 0o777, 0o600)
+                XCTAssertEqual(info.st_nlink, 1)
+                XCTAssertGreaterThan(info.st_size, 0)
+                XCTAssertLessThanOrEqual(info.st_size, Int64(DesktopReadinessFailureDiagnostic.maximumStackBytes))
+            } else { XCTFail("Joined sampler did not publish an artifact") }
+        } catch { failure = error }
+        // EOF controls only our own pipe; no synchronous main-actor wait on a live process.
+        try? input.fileHandleForWriting.close()
+        var deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while process.isRunning, ContinuousClock.now < deadline {
+            do { try await Task.sleep(for: .milliseconds(10)) } catch { usleep(10000) }
+        }
+        if process.isRunning, let owned, (try? DesktopBackgroundProcessIdentity.read(process.processIdentifier)) == owned {
+            _ = Darwin.kill(process.processIdentifier, SIGKILL)
+            deadline = .now.advanced(by: .seconds(5))
+            while process.isRunning, ContinuousClock.now < deadline {
+                do { try await Task.sleep(for: .milliseconds(10)) } catch { usleep(10000) }
+            }
+        }
+        if process.isRunning {
+            uncertainChildRegistration = true
+            throw TestFailure.diagnostics("Owned sampler target cleanup unconfirmed")
+        }
+        if let failure { throw failure }
+    }
+
+    func testLiveDiagnosticBudgetSkipsIneligibleTargetsAndClaimsOnce() {
+        var budget = DesktopReadinessFailureDiagnostic.LiveObservationBudget()
+        XCTAssertFalse(budget.claim(eligible: false))
+        XCTAssertFalse(budget.spent)
+        XCTAssertFalse(budget.claim(eligible: false))
+        XCTAssertTrue(budget.claim(eligible: true))
+        XCTAssertTrue(budget.spent)
+        XCTAssertFalse(budget.claim(eligible: true))
+    }
+
+    func testNativeRefusalDiagnosticsKeepOnlyFixedCodes() {
+        let prefix = "The managed runtime lease could not be established: "
+        XCTAssertEqual(DesktopReadinessFailureDiagnostic.nativeRefusalCode(prefix + "inUse\n"), "inUse")
+        XCTAssertEqual(DesktopReadinessFailureDiagnostic.nativeRefusalCode(prefix + "private-fixture-secret\n"), "unknown")
+        XCTAssertEqual(DesktopReadinessFailureDiagnostic.nativeRefusalCode("private-fixture-secret"), "none")
+    }
+
+    func testGuidedScrubRejectsOutOfOrderCommandWithoutReady() async throws {
+        let script = scrubbedBackgroundModesScript(guided: true)
+        try makeRuntime(host: script)
+        let child = try start(["--data-use", encodedScope(), "--node", "-e", script], readinessStage: "shared-scrub")
+        try await waitReady(child, marker: "scrub-initialized")
+        try child.input.fileHandleForWriting.write(contentsOf: Data((scrubModes[1] + "\n").utf8))
+        try await waitExited(child)
+        XCTAssertEqual(child.process.terminationStatus, 1)
+        XCTAssertFalse(child.capture.text.contains("ready"))
+        XCTAssertFalse(child.diagnostics.text.contains("fixture-stage:scrub-before-"))
+    }
+
+    func testGuidedScrubEarlyEOFExitsWithoutReadyOrAnOperation() async throws {
+        let script = scrubbedBackgroundModesScript(guided: true)
+        try makeRuntime(host: script)
+        let child = try start(["--data-use", encodedScope(), "--node", "-e", script], readinessStage: "shared-scrub")
+        try await waitReady(child, marker: "scrub-initialized")
+        try child.input.fileHandleForWriting.close()
+        try await waitExited(child)
+        XCTAssertEqual(child.process.terminationStatus, 1)
+        XCTAssertFalse(child.capture.text.contains("ready"))
+        XCTAssertFalse(child.diagnostics.text.contains("fixture-stage:scrub-before-"))
+    }
+
     func testKilledGatewayDoesNotReleaseItsRawSdkDescendantsDataLease() async throws {
         try makeRuntime(host: "process.stdout.write('ready');process.stdin.resume();")
         let socket = home.appendingPathComponent("consumer.sock").path
@@ -111,7 +312,7 @@ final class DataUsageLeaseTests: XCTestCase {
             receipt: receipt,
             socket: socket
         )
-        let gateway = try start(["--data-use", encodedScope(), "--node", "-e", script])
+        let gateway = try start(["--data-use", encodedScope(), "--node", "-e", script], readinessStage: "raw-descendant-controller")
         let child = try trackChild(gateway, receipt: receipt, socket: socket)
         try await waitReady(gateway, catalog: child)
         try retire()
@@ -121,9 +322,9 @@ final class DataUsageLeaseTests: XCTestCase {
         try await waitExited(denied)
         XCTAssertEqual(denied.process.terminationStatus, 78)
         XCTAssertTrue(denied.diagnostics.text.contains("inUse"), denied.diagnostics.text)
-        try sendExit(socket)
+        try await child.cleanup { try self.sendExit(socket) }
         try await waitAbsent(socket)
-        let available = try start(exclusiveArguments())
+        let available = try start(exclusiveArguments(), readinessStage: "raw-descendant-released")
         try await waitReady(available)
     }
 
@@ -158,17 +359,35 @@ final class DataUsageLeaseTests: XCTestCase {
         try await waitExited(denied)
         XCTAssertEqual(denied.process.terminationStatus, 78)
         XCTAssertTrue(denied.diagnostics.text.contains("inUse"), denied.diagnostics.text)
-        try sendExit(socket)
+        try await child.cleanup { try self.sendExit(socket) }
         try await waitAbsent(socket)
         let available = try start(exclusiveArguments())
         try await waitReady(available)
     }
 
+    private let scrubModes = [
+        "--key-recovery",
+        "--background-start",
+        "--background-daemon",
+        "--background-retire",
+        "--verify-background-owner",
+        "--verify-background-retirement",
+        "--background-binding",
+        "--background-rebind",
+    ]
+
     func testSharedDataDescriptorCannotScrubEnvironmentAndEnterBackgroundControl() async throws {
-        let script = scrubbedBackgroundModesScript()
+        let script = scrubbedBackgroundModesScript(guided: true)
         try makeRuntime(host: script)
         let consumer = try start(["--data-use", encodedScope(), "--node", "-e", script], readinessStage: "shared-scrub")
-        try await waitReady(consumer)
+        // Original five-second startup; then eight separately commanded native denials.
+        // Each spawnSync retains its three-second bound, each observed phase five seconds.
+        // Final ready is required within the eighth phase: maximum declared composition45s.
+        try await waitReady(consumer, marker: "scrub-initialized")
+        for (index, mode) in scrubModes.enumerated() {
+            try consumer.input.fileHandleForWriting.write(contentsOf: Data((mode + "\n").utf8))
+            try await waitReady(consumer, marker: "scrub-after-" + mode, requireFinalReady: index == scrubModes.count - 1)
+        }
     }
 
     func testExclusiveDataDescriptorCannotScrubEnvironmentAndEnterBackgroundControl() async throws {
@@ -178,8 +397,34 @@ final class DataUsageLeaseTests: XCTestCase {
         try await waitReady(operation)
     }
 
-    private func scrubbedBackgroundModesScript() -> String {
-        """
+    private func scrubbedBackgroundModesScript(guided: Bool = false) -> String {
+        if guided {
+            return """
+            import {spawnSync} from 'node:child_process';
+            import {fstatSync} from 'node:fs';
+            const modes=\(literal(scrubModes));let index=0,pending='';
+            function stage(name){process.stderr.write('fixture-stage:'+name+'\\n');}
+            stage('scrub-enter');
+            if (!fstatSync(7).isFile()) throw new Error('Owned DATA descriptor was not installed');
+            process.stdin.setEncoding('utf8');
+            process.stdin.on('data',chunk=>{try{
+              pending+=chunk;if(pending.length>256)throw new Error('Invalid guided command');
+              while(pending.includes('\\n')){
+                const at=pending.indexOf('\\n'),mode=pending.slice(0,at);pending=pending.slice(at+1);
+                if(index>=modes.length||mode!==modes[index])throw new Error('Out of order guided command');
+                stage('scrub-before-'+mode);
+                const child=spawnSync(process.execPath,[mode,'invalid'],{env:{},stdio:['ignore','pipe','pipe','ignore','ignore','ignore','ignore',7],timeout:3000});
+                if(child.status!==78||!child.stderr.toString().includes('missingAuthority')||child.stdout.length!==0)throw new Error('DATA control boundary refusal missing');
+                stage('scrub-after-'+mode);index++;
+                if(index===modes.length){stage('scrub-complete');process.stdout.write('ready');}
+              }
+            }catch{stage('scrub-failed');process.exit(1)}});
+            process.stdin.once('end',()=>process.exit(index===modes.length?0:1));
+            stage('scrub-initialized');
+            process.stdin.resume();
+            """
+        }
+        return """
         import {spawnSync} from 'node:child_process';
         import {fstatSync} from 'node:fs';
         process.stderr.write('fixture-stage:scrub-enter\\n');
@@ -774,7 +1019,8 @@ final class DataUsageLeaseTests: XCTestCase {
         }
         var allowed: Set = [
             "preload-enter", "controller-script-enter", "controller-ready-written", "exclusive-host-enter",
-            "exclusive-ready-written", "scrub-enter", "scrub-complete", "catalog-parent-enter", "catalog-child-spawned",
+            "exclusive-ready-written", "scrub-enter", "scrub-initialized", "scrub-failed", "scrub-complete", "catalog-parent-enter",
+            "catalog-child-spawned",
             "catalog-socket-observed", "catalog-ready-written", "catalog-child-enter", "catalog-before-listen",
             "catalog-child-imported", "catalog-listening", "catalog-listen-error", "catalog-child-joined", "catalog-child-error",
             "fork-parent-enter",
@@ -800,7 +1046,7 @@ final class DataUsageLeaseTests: XCTestCase {
             let stage = String(line.dropFirst(prefix.count))
             return allowed.contains(stage) ? stage : nil
         }.suffix(24).joined(separator: ",")
-        return "image=\(image); stdoutBytes=\(running.capture.text.utf8.count); stderrBytes=\(running.diagnostics.text.utf8.count); stdout[\(pipeState(running.output.fileHandleForReading))]; stderr[\(pipeState(running.errors.fileHandleForReading))]; stages=\(stages); setupMs=\(running.setupMilliseconds); spawnMs=\(running.spawnMilliseconds); stageTimingMs=\(running.diagnostics.timingSummary); childAdoptionAgeMs=\(catalog?.ageAtAdoptionMilliseconds.map(String.init) ?? "unknown"); childAgeMs=\(catalog?.ageMilliseconds().map(String.init) ?? "unknown"); nativeRefusal=\(running.diagnostics.text.contains("The managed runtime lease could not be established"))"
+        return "image=\(image); stdoutBytes=\(running.capture.text.utf8.count); stderrBytes=\(running.diagnostics.text.utf8.count); stdout[\(pipeState(running.output.fileHandleForReading))]; stderr[\(pipeState(running.errors.fileHandleForReading))]; stages=\(stages); setupMs=\(running.setupMilliseconds); spawnMs=\(running.spawnMilliseconds); stageTimingMs=\(running.diagnostics.timingSummary); childAdoptionAgeMs=\(catalog?.ageAtAdoptionMilliseconds.map(String.init) ?? "unknown"); childAgeMs=\(catalog?.ageMilliseconds().map(String.init) ?? "unknown"); nativeRefusal=\(running.diagnostics.text.contains("The managed runtime lease could not be established")); nativeCode=\(DesktopReadinessFailureDiagnostic.nativeRefusalCode(running.diagnostics.text))"
     }
 
     private func trackChild(_ running: Running, receipt: URL, socket: String, externalNode: URL? = nil) throws -> CatalogFixtureChild {
@@ -820,25 +1066,34 @@ final class DataUsageLeaseTests: XCTestCase {
         }
     }
 
-    private func waitReady(_ running: Running, catalog: CatalogFixtureChild? = nil) async throws {
+    private func waitReady(
+        _ running: Running,
+        catalog: CatalogFixtureChild? = nil,
+        marker: String? = nil,
+        requireFinalReady: Bool = false
+    ) async throws {
+        let observed: @Sendable () -> Bool = { [capture = running.capture, diagnostics = running.diagnostics] in
+            let reached = marker
+                .map { expected in diagnostics.text.split(separator: "\n").contains(Substring("fixture-stage:" + expected)) } ?? capture
+                .text.contains("ready")
+            return reached && (!requireFinalReady || capture.text.contains("ready"))
+        }
         let started = ContinuousClock.now
         let deadline = Date().addingTimeInterval(5)
         while running.process.isRunning, Date() < deadline {
             try catalog?.tryAdopt()
-            if running.capture.text.contains("ready"), catalog == nil || catalog?.identity != nil { break }
+            if observed(), catalog == nil || catalog?.identity != nil { break }
             try await Task.sleep(for: .milliseconds(10))
         }
-        guard running.capture.text.contains("ready"), catalog == nil || catalog?.identity != nil else {
+        guard observed(), catalog == nil || catalog?.identity != nil else {
             let state = running.process.isRunning ? "running" :
                 "exited status=\(running.process.terminationStatus) reason=\(running.process.terminationReason.rawValue)"
-            let failure = "Ready marker absent; stage=\(running.readinessStage); controller \(state); elapsed=\(started.duration(to: .now)); \(readinessDiagnostics(running, catalog: catalog))"
+            let failure = "Ready marker absent; stage=\(running.readinessStage); controller \(state); elapsed=\(started.duration(to: .now)); expected=\(marker ?? "ready"); \(readinessDiagnostics(running, catalog: catalog))"
             let target: DesktopReadinessFailureDiagnostic.Target? = if let catalog, let identity = catalog.identity {
                 .init(identity: identity, node: catalog.node)
             } else { running.diagnosticTarget }
             let observation = await DesktopReadinessFailureDiagnostic
-                .collect(target: target) { [capture = running.capture] in
-                    capture.text.contains("ready")
-                }
+                .collect(target: target) { observed() }
             // This branch remains failed even if the capture changes during post-failure observation.
             throw TestFailure
                 .diagnostics(failure + "; " + observation + "; postSample[" + readinessDiagnostics(running, catalog: catalog) + "]")

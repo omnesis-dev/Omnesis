@@ -100,6 +100,9 @@ UI tests use the generated Xcode project and a macOS destination. Admit builds
 and tests through the host's configured native test queue when one is installed.
 The native check bridge and GitHub workflow prepare the fixture automatically;
 tests perform no downloads and never substitute a globally installed Node or Codex.
+For a focused bridge run, pass `--filter SuiteName/testName` to
+`scripts/macos-logic.sh`. This narrows execution; it does not replace the complete
+Core lane.
 Hosted GUI integration tests mount the production SwiftUI root and press its own
 accessibility controls against a scripted loopback HTTP/SSE service. This exercises
 sending, streaming, completion and cancellation without model inference; it is

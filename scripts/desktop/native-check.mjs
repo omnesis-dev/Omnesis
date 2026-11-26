@@ -22,22 +22,25 @@ export function shellArgument(value) {
 
 export function nativeCheckOptions(args, env = process.env) {
   const [lane, ...flags] = args;
+  const filteredLogic =
+    lane === "logic" &&
+    flags.length === 2 &&
+    flags[0] === "--filter" &&
+    typeof flags[1] === "string" &&
+    /^[A-Za-z_][A-Za-z0-9_.]*(?:\/[A-Za-z_][A-Za-z0-9_]*)?$/.test(flags[1]);
+  const testFlags =
+    flags.length === 0 ||
+    (flags.length === 1 && ["--build-only", "--hosted-only"].includes(flags[0])) ||
+    (flags.length === 2 &&
+      new Set(flags).size === 2 &&
+      flags.includes("--build-only") &&
+      flags.includes("--package"));
   if (
     !["logic", "test"].includes(lane) ||
-    flags.some((flag) => !["--build-only", "--hosted-only", "--package"].includes(flag)) ||
-    (flags.length &&
-      (lane !== "test" ||
-        (flags.length !== 1 &&
-          !(
-            flags.length === 2 &&
-            new Set(flags).size === 2 &&
-            flags.includes("--build-only") &&
-            flags.includes("--package")
-          )))) ||
-    (flags.includes("--package") && !flags.includes("--build-only"))
+    (lane === "logic" ? flags.length > 0 && !filteredLogic : !testFlags)
   ) {
     throw new Error(
-      "Usage: native-check.mjs <logic|test> [--build-only [--package]|--hosted-only]",
+      "Usage: native-check.mjs logic [--filter SuiteName/testName] | test [--build-only [--package]|--hosted-only]",
     );
   }
   const host = env.OMNESIS_EPIC_MACOS_HOST;
@@ -57,6 +60,7 @@ export function nativeCheckOptions(args, env = process.env) {
     buildOnly: flags.includes("--build-only"),
     hostedOnly: flags.includes("--hosted-only"),
     package: flags.includes("--package"),
+    filter: filteredLogic ? flags[1] : undefined,
     output: env.OMNESIS_MACOS_TEST_OUT,
   };
 }
@@ -100,7 +104,11 @@ const check = `set -eu
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 cd "$1"
 if [ "$2" = logic ]; then
-  swift test --package-path macos
+  if [ -n "\${6-}" ]; then
+    swift test --package-path macos --filter "$6"
+  else
+    swift test --package-path macos
+  fi
 else
   cd macos
   xcodegen generate
@@ -274,6 +282,7 @@ export function runNativeCheck(options, run = spawnSync, sourceRoot = root) {
       options.buildOnly ? "yes" : "no",
       options.hostedOnly ? "yes" : "no",
       options.package ? "yes" : "no",
+      ...(options.lane === "logic" && options.filter ? [options.filter] : []),
     ]);
     if (options.package) {
       remote(

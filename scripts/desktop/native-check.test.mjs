@@ -56,6 +56,73 @@ test("requires explicit host and owned scratch configuration", () => {
   expect(() => nativeCheckOptions(["logic", "--build-only"], {})).toThrow(/Usage/);
 });
 
+test("logic filters accept a single named suite or case and reject flags or shell syntax", () => {
+  const env = {
+    OMNESIS_EPIC_MACOS_HOST: "fixture",
+    OMNESIS_EPIC_MACOS_DESKTOP_WORKTREE: "/tmp/owned-fixture",
+  };
+  for (const filter of [
+    "BackgroundOriginRegistrationTests",
+    "DesktopCoreTests.BackgroundOriginRegistrationTests/testActualOwnedClientExitProvidesDeathProofWithoutTimeoutOrExpiry",
+  ]) {
+    expect(nativeCheckOptions(["logic", "--filter", filter], env)).toMatchObject({
+      lane: "logic",
+      filter,
+    });
+  }
+  for (const flags of [
+    ["--filter"],
+    ["--filter", "--package"],
+    ["--filter", "Suite;touch marker"],
+    ["--filter", "$(command)"],
+    ["--filter", "Suite/../Other"],
+    ["--filter", "Suite", "--filter", "Other"],
+    ["--filter", "Suite", "--build-only"],
+  ]) {
+    expect(() => nativeCheckOptions(["logic", ...flags], env)).toThrow(/Usage/);
+  }
+  expect(() => nativeCheckOptions(["test", "--filter", "Suite"], env)).toThrow(/Usage/);
+});
+
+posixTest(
+  "the actual logic shell dispatch passes only the selected case as one Swift argument",
+  () => {
+    const { root, options } = fixture();
+    const calls = [];
+    const mock = runner(calls);
+    const capture = join(root, "swift-arguments");
+    const filter =
+      "BackgroundOriginRegistrationTests/testActualOwnedClientExitProvidesDeathProofWithoutTimeoutOrExpiry";
+    const run = (command, args, config) => {
+      if (command === "ssh" && config.input?.includes('if [ "$2" = logic ]')) {
+        calls.push({ command, args, options: config });
+        return spawnSync("bash", ["-c", args[1]], {
+          input: 'swift() { printf "%s\\0" "$@" > "$OMNESIS_LOGIC_ARGUMENTS"; }\n' + config.input,
+          encoding: "utf8",
+          env: { ...process.env, OMNESIS_LOGIC_ARGUMENTS: capture },
+        });
+      }
+      return mock(command, args, config);
+    };
+    runNativeCheck({ ...options, filter }, run);
+    expect(readFileSync(capture, "utf8").split("\0")).toEqual([
+      "test",
+      "--package-path",
+      "macos",
+      "--filter",
+      filter,
+      "",
+    ]);
+    runNativeCheck(options, run);
+    expect(readFileSync(capture, "utf8").split("\0")).toEqual([
+      "test",
+      "--package-path",
+      "macos",
+      "",
+    ]);
+  },
+);
+
 posixTest("shell arguments preserve literal spaces, quotes and command substitutions", () => {
   const value = "a path with 'quotes' and $(an-untrusted-command)";
   const result = spawnSync("sh", ["-c", `printf '%s' ${shellArgument(value)}`], {
