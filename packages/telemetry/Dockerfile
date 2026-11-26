@@ -3,7 +3,10 @@
 ARG NODE_IMAGE=node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9
 FROM ${NODE_IMAGE} AS dependencies
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=bind,source=scripts/docker/apt-get-bounded.sh,target=/tmp/apt-get-bounded.sh \
+    sh /tmp/apt-get-bounded.sh update \
+    && sh /tmp/apt-get-bounded.sh install -y --no-install-recommends python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
 COPY packages ./packages
 RUN npm ci --ignore-scripts --omit=dev --workspace @omnesis/telemetry --include-workspace-root=false && npm rebuild better-sqlite3
