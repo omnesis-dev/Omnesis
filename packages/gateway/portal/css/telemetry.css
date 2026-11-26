@@ -62,8 +62,20 @@
 .telemetry-settings-actions { display: flex; flex-shrink: 0; flex-direction: column; align-items: flex-end; gap: 10px; }
 .telemetry-settings-actions button { font-size: 12px; }
 
+.telemetry-preference {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+  margin-bottom: 20px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.telemetry-preference .telemetry-settings-actions { flex-direction: row; align-items: center; }
+
 @media (max-width: 600px) {
   .telemetry-notice { right: 16px; bottom: 16px; padding: 20px; }
   .telemetry-settings { flex-direction: column; gap: 8px; }
   .telemetry-settings-actions { align-items: flex-start; }
+  .telemetry-preference { align-items: flex-start; flex-direction: column; }
 }

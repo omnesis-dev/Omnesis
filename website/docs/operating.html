@@ -629,7 +629,9 @@ omnesis storage cancel JOB_ID --yes</pre>
           The installer displays an informational notice before startup, without adding a prompt.
           The portal's first-visit notice offers <strong>Agree</strong> and
           <strong>Disable telemetry</strong>; both acknowledgement and preference are saved on the
-          gateway. Previously disabled gateways are not prompted. Change the setting at any time in
+          gateway. After acknowledgement, the explanatory card disappears; the preference control
+          and documentation link remain in Settings. Previously disabled gateways are not prompted.
+          Change the setting at any time in
           <strong>Settings → Config → Installation telemetry</strong>, or run
           <code>omnesis config set /telemetry/enabled false</code>. This cancels scheduled and
           in-flight reports without a restart. To resume, use

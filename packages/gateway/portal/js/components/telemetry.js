@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { getTelemetryStatus, patchAdminConfig } from "../api.js";
 
 const TELEMETRY_DOCS = "https://github.com/omnesis-dev/Omnesis/blob/main/TELEMETRY.md";
+const TELEMETRY_PREFERENCE_CHANGE = "omnesis:telemetry-preference-change";
 
 /** Refresh from gateway state, including choices made in another browser. */
 function useTelemetryStatus() {
@@ -23,21 +24,26 @@ function useTelemetryStatus() {
     void refresh();
     const onVisible = () => { if (document.visibilityState !== "hidden") void refresh(); };
     document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener(TELEMETRY_PREFERENCE_CHANGE, refresh);
     let events;
-    if (typeof EventSource !== "undefined") {
-      events = new EventSource("/admin/config/events", { withCredentials: true });
-      events.addEventListener("message", refresh);
-    }
+    try {
+      if (typeof EventSource !== "undefined") {
+        events = new EventSource("/admin/config/events", { withCredentials: true });
+        events.onmessage = refresh;
+      }
+    } catch { /* Live refresh is optional; initial and visibility refresh still work. */ }
     return () => {
       disposed = true;
       sequence.current++;
       document.removeEventListener("visibilitychange", onVisible);
-      events?.close();
+      window.removeEventListener(TELEMETRY_PREFERENCE_CHANGE, refresh);
+      events?.close?.();
     };
   }, []);
   const update = (next) => {
     sequence.current++;
     setStatus(next);
+    window.dispatchEvent(new window.Event(TELEMETRY_PREFERENCE_CHANGE));
   };
   return [status, update];
 }
@@ -92,7 +98,7 @@ export function TelemetryNotice() {
   `;
 }
 
-/** A direct preference action beside its explanation, also available in the config form. */
+/** A compact preference action after acknowledgement; the explanation is shown only beforehand. */
 export function TelemetrySettings({ draftPending = false } = {}) {
   const [status, update] = useTelemetryStatus();
   const [busy, setBusy] = useState(false);
@@ -112,6 +118,21 @@ export function TelemetrySettings({ draftPending = false } = {}) {
       setBusy(false);
     }
   };
+  if (!status) return null;
+  const actions = html`
+    <div class="telemetry-settings-actions">
+      <button type="button" class="btn-secondary" disabled=${busy || status.forcedDisabled || draftPending} onClick=${toggle}>${busy ? "Saving…" : status.configuredEnabled ? "Disable telemetry" : "Enable telemetry"}</button>
+      <a href=${TELEMETRY_DOCS} target="_blank" rel="noopener noreferrer">Telemetry documentation ↗</a>
+    </div>
+  `;
+  if (status.acknowledged) return html`
+    <section class="telemetry-preference" aria-label="Installation telemetry">
+      ${status.forcedDisabled && html`<p>Reporting is disabled by <code>OMNESIS_TELEMETRY</code>.</p>`}
+      ${error && html`<p class="telemetry-error" role="alert">${error}</p>`}
+      ${draftPending && html`<p>Save or discard your configuration draft before changing this preference.</p>`}
+      ${actions}
+    </section>
+  `;
   return html`
     <section class="telemetry-settings" aria-label="Installation telemetry">
       <div>
@@ -125,10 +146,7 @@ export function TelemetrySettings({ draftPending = false } = {}) {
         ${error && html`<p class="telemetry-error" role="alert">${error}</p>`}
         ${draftPending && html`<p>Save or discard your configuration draft before changing this preference.</p>`}
       </div>
-      <div class="telemetry-settings-actions">
-        ${status && html`<button type="button" class="btn-secondary" disabled=${busy || status.forcedDisabled || draftPending} onClick=${toggle}>${busy ? "Saving…" : status.configuredEnabled ? "Disable telemetry" : "Enable telemetry"}</button>`}
-        <a href=${TELEMETRY_DOCS} target="_blank" rel="noopener noreferrer">Telemetry documentation ↗</a>
-      </div>
+      ${actions}
     </section>
   `;
 }

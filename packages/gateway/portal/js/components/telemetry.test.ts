@@ -22,8 +22,19 @@ describe("installation telemetry notice", () => {
     vi.stubGlobal("window", parsed.window);
     vi.stubGlobal("EventSource", undefined);
     host = parsed.document.querySelector("#root") as unknown as HTMLElement;
-    api.getTelemetryStatus.mockResolvedValue(enabled);
-    api.patchAdminConfig.mockResolvedValue({ ok: true });
+    let saved = { ...enabled };
+    api.getTelemetryStatus.mockImplementation(async () => saved);
+    api.patchAdminConfig.mockImplementation(async ({ telemetry }) => {
+      saved = {
+        ...saved,
+        ...telemetry,
+        ...(telemetry.enabled === undefined ? {} : {
+          configuredEnabled: telemetry.enabled,
+          enabled: telemetry.enabled && saved.runtimeAllowed && !saved.forcedDisabled,
+        }),
+      };
+      return { ok: true };
+    });
   });
 
   afterEach(() => {
@@ -103,6 +114,21 @@ describe("installation telemetry notice", () => {
     expect(host.textContent).toBe("");
   });
 
+  test("a minimal EventSource shim does not interrupt a gateway with telemetry unavailable", async () => {
+    vi.stubGlobal("EventSource", class { close() {} });
+    api.getTelemetryStatus.mockResolvedValue({ ...enabled, enabled: false, runtimeAllowed: false });
+    await mount();
+    expect(host.textContent).toBe("");
+  });
+
+  test("an unavailable EventSource does not prevent displaying or acknowledging the notice", async () => {
+    vi.stubGlobal("EventSource", class { constructor() { throw new Error("Unavailable"); } });
+    await mount();
+    expect(host.querySelector(".telemetry-notice")).not.toBeNull();
+    await act(async () => { (host.querySelector(".btn-primary") as HTMLButtonElement).click(); });
+    expect(host.querySelector(".telemetry-notice")).toBeNull();
+  });
+
   test("Settings explains environment precedence and links telemetry documentation", async () => {
     api.getTelemetryStatus.mockResolvedValue({ ...enabled, enabled: false, forcedDisabled: true });
     await mount(TelemetrySettings);
@@ -119,6 +145,44 @@ describe("installation telemetry notice", () => {
     await act(async () => { (host.querySelector("button") as HTMLButtonElement).click(); });
     expect(api.patchAdminConfig).toHaveBeenLastCalledWith({ telemetry: { enabled: true, acknowledged: true } });
     expect(host.querySelector("button")?.textContent).toBe("Disable telemetry");
+  });
+
+  test("acknowledgement hides the explanatory Settings card while preserving preference controls", async () => {
+    api.getTelemetryStatus.mockResolvedValue({ ...enabled, acknowledged: true });
+    await mount(TelemetrySettings);
+    expect(host.querySelector(".telemetry-settings")).toBeNull();
+    expect(host.textContent).not.toContain("Minimal installation statistics");
+    expect(host.querySelector("button")?.textContent).toBe("Disable telemetry");
+    expect(host.querySelector('a[href$="/TELEMETRY.md"]')).not.toBeNull();
+  });
+
+  test("Agree dismisses both the notice and Settings explanation when gateway acknowledgement refreshes", async () => {
+    const streams: Array<{ onmessage: (() => void) | null }> = [];
+    vi.stubGlobal("EventSource", class {
+      onmessage: (() => void) | null = null;
+      constructor() { streams.push(this); }
+      close() {}
+    });
+    await mount(() => h("div", {}, h(TelemetryNotice, {}), h(TelemetrySettings, {})));
+    expect(host.querySelector(".telemetry-settings")).not.toBeNull();
+    api.getTelemetryStatus.mockResolvedValue({ ...enabled, acknowledged: true });
+    await act(async () => { (host.querySelector(".telemetry-notice .btn-primary") as HTMLButtonElement).click(); });
+    await act(async () => { for (const stream of streams) stream.onmessage?.(); });
+    expect(host.querySelector(".telemetry-notice")).toBeNull();
+    expect(host.querySelector(".telemetry-settings")).toBeNull();
+    expect(host.querySelector(".telemetry-preference button")?.textContent).toBe("Disable telemetry");
+  });
+
+  test.each(["missing", "unavailable"])("Agree immediately hides the Settings card when live events are %s", async (events) => {
+    if (events === "unavailable") vi.stubGlobal("EventSource", class { constructor() { throw new Error("Unavailable"); } });
+    await mount(() => h("div", {}, h(TelemetryNotice, {}), h(TelemetrySettings, {})));
+    expect(host.querySelector(".telemetry-settings")).not.toBeNull();
+    await act(async () => { (host.querySelector(".telemetry-notice .btn-primary") as HTMLButtonElement).click(); });
+    await vi.waitFor(() => {
+      expect(host.querySelector(".telemetry-notice")).toBeNull();
+      expect(host.querySelector(".telemetry-settings")).toBeNull();
+      expect(host.querySelector(".telemetry-preference button")?.textContent).toBe("Disable telemetry");
+    });
   });
 
   test("Settings cannot overwrite telemetry under an unsaved configuration draft", async () => {
