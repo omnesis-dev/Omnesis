@@ -40,7 +40,7 @@ struct OmnesisDesktopApp: App {
             }
         Settings { DesktopSettingsView().environment(store).id(store.apiContextEpoch).frame(width: 720, height: 640) }
         // Keep the status item’s logical image size separate from the in-window brand asset.
-        MenuBarExtra("Omnesis", image: "OmnesisMenuMark") {
+        MenuBarExtra {
             VStack(alignment: .leading, spacing: 14) {
                 Label(store.menuStatusLabel, systemImage: store.requiredSetupReady ? "checkmark.shield" : "checklist")
                     .font(.headline)
@@ -59,6 +59,8 @@ struct OmnesisDesktopApp: App {
                 Divider()
                 Button("Quit Omnesis") { NSApp.terminate(nil) }
             }.padding(18).frame(width: 300, alignment: .leading)
+        } label: {
+            Image("OmnesisMenuMark").accessibilityLabel("Omnesis").accessibilityIdentifier("Omnesis")
         }.menuBarExtraStyle(.window)
     }
 
@@ -199,11 +201,11 @@ struct DesktopRootView: View {
     private var failureBanner: some View {
         if let failure = store.failure {
             HStack {
-                Image(systemName: "exclamationmark.triangle")
-                Text(failure).textSelection(.enabled)
+                Image(systemName: "exclamationmark.triangle").accessibilityHidden(true)
+                Text(failure).textSelection(.enabled).accessibilityIdentifier("runtime-error")
                 Spacer()
                 Button("Retry") { store.start() }
-            }.padding().background(.orange.opacity(0.12)).accessibilityIdentifier("runtime-error")
+            }.padding().background(.orange.opacity(0.12))
         }
     }
 }

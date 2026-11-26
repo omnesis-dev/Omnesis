@@ -10,6 +10,8 @@ struct DesktopAssistantsView: View {
     @Environment(DesktopStore.self) private var store
     @State private var connections = DesktopConnections()
     @State private var authorization = DesktopAgentAuthorization()
+    @State private var assistantStatus = DesktopAssistantConnections()
+    @Environment(\.scenePhase) private var scenePhase
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
@@ -18,6 +20,8 @@ struct DesktopAssistantsView: View {
                     "Use ChatGPT or another assistant to ask about your information. You choose which sources it can use and whether it receives reviewed answers or reads source material directly."
                 )
                 .foregroundStyle(.secondary)
+                DesktopAssistantStatusView(model: assistantStatus)
+                Button("Check assistant connections") { context?.run { scope in await assistantStatus.refresh(context: scope) } }
                 if let mcp = connections.mcpURL {
                     DesktopChatGPTInstructions(mcpURL: mcp)
                     GroupBox {
@@ -43,13 +47,8 @@ struct DesktopAssistantsView: View {
                 if let request = authorization.request, let overview = connections.overview {
                     authorizationForm(request, overview: overview)
                 }
-                if authorization.completed {
-                    Label(
-                        "Your decision was saved. Return to your assistant’s sign-in window to finish.",
-                        systemImage: "checkmark.circle.fill"
-                    )
-                    .foregroundStyle(.green)
-                    DesktopChatGPTFinishInstructions()
+                if let decision = authorization.decision {
+                    DesktopAssistantDecisionView(decision: decision)
                 }
                 if let failure = authorization.failure ?? connections.failure {
                     Text(failure).foregroundStyle(DesktopTheme.danger).textSelection(.enabled)
@@ -59,6 +58,10 @@ struct DesktopAssistantsView: View {
             }.padding(32).frame(maxWidth: 780, alignment: .leading).frame(maxWidth: .infinity)
         }.navigationTitle("Assistants")
             .task(id: context?.id) { if let context { await connections.load(context: context) } }
+            .task(id: context?.id) { await assistantStatus.observe(context) }
+            .onChange(of: scenePhase) { if scenePhase == .active { context?.run { scope in
+                await assistantStatus.refresh(context: scope)
+            } } }
     }
 
     private func authorizationForm(_ envelope: AccessAuthorizationLookupEnvelope, overview: AccessOverview) -> some View {
@@ -104,11 +107,17 @@ struct DesktopAssistantsView: View {
                 Toggle("Also include sources I connect in future", isOn: $authorization.includeFutureSources)
                 HStack {
                     Button("Deny", role: .destructive) {
-                        context?.run { scope in await authorization.decide(approve: false, context: scope, overview: overview) }
+                        context?.run { scope in
+                            await authorization.decide(approve: false, context: scope, overview: overview)
+                            if authorization.decision != nil { await assistantStatus.refresh(context: scope) }
+                        }
                     }
                     Spacer()
                     Button("Allow this connection") {
-                        context?.run { scope in await authorization.decide(approve: true, context: scope, overview: overview) }
+                        context?.run { scope in
+                            await authorization.decide(approve: true, context: scope, overview: overview)
+                            if authorization.decision != nil { await assistantStatus.refresh(context: scope) }
+                        }
                     }.buttonStyle(DesktopButtonStyle(primary: true))
                         .disabled(!authorization.personallyStarted || authorization.allowedSources
                             .isEmpty || (!authorization.allowAnswers && !authorization.allowDirect))
@@ -189,5 +198,19 @@ struct DesktopPhonePairingView: View {
             .task(id: context?.id) { if let context { await connections.load(context: context) } }
             .onDisappear { Task { await pairing.cancel() } }
             .onChange(of: pairing.observedPhones.map(\.id)) { Task { await store.refresh() } }
+    }
+}
+
+struct DesktopAssistantDecisionView: View {
+    let decision: DesktopAgentAuthorization.Decision
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label(
+                decision == .approved ? "Permission saved. Return to your assistant’s sign-in window to finish." :
+                    "Connection denied. No access was granted.",
+                systemImage: decision == .approved ? "checkmark.shield" : "hand.raised"
+            )
+            if decision == .approved { DesktopChatGPTFinishInstructions() }
+        }
     }
 }

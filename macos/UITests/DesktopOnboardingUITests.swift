@@ -13,6 +13,12 @@ final class DesktopOnboardingUITests: XCTestCase {
             recordOwnedMenuCandidates(in: app)
             return XCTFail("The owned Omnesis menu-bar item must exist")
         }
+        XCTAssertEqual(status.label, "Omnesis", "The menu item must name the application, not its image asset")
+        let frame = status.frame
+        XCTAssertTrue([frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite))
+        XCTAssertGreaterThan(frame.width, 0)
+        XCTAssertGreaterThan(frame.height, 0)
+        XCTAssertTrue(status.isHittable, "The owned menu item must be visible and usable")
         for _ in 0 ..< 3 {
             status.click()
             let open = app.buttons["Open Omnesis"]

@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import AppKit
 import DesktopCore
 import Foundation
 import Omnesis
 @testable import OmnesisDesktop
+import SwiftUI
 import XCTest
 
 @MainActor
@@ -119,14 +121,50 @@ final class DesktopConnectionsTests: XCTestCase {
             expectedResource: XCTUnwrap(URL(string: "https://library.example.com/mcp"))
         )
         XCTAssertNotNil(model.request)
-        XCTAssertFalse(model.completed)
+        XCTAssertNil(model.decision)
         model.allowAnswers = false
         model.allowDirect = true
         model.allowedSources = ["fixture-source"]
         model.personallyStarted = true
         await model.decide(approve: true, context: context, overview: overview)
-        XCTAssertTrue(model.completed)
+        XCTAssertEqual(model.decision, .approved)
         XCTAssertNil(model.failure)
+    }
+
+    func testDeniedAssistantRequestSendsDenyAndNeverShowsInstallInstructions() async throws {
+        let expiry = Int64(Date().addingTimeInterval(600).timeIntervalSince1970 * 1000)
+        let script = ScriptedDesktopHTTP { request in
+            if request.url?.path == "/admin/access/authorizations/lookup" {
+                return #"{"request":{"id":"request-1","approvalId":"approval-1","status":"pending","clientId":"client-1","clientName":"Invented assistant","redirectOrigin":"https://assistant.example.com","resource":"https://library.example.com/mcp","scope":"mcp:access","expiresAt":\#(expiry),"requiresAnswer":false}}"#
+            }
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/admin/access/authorizations/approval-1/decision")
+            XCTAssertEqual(try Self.body(request)["decision"] as? String, "deny")
+            return #"{"request":{"status":"denied"}}"#
+        }
+        let fixture = try makeAPI(script: script)
+        defer { fixture.cleanup() }
+        let model = DesktopAgentAuthorization()
+        let overview = AccessOverview(principals: [], sources: [], policyFamilies: [])
+        let context = DesktopAPIContext(api: fixture.api, id: 1)
+        model.code = "invented-code"
+        try await model.lookup(
+            context: context,
+            overview: overview,
+            expectedResource: XCTUnwrap(URL(string: "https://library.example.com/mcp"))
+        )
+        await model.decide(approve: false, context: context, overview: overview)
+        XCTAssertEqual(model.decision, .denied)
+        XCTAssertNil(model.request)
+        try await DesktopSnapshotRenderer.render(
+            DesktopAssistantDecisionView(decision: XCTUnwrap(model.decision)),
+            name: "assistant-request-denied",
+            size: CGSize(width: 660, height: 180)
+        ) { view in
+            XCTAssertTrue(try DesktopAccessibilityDriver.contains("Connection denied", in: view))
+            XCTAssertFalse(try DesktopAccessibilityDriver.contains("Install and use Omnesis", in: view))
+            XCTAssertFalse(try DesktopAccessibilityDriver.contains("Return to your assistant", in: view))
+        }
     }
 
     private nonisolated static let overviewJSON = #"{"principals":[],"sources":[],"policyFamilies":[],"oauth":{"resource":"https://localhost:17601/mcp","resources":[{"resource":"https://library.example.com/mcp","publiclyTrusted":true}]}}"#

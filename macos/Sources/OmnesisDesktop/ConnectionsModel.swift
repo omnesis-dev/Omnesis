@@ -241,14 +241,15 @@ final class DesktopAgentAuthorization {
     var personallyStarted = false
     var failure: String?
     var busy = false
-    var completed = false
+    enum Decision: Equatable { case approved, denied }
+    private(set) var decision: Decision?
     private var requestContext: DesktopAPIContext?
 
     func lookup(context: DesktopAPIContext, overview: AccessOverview, expectedResource: URL) async {
         guard !busy else { return }
         busy = true
         failure = nil
-        completed = false
+        decision = nil
         defer { busy = false }
         do {
             let found = try await context.perform { api in
@@ -319,7 +320,7 @@ final class DesktopAgentAuthorization {
                 try await client.decide(approvalId: request.request.approvalId, decision: decision)
             }
             try context.check()
-            completed = true
+            self.decision = approve ? .approved : .denied
             self.request = nil
         } catch { self.failure = error.localizedDescription }
     }

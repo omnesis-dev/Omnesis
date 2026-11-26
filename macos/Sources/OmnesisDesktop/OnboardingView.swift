@@ -280,6 +280,8 @@ struct DesktopSetupChecklist: View {
     @Environment(\.openSettings) private var openSettings
     @State private var health = DesktopSourceHealthMonitor()
     @State private var model: ModelDisplay?
+    @State private var assistantStatus = DesktopAssistantConnections()
+    @Environment(\.scenePhase) private var scenePhase
     var presentSettings: (() -> Void)?
     var loadStatus = true
     var body: some View {
@@ -339,14 +341,18 @@ struct DesktopSetupChecklist: View {
                     }
                     Divider()
                     optionalStep(
-                        "Omnesis in ChatGPT",
-                        detail: "Let ChatGPT or another assistant search the sources you choose.",
+                        "Use Omnesis in an assistant",
+                        detail: assistantStatus.checking ? "Checking assistant connections…" : assistantStatus.progress.text,
                         symbol: "link",
-                        action: "Connect an assistant"
+                        action: "Open assistants"
                     ) { store.destination = .assistants }
                 }
             }.padding(32).frame(maxWidth: 760, alignment: .leading).frame(maxWidth: .infinity)
         }.navigationTitle("Setup").omnesisTheme()
+            .task(id: store.apiContext?.id) { if loadStatus { await assistantStatus.observe(store.apiContext) } }
+            .onChange(of: scenePhase) { if scenePhase == .active { store.apiContext?.run { scope in
+                await assistantStatus.refresh(context: scope)
+            } } }
             .task(id: DesktopModelObservation(api: store.api.map(ObjectIdentifier.init), revision: store.modelConfigurationRevision)) {
                 guard loadStatus, let api = store.api else { return }
                 async let modelCheck: Void = checkModel(api)
