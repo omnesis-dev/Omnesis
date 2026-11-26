@@ -20,6 +20,10 @@ test("corrupt saved relay settings keep the direct gateway available and cannot 
   });
   relay.on("upgrade", (_req, socket) => {
     attempts++;
+    // Node removes the server's own error handler from an upgraded socket. The tunnel
+    // is stopped as soon as it has dialled, and stopping a handshake whose refusal it
+    // has not read yet resets the connection, so this end must expect ECONNRESET.
+    socket.on("error", () => socket.destroy());
     socket.end("HTTP/1.1 426 Upgrade Required\r\nContent-Length: 0\r\n\r\n");
   });
   relay.listen(0, "127.0.0.1");
