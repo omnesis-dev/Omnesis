@@ -57,6 +57,51 @@ final class DesktopOnboardingUITests: XCTestCase {
         XCTAssertEqual(main.count, 1)
     }
 
+    func testMenuBarSettingsRemainsReachableAfterClosingTheLibrary() {
+        let app = XCUIApplication()
+        app.launch()
+        defer {
+            if (testRun?.failureCount ?? 0) > 0 {
+                recordOwnedMenuCandidates(in: app)
+                let attachment = XCTAttachment(screenshot: app.screenshot())
+                attachment.name = "owned-menu-settings-route-failure"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
+        }
+        let main = app.windows.matching(identifier: "Omnesis")
+        guard main.firstMatch.waitForExistence(timeout: 10) else { return XCTFail("The library window must appear before closing it") }
+        app.typeKey("w", modifierFlags: .command)
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "count == 0"), object: main)
+        guard XCTWaiter.wait(for: [closed], timeout: 5) == .completed else { return XCTFail("The library window must actually close") }
+        XCTAssertNotEqual(app.state, .notRunning)
+        let status = app.statusItems["Omnesis"]
+        guard status.waitForExistence(timeout: 10) else { return XCTFail("The owned status item must remain after closing the library") }
+        XCTAssertEqual(status.label, "Omnesis")
+        XCTAssertTrue(status.isHittable)
+        let settings = app.windows.containing(.any, identifier: "settings-prerequisite-startup")
+        for _ in 0 ..< 2 {
+            status.click()
+            let action = app.menuItems["Settings…"]
+            guard action.waitForExistence(timeout: 5) else { return XCTFail("The native menu must offer Settings") }
+            XCTAssertEqual(action.label, "Settings…")
+            XCTAssertTrue(action.isEnabled)
+            XCTAssertTrue(action.isHittable)
+            action.click()
+            let unique = XCTNSPredicateExpectation(predicate: NSPredicate(format: "count == 1"), object: settings)
+            let result = XCTWaiter.wait(for: [unique], timeout: 5)
+            XCTAssertEqual(result, .completed, "The real scene action must open exactly one Settings window")
+            guard result == .completed else { return }
+            XCTAssertEqual(main.count, 0, "Opening Settings must not recreate the library window")
+            app.typeKey("w", modifierFlags: .command)
+            let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "count == 0"), object: settings)
+            let dismissal = XCTWaiter.wait(for: [dismissed], timeout: 5)
+            XCTAssertEqual(dismissal, .completed)
+            guard dismissal == .completed else { return }
+            XCTAssertNotEqual(app.state, .notRunning)
+        }
+    }
+
     func testIncompleteBundleRefusesToStartDataCollection() {
         let app = XCUIApplication()
         app.launch()
