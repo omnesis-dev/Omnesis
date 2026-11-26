@@ -15,6 +15,10 @@
  * Suggestions — attendees and the title of a calendar event the recording
  * overlaps, names heard addressed in it — are offered beside what they would
  * change, and only applied when the owner accepts one.
+ *
+ * An all-day recording the gateway split into conversations shows one section
+ * per conversation — its title, transcript, speakers and suggestions — each
+ * written as soon as the conversation ended.
  */
 
 import { html } from "htm/preact";
@@ -29,6 +33,7 @@ import {
   getRecordingSpeakers,
   getRecordingSuggestions,
   listRecordings,
+  setRecordingConversationTitle,
   setRecordingSpeaker,
   setRecordingTitle,
 } from "../api.js";
@@ -147,6 +152,7 @@ function RecordingList({ recordings }) {
     ${recordings.map((recording) => {
       const href = recordingHref(recording.id);
       const speakers = speakerSummary(recording);
+      const conversations = recording.conversations?.length ?? 0;
       return html`<li key=${recording.id}>
         <a
           class="privacy-conversation-row"
@@ -159,9 +165,12 @@ function RecordingList({ recordings }) {
           <span class="privacy-conversation-main">
             <strong>${recording.title}</strong>
             <span>${formatRecordedTime(recording.durationMs)} · ${chunkSummary(recording)}</span>
-            ${speakers
+            ${speakers || conversations > 0
               ? html`<span class="watch-row-indicators">
-                  <span class="watch-indicator">${speakers}</span>
+                  ${conversations > 0
+                    ? html`<span class="watch-indicator">${plural(conversations, "conversation")}</span>`
+                    : null}
+                  ${speakers ? html`<span class="watch-indicator">${speakers}</span>` : null}
                 </span>`
               : null}
           </span>
@@ -471,6 +480,88 @@ function TitleSuggestion({ suggestion, onAccept, onDismiss }) {
   </div>`;
 }
 
+/** The link to a recording's, or a conversation's, written transcript. */
+function TranscriptLink({ href }) {
+  return html`<a
+    class="btn-secondary"
+    href=${href}
+    onClick=${(event) => {
+      event.preventDefault();
+      navigate(href);
+    }}
+  >Open the transcript</a>`;
+}
+
+/** Speakers with who each one is, and the people suggested for the unnamed ones. */
+function SpeakerList({ recordingId, speakers, suggestions, empty, onDismiss, onSpeakers }) {
+  if (speakers.length === 0) return html`<p class="privacy-empty">${empty}</p>`;
+  const forSpeaker = (n) =>
+    suggestions.filter((s) => s.kind === "person" && (s.speaker === n || s.speaker === null));
+  return html`<ul class="recording-speakers">
+    ${speakers.map(
+      (speaker) => html`<${SpeakerRow}
+        key=${speaker.speaker}
+        recordingId=${recordingId}
+        speaker=${speaker}
+        suggestions=${forSpeaker(speaker.speaker)}
+        onDismiss=${onDismiss}
+        onSpeakers=${onSpeakers}
+      />`,
+    )}
+  </ul>`;
+}
+
+/** "10:00 · 12 min" in the viewer's time: when a conversation started, and how long it went on. */
+export function conversationSpan(startedAt, endedAt) {
+  const start = Date.parse(startedAt);
+  const clock = new Date(start).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return `${clock} · ${formatRecordedTime(Date.parse(endedAt) - start)}`;
+}
+
+/** One conversation of a split all-day recording: its title, transcript and speakers. */
+function ConversationSection({
+  recordingId,
+  conversation,
+  speakers,
+  suggestions,
+  onDismiss,
+  onSpeakers,
+  onSummary,
+}) {
+  const titleSuggestion = conversation.titled
+    ? null
+    : (suggestions.find((s) => s.kind === "title") ?? null);
+  const href = conversation.documentId
+    ? `/portal/doc/${encodeURIComponent(conversation.documentId)}`
+    : null;
+  return html`<section class="privacy-section recording-conversation" data-conversation=${conversation.n}>
+    <div class="privacy-section-head">
+      <h2>${conversation.title}</h2>
+      <span class="recording-conversation-span">
+        ${conversationSpan(conversation.startedAt, conversation.endedAt)}
+      </span>
+    </div>
+    ${titleSuggestion
+      ? html`<${TitleSuggestion}
+          suggestion=${titleSuggestion}
+          onAccept=${async (s) => {
+            onSummary(await setRecordingConversationTitle(recordingId, conversation.n, s.title));
+          }}
+          onDismiss=${onDismiss}
+        />`
+      : null}
+    ${href ? html`<div class="recording-actions"><${TranscriptLink} href=${href} /></div>` : null}
+    <${SpeakerList}
+      recordingId=${recordingId}
+      speakers=${speakers}
+      suggestions=${suggestions}
+      empty="No speakers were told apart in this conversation."
+      onDismiss=${onDismiss}
+      onSpeakers=${onSpeakers}
+    />
+  </section>`;
+}
+
 // ── chunks ────────────────────────────────────────────────────────────
 
 /**
@@ -541,29 +632,36 @@ function ChunkList({ recordingId, recording, chunks }) {
 // ── one recording ─────────────────────────────────────────────────────
 
 /** A recording's suggestions; none when they cannot be read, which never blocks the page. */
-async function loadSuggestions(id) {
+async function loadSuggestions(id, conversation) {
   try {
-    const payload = await getRecordingSuggestions(id);
+    const payload = await getRecordingSuggestions(id, conversation);
     return Array.isArray(payload?.suggestions) ? payload.suggestions : [];
   } catch {
     return [];
   }
 }
 
+/**
+ * A recording's suggestions by section: `session` for a recording that is
+ * one conversation, `c<n>` for each conversation of a split one.
+ */
+async function loadAllSuggestions(id, recording) {
+  const conversations = recording?.conversations ?? [];
+  if (conversations.length === 0) return { session: await loadSuggestions(id) };
+  const lists = await Promise.all(conversations.map((c) => loadSuggestions(id, c.n)));
+  return Object.fromEntries(conversations.map((c, i) => [`c${c.n}`, lists[i]]));
+}
+
 /** One recording, with its speakers, chunks and suggestions. */
 async function loadRecording(id) {
   try {
-    const [detail, speakers, suggestions] = await Promise.all([
-      getRecordingChunks(id),
-      getRecordingSpeakers(id),
-      loadSuggestions(id),
-    ]);
+    const [detail, speakers] = await Promise.all([getRecordingChunks(id), getRecordingSpeakers(id)]);
     return {
       kind: "found",
       recording: detail.recording,
       chunks: Array.isArray(detail.chunks) ? detail.chunks : [],
       speakers: Array.isArray(speakers?.speakers) ? speakers.speakers : [],
-      suggestions,
+      suggestions: await loadAllSuggestions(id, detail.recording),
     };
   } catch (err) {
     if (err?.status === 404) return { kind: "missing" };
@@ -607,9 +705,9 @@ function RecordingDetail({ id }) {
   }
 
   const { recording, chunks, speakers, suggestions } = loaded;
-  const titleSuggestion = suggestions.find((s) => s.kind === "title") ?? null;
-  const forSpeaker = (n) =>
-    suggestions.filter((s) => s.kind === "person" && (s.speaker === n || s.speaker === null));
+  const conversations = recording.conversations ?? [];
+  const sessionSuggestions = suggestions.session ?? [];
+  const titleSuggestion = sessionSuggestions.find((s) => s.kind === "title") ?? null;
 
   // Accepting or dismissing one suggestion can settle others (a person named
   // for one speaker is no longer offered for the rest), so they are read again.
@@ -621,16 +719,23 @@ function RecordingDetail({ id }) {
     );
   }
 
-  async function refreshSuggestions() {
-    const next = await loadSuggestions(id);
-    update({ suggestions: next });
+  async function refreshSuggestions(current = recording) {
+    update({ suggestions: await loadAllSuggestions(id, current) });
   }
 
   async function dismiss(suggestion) {
     await dismissRecordingSuggestion(id, suggestion.key);
     await refreshSuggestions();
   }
-  const documentHref = recording.documentId
+
+  function onSpeakers(next) {
+    if (!next) return;
+    const named = next.filter((s) => s.isSelf || s.personId || s.name).length;
+    update({ speakers: next, recording: { namedSpeakers: named } });
+    refreshSuggestions();
+  }
+
+  const documentHref = recording.documentId && conversations.length === 0
     ? `/portal/doc/${encodeURIComponent(recording.documentId)}`
     : null;
 
@@ -661,7 +766,7 @@ function RecordingDetail({ id }) {
         ${recordingStateLabel(recording.state)}
       </span>
     </header>
-    ${titleSuggestion
+    ${titleSuggestion && conversations.length === 0
       ? html`<${TitleSuggestion}
           suggestion=${titleSuggestion}
           onAccept=${async (s) => {
@@ -673,16 +778,7 @@ function RecordingDetail({ id }) {
         />`
       : null}
     <div class="recording-actions">
-      ${documentHref
-        ? html`<a
-            class="btn-secondary"
-            href=${documentHref}
-            onClick=${(event) => {
-              event.preventDefault();
-              navigate(documentHref);
-            }}
-          >Open the transcript</a>`
-        : null}
+      ${documentHref ? html`<${TranscriptLink} href=${documentHref} />` : null}
       <button type="button" class="btn-secondary danger" disabled=${deleting} onClick=${() => setConfirming(true)}>
         Delete recording
       </button>
@@ -691,34 +787,42 @@ function RecordingDetail({ id }) {
       ? html`<div class="privacy-banner error" role="alert">Failed to delete: ${deleteError}</div>`
       : null}
 
-    <section class="privacy-section">
-      <div class="privacy-section-head">
-        <h2>Speakers</h2>
-      </div>
-      ${speakers.length === 0
-        ? html`<p class="privacy-empty">
-            ${recording.state === "done"
+    ${conversations.length === 0
+      ? html`<section class="privacy-section">
+          <div class="privacy-section-head">
+            <h2>Speakers</h2>
+          </div>
+          <${SpeakerList}
+            recordingId=${id}
+            speakers=${speakers}
+            suggestions=${sessionSuggestions}
+            empty=${recording.state === "done"
               ? "No speakers were told apart in this recording."
               : "Speakers are told apart once the recording is transcribed."}
-          </p>`
-        : html`<ul class="recording-speakers">
-            ${speakers.map(
-              (speaker) => html`<${SpeakerRow}
-                key=${speaker.speaker}
-                recordingId=${id}
-                speaker=${speaker}
-                suggestions=${forSpeaker(speaker.speaker)}
-                onDismiss=${dismiss}
-                onSpeakers=${(next) => {
-                  if (!next) return;
-                  const named = next.filter((s) => s.isSelf || s.personId || s.name).length;
-                  update({ speakers: next, recording: { namedSpeakers: named } });
-                  refreshSuggestions();
-                }}
-              />`,
-            )}
-          </ul>`}
-    </section>
+            onDismiss=${dismiss}
+            onSpeakers=${onSpeakers}
+          />
+        </section>`
+      : html`${conversations.map(
+            (conversation) => html`<${ConversationSection}
+              key=${conversation.n}
+              recordingId=${id}
+              conversation=${conversation}
+              speakers=${speakers.filter((s) => s.conversation === conversation.n)}
+              suggestions=${suggestions[`c${conversation.n}`] ?? []}
+              onDismiss=${dismiss}
+              onSpeakers=${onSpeakers}
+              onSummary=${async (summary) => {
+                update({ recording: summary });
+                await refreshSuggestions({ ...recording, ...summary });
+              }}
+            />`,
+          )}
+          ${recording.state === "recording"
+            ? html`<p class="privacy-empty recording-conversation-pending">
+                The conversation going on now is written once it has been quiet for a while.
+              </p>`
+            : null}`}
 
     <section class="privacy-section">
       <div class="privacy-section-head">

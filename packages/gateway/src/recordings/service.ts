@@ -27,15 +27,30 @@
  * just before its document is written — at which point every voice vector is
  * deleted (see `voices/voices.ts`). The owner then says who each speaker is;
  * each mapping rewrites the document through the same revision path.
+ *
+ * An all-day (`ambient`) session is split into conversations at long
+ * silences (`conversationGapMs`, see `conversations.ts`). Each conversation
+ * is written as soon as it closes, with its own voices grouped and their
+ * vectors deleted then, while the session is still open; the first keeps the
+ * session's document id. A session that is one conversation stays one
+ * document, as it always was.
  */
 
 import { assertNever, createLogger } from "@omnesis/core";
 import { findDocumentIdBySourceExternalId } from "../data/repositories/DocumentRepository.js";
 import { getPersonNames } from "../data/repositories/PersonRepository.js";
-import { OMNESIS_RECORDINGS_SOURCE_ID } from "../sources/omnesis-recordings/index.js";
-import { recordingTitle, speakerTurns } from "../sources/omnesis-recordings/render.js";
+import {
+  OMNESIS_RECORDINGS_SOURCE_ID,
+  conversationExternalId,
+} from "../sources/omnesis-recordings/index.js";
+import { localStart, recordingTitle, speakerTurns } from "../sources/omnesis-recordings/render.js";
+import { closeConversations, type ConversationSpan } from "./conversations.js";
 import {
   listRecentRecordingSessions,
+  listOpenAmbientRecordingSessions,
+  listRecordingConversations,
+  listUnprojectedOpenRecordingSessions,
+  type RecordingConversation,
   listRecordingSpeakers,
   listUngroupedRecordingVoices,
   getRecordingChunk,
@@ -65,7 +80,7 @@ import {
   type RecordingSuggestion,
   type SuggestionTurn,
 } from "./suggestions.js";
-import type { SpeakerIdentity } from "../sources/omnesis-recordings/index.js";
+import type { SpeakerIdentity, ConversationPart } from "../sources/omnesis-recordings/index.js";
 import type { SeparatedVoices, VoiceSeparator, VoiceWindow } from "./voices/voices.js";
 import type {
   TranscriberReadiness,
@@ -82,6 +97,8 @@ const log = createLogger("gateway:recordings");
 export const MAX_ATTEMPTS = 6;
 /** How long a chunk may wait for a transcript at all. */
 export const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+/** The silence that ends a conversation of an all-day session, unless configured. */
+export const DEFAULT_CONVERSATION_GAP_SECONDS = 90;
 /** A session the device has not touched for this long is finished for it. */
 export const ABANDONED_AFTER_MS = 12 * 60 * 60 * 1000;
 /** How long a finished session waits for chunks it declared but never sent. */
@@ -114,6 +131,9 @@ export interface RecordingServiceDeps {
     | "addRecordingMark"
     | "assignRecordingVoices"
     | "setRecordingSpeaker"
+    | "closeRecordingConversations"
+    | "setRecordingConversationTitle"
+    | "markRecordingConversationProjected"
   >;
   readDb: Database.Database;
   transcribe: (
@@ -127,12 +147,16 @@ export interface RecordingServiceDeps {
   ingest: (docs: DocumentInput[]) => Promise<unknown>;
   /** Drops the session's document, if any. */
   deleteDocument: (externalId: string) => Promise<unknown>;
-  /** Renders a session into its document; null when there is nothing to keep. */
+  /**
+   * Renders a session, or one conversation of it, into its document; null
+   * when there is nothing to keep.
+   */
   buildDocument: (
     session: RecordingSession,
     chunks: readonly RecordingChunk[],
     marks: readonly RecordingMark[],
     speakers: readonly SpeakerIdentity[],
+    conversation?: ConversationPart,
   ) => DocumentInput | null;
   /** The voice separator, or null while speakers are not told apart. */
   voices?: () => VoiceSeparator | null;
@@ -142,6 +166,12 @@ export interface RecordingServiceDeps {
    * restart, and lowering it drops what is now past it.
    */
   keepAudioDays?: () => number;
+  /**
+   * Silence after which an all-day session's conversation is closed and
+   * written while the session goes on; 0 (the default) never splits. Read on
+   * every pass.
+   */
+  conversationGapMs?: () => number;
   /**
    * Events on the owner's calendar overlapping `[from, toExclusive)`, with who
    * was invited; absent, no calendar suggestion is made.
@@ -156,6 +186,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** One speaker of a session, as the owner reviews it. */
 export interface RecordingSpeakerView extends SpeakerIdentity {
+  /** The conversation they spoke in, when the session was split; null otherwise. */
+  conversation: number | null;
   /** How long this speaker spoke, ms. */
   talkMs: number;
   /** The first few things they said. */
@@ -184,7 +216,23 @@ export interface RecordingSummary {
   speakers: number;
   /** Speakers the owner has said who they are. */
   namedSpeakers: number;
-  /** The session's document, once written; null before, or when nothing in it was speech. */
+  /**
+   * The session's document, once written; null before, or when nothing in it
+   * was speech. For a split session, its first conversation's.
+   */
+  documentId: string | null;
+  /** The conversations an all-day session was split into; empty when it is one. */
+  conversations: RecordingConversationView[];
+}
+
+/** One conversation of a split session. */
+export interface RecordingConversationView {
+  n: number;
+  title: string;
+  /** Whether the owner gave the title. */
+  titled: boolean;
+  startedAt: string;
+  endedAt: string;
   documentId: string | null;
 }
 
@@ -368,9 +416,15 @@ export class RecordingTranscriptionService {
   private summarize(session: RecordingSession): RecordingSummary {
     const speakers = listRecordingSpeakers(this.deps.readDb, session.id);
     const status = this.status(session.id);
+    const conversations = listRecordingConversations(this.deps.readDb, session.id);
     return {
       id: session.id,
-      title: recordingTitle(session),
+      // A split session is the day's recording; its conversations carry the
+      // time-based titles.
+      title:
+        conversations.length > 0 && !session.title?.trim()
+          ? `All-day recording, ${localStart(session)}`
+          : recordingTitle(session),
       startedAt: session.startedAt,
       state: status?.state ?? "recording",
       chunkCount: session.chunkCount,
@@ -383,6 +437,18 @@ export class RecordingTranscriptionService {
         OMNESIS_RECORDINGS_SOURCE_ID,
         session.id,
       ),
+      conversations: conversations.map((c) => ({
+        n: c.n,
+        title: conversationTitle(session, c),
+        titled: Boolean(c.title?.trim()),
+        startedAt: c.startedAt,
+        endedAt: c.endedAt,
+        documentId: findDocumentIdBySourceExternalId(
+          this.deps.readDb,
+          OMNESIS_RECORDINGS_SOURCE_ID,
+          conversationExternalId(session.id, c.n),
+        ),
+      })),
     };
   }
 
@@ -418,12 +484,16 @@ export class RecordingTranscriptionService {
   speakers(id: string): RecordingSpeakerView[] | null {
     if (!getRecordingSession(this.deps.readDb, id)) return null;
     const identities = this.speakerIdentities(id);
+    const conversations = listRecordingConversations(this.deps.readDb, id);
     const talk = new Map<number, number>();
     const samples = new Map<number, string[]>();
+    const spokeIn = new Map<number, number>();
     for (const chunk of listRecordingChunks(this.deps.readDb, id)) {
       for (const w of chunk.voices ?? []) {
         if (w.speaker !== undefined) {
           talk.set(w.speaker, (talk.get(w.speaker) ?? 0) + (w.endMs - w.startMs));
+          const n = conversations.find((c) => chunk.seq >= c.firstSeq && chunk.seq <= c.lastSeq)?.n;
+          if (n !== undefined && !spokeIn.has(w.speaker)) spokeIn.set(w.speaker, n);
         }
       }
       for (const turn of speakerTurns(chunk.segments ?? [], chunk.voices ?? [])) {
@@ -441,6 +511,7 @@ export class RecordingTranscriptionService {
     }
     return identities.map((s) => ({
       ...s,
+      conversation: spokeIn.get(s.speaker) ?? null,
       talkMs: talk.get(s.speaker) ?? 0,
       samples: samples.get(s.speaker) ?? [],
     }));
@@ -471,6 +542,20 @@ export class RecordingTranscriptionService {
     return set;
   }
 
+  /**
+   * Give one conversation of a split session the owner's title, or clear it;
+   * its document is written again. False when there is no such conversation.
+   */
+  async setConversationTitle(id: string, n: number, title: string | null): Promise<boolean> {
+    const set = await this.deps.writeGate.setRecordingConversationTitle(
+      id,
+      n,
+      title?.trim() || null,
+    );
+    if (set) this.kick();
+    return set;
+  }
+
   /** Stop offering one suggestion for a session. False when the session does not exist. */
   async dismissSuggestion(id: string, key: string): Promise<boolean> {
     return this.deps.writeGate.dismissRecordingSuggestion(id, key, this.now().toISOString());
@@ -481,15 +566,28 @@ export class RecordingTranscriptionService {
    * calendar and from names heard in the transcript. Null when the session
    * does not exist. A calendar that cannot be read leaves only the mentions.
    */
-  async suggestions(id: string): Promise<RecordingSuggestions | null> {
+  async suggestions(id: string, conversation?: number): Promise<RecordingSuggestions | null> {
     const session = getRecordingSession(this.deps.readDb, id);
     if (!session) return null;
-    const chunks = listRecordingChunks(this.deps.readDb, id);
+    let chunks = listRecordingChunks(this.deps.readDb, id);
     const speakers = this.speakerIdentities(id);
 
-    const start = Date.parse(session.startedAt);
+    // One conversation of a split session is suggested for on its own: its
+    // time, its turns, and dismissals kept apart from the other conversations'.
+    let start = Date.parse(session.startedAt);
+    let title = session.title;
+    let declaredEnd = session.endedAt ? Date.parse(session.endedAt) : Number.NaN;
+    let prefix = "";
+    if (conversation !== undefined) {
+      const c = listRecordingConversations(this.deps.readDb, id).find((x) => x.n === conversation);
+      if (!c) return null;
+      chunks = chunks.filter((x) => x.seq >= c.firstSeq && x.seq <= c.lastSeq);
+      start = Date.parse(c.startedAt);
+      title = c.title;
+      declaredEnd = Date.parse(c.endedAt);
+      prefix = `c${c.n}:`;
+    }
     const recordedEnd = start + chunks.reduce((sum, c) => sum + c.durationMs, 0);
-    const declaredEnd = session.endedAt ? Date.parse(session.endedAt) : Number.NaN;
     const end = Math.max(
       Number.isFinite(declaredEnd) ? declaredEnd : recordedEnd,
       start + MIN_WINDOW_MS,
@@ -522,29 +620,38 @@ export class RecordingTranscriptionService {
       }
     }
     const names = new Map<string, ReturnType<typeof resolveGivenName>>();
+    const dismissed = new Set(
+      [...listDismissedRecordingSuggestions(this.deps.readDb, id)].flatMap((key) =>
+        prefix ? (key.startsWith(prefix) ? [key.slice(prefix.length)] : []) : [key],
+      ),
+    );
+    const suggestions = buildSuggestions({
+      title,
+      turns,
+      events,
+      namedSpeakers: new Set(
+        speakers.filter((s) => s.isSelf || s.personId || s.name).map((s) => s.speaker),
+      ),
+      mappedPeople: new Set(speakers.flatMap((s) => (s.personId ? [s.personId] : []))),
+      dismissed,
+      resolveName: (name) => {
+        const key = name.toLowerCase();
+        if (!names.has(key)) names.set(key, resolveGivenName(this.deps.readDb, name));
+        return names.get(key)!;
+      },
+    });
     return {
-      suggestions: buildSuggestions({
-        title: session.title,
-        turns,
-        events,
-        namedSpeakers: new Set(
-          speakers.filter((s) => s.isSelf || s.personId || s.name).map((s) => s.speaker),
-        ),
-        mappedPeople: new Set(speakers.flatMap((s) => (s.personId ? [s.personId] : []))),
-        dismissed: listDismissedRecordingSuggestions(this.deps.readDb, id),
-        resolveName: (name) => {
-          const key = name.toLowerCase();
-          if (!names.has(key)) names.set(key, resolveGivenName(this.deps.readDb, name));
-          return names.get(key)!;
-        },
-      }),
+      suggestions: prefix
+        ? suggestions.map((x) => ({ ...x, key: `${prefix}${x.key}` }))
+        : suggestions,
     };
   }
 
   /** Delete a session, its chunks and its document. False when it did not exist. */
   async delete(id: string): Promise<boolean> {
+    const conversations = listRecordingConversations(this.deps.readDb, id);
     const deleted = await this.deps.writeGate.deleteRecordingSession(id);
-    await this.deps.deleteDocument(id);
+    await this.deleteDocuments(id, conversations);
     if (deleted) log.info(`Deleted recording ${id}`);
     return deleted;
   }
@@ -651,17 +758,17 @@ export class RecordingTranscriptionService {
   }
 
   private async projectReady(): Promise<void> {
+    await this.closeOpenConversations();
     const missingCutoff = this.later(-MISSING_GRACE_MS);
     // Each session at most once per call: one changed again meanwhile comes
     // round on the next pass rather than holding this one.
     const done = new Set<string>();
     for (;;) {
       if (this.disposed) return;
-      const ready = listUnprojectedRecordingSessions(
-        this.deps.readDb,
-        missingCutoff,
-        SWEEP_BATCH,
-      ).filter((session) => !done.has(session.id));
+      const ready = [
+        ...listUnprojectedRecordingSessions(this.deps.readDb, missingCutoff, SWEEP_BATCH),
+        ...listUnprojectedOpenRecordingSessions(this.deps.readDb, SWEEP_BATCH),
+      ].filter((session) => !done.has(session.id));
       if (ready.length === 0) return;
       for (const session of ready) {
         done.add(session.id);
@@ -678,12 +785,78 @@ export class RecordingTranscriptionService {
     }
   }
 
+  /** The silence that closes a conversation; 0 when sessions are not split. */
+  private conversationGapMs(): number {
+    const ms = this.deps.conversationGapMs?.() ?? 0;
+    return Number.isFinite(ms) && ms > 0 ? ms : 0;
+  }
+
+  /**
+   * Close the conversations of open all-day sessions that a long enough
+   * silence has ended, so they are written while the session goes on.
+   */
+  private async closeOpenConversations(): Promise<void> {
+    const gapMs = this.conversationGapMs();
+    if (gapMs === 0) return;
+    for (const session of listOpenAmbientRecordingSessions(this.deps.readDb, SWEEP_BATCH)) {
+      if (this.disposed) return;
+      const closed = listRecordingConversations(this.deps.readDb, session.id);
+      const from = (closed.at(-1)?.lastSeq ?? -1) + 1;
+      const spans = closeConversations(
+        listRecordingChunks(this.deps.readDb, session.id, from),
+        closed,
+        gapMs,
+      );
+      if (spans.length === 0) continue;
+      await this.deps.writeGate.closeRecordingConversations(
+        session.id,
+        spans,
+        this.now().toISOString(),
+      );
+      for (const span of spans) {
+        log.info(
+          `Recording ${session.id}: conversation ${span.n} closed (chunks ${span.firstSeq}-${span.lastSeq})`,
+        );
+      }
+    }
+  }
+
+  /**
+   * The rest of a finished all-day session, closed as its last conversations.
+   * A session the gateway never split, and that is one conversation, stays
+   * one document as it always was.
+   */
+  private async closeFinalConversations(session: RecordingSession): Promise<void> {
+    const gapMs = this.conversationGapMs();
+    if (gapMs === 0 || session.origin !== "ambient" || session.finishedAt === null) return;
+    const closed = listRecordingConversations(this.deps.readDb, session.id);
+    const chunks = listRecordingChunks(this.deps.readDb, session.id);
+    const lastSeq = Math.max((session.chunkCount ?? 0) - 1, ...chunks.map((c) => c.seq));
+    let spans: ConversationSpan[] = closeConversations(chunks, closed, gapMs, { lastSeq });
+    const last = closed.at(-1);
+    if (spans.length === 0 && last && last.lastSeq < lastSeq) spans = [{ ...last, lastSeq }];
+    if (closed.length === 0 && spans.length <= 1) return;
+    await this.deps.writeGate.closeRecordingConversations(
+      session.id,
+      spans,
+      this.now().toISOString(),
+    );
+  }
+
   private async project(sessionId: string): Promise<void> {
+    const before = getRecordingSession(this.deps.readDb, sessionId);
+    if (!before) return;
+    await this.closeFinalConversations(before);
     // The revision is read with the session, before the chunks: a change
     // landing after this read bumps it past the one recorded below, and the
     // session comes round again.
     const session = getRecordingSession(this.deps.readDb, sessionId);
     if (!session) return;
+    const conversations = listRecordingConversations(this.deps.readDb, sessionId);
+    if (conversations.length > 0) {
+      await this.projectConversations(session, conversations);
+      return;
+    }
     await this.groupVoices(sessionId);
     const chunks = listRecordingChunks(this.deps.readDb, sessionId);
     const marks = listRecordingMarks(this.deps.readDb, sessionId);
@@ -705,6 +878,67 @@ export class RecordingTranscriptionService {
   }
 
   /**
+   * Write each closed conversation of a split session as its own document.
+   * Its voices are grouped first, and only its own vectors deleted: the
+   * conversation still open keeps its vectors until it closes. A conversation
+   * whose document has not changed is not written again.
+   */
+  private async projectConversations(
+    session: RecordingSession,
+    conversations: readonly RecordingConversation[],
+  ): Promise<void> {
+    const sessionId = session.id;
+    for (const c of conversations) {
+      await this.groupVoices(sessionId, { fromSeq: c.firstSeq, toSeq: c.lastSeq });
+    }
+    const chunks = listRecordingChunks(this.deps.readDb, sessionId);
+    const speakers = this.speakerIdentities(sessionId);
+    const marks = marksByConversation(
+      listRecordingMarks(this.deps.readDb, sessionId),
+      conversations,
+      chunks,
+      session.finishedAt !== null,
+    );
+    const lastN = session.finishedAt !== null ? conversations.at(-1)?.n : undefined;
+    let written = 0;
+    for (const c of conversations) {
+      const doc = this.deps.buildDocument(session, chunks, marks.get(c.n) ?? [], speakers, {
+        n: c.n,
+        firstSeq: c.firstSeq,
+        lastSeq: c.lastSeq,
+        startedAt: c.startedAt,
+        title: c.title,
+        last: c.n === lastN,
+      });
+      const hash = doc?.contentHash ?? null;
+      if (hash === c.contentHash) continue;
+      if (doc) await this.deps.ingest([doc]);
+      else await this.deps.deleteDocument(conversationExternalId(sessionId, c.n));
+      await this.deps.writeGate.markRecordingConversationProjected(sessionId, c.n, hash);
+      written += 1;
+    }
+    if (!getRecordingSession(this.deps.readDb, sessionId)) {
+      await this.deleteDocuments(sessionId, conversations);
+      return;
+    }
+    await this.deps.writeGate.markRecordingSessionProjected(sessionId, session.revision);
+    if (written > 0) {
+      log.info(`Wrote recording ${sessionId}: ${written} of ${conversations.length} conversations`);
+    }
+  }
+
+  /** Drop a session's document, and each of its conversations'. */
+  private async deleteDocuments(
+    sessionId: string,
+    conversations: readonly Pick<RecordingConversation, "n">[],
+  ): Promise<void> {
+    await this.deps.deleteDocument(sessionId);
+    for (const c of conversations) {
+      if (c.n > 1) await this.deps.deleteDocument(conversationExternalId(sessionId, c.n));
+    }
+  }
+
+  /**
    * Group the voices of chunks not grouped yet into the session's speakers
    * and delete their vectors. Speakers found in chunks that arrive after an
    * earlier grouping are numbered after the existing ones: their vectors
@@ -712,8 +946,11 @@ export class RecordingTranscriptionService {
    * grouping fails, the vectors are deleted all the same and those windows
    * stay without a speaker — vectors never wait for a later attempt.
    */
-  private async groupVoices(sessionId: string): Promise<void> {
-    const ungrouped = listUngroupedRecordingVoices(this.deps.readDb, sessionId);
+  private async groupVoices(
+    sessionId: string,
+    range?: { fromSeq: number; toSeq: number },
+  ): Promise<void> {
+    const ungrouped = listUngroupedRecordingVoices(this.deps.readDb, sessionId, range);
     if (ungrouped.length === 0) return;
     const separator = this.deps.voices?.() ?? null;
     let labels: number[] | null = null;
@@ -877,4 +1114,40 @@ export class RecordingTranscriptionService {
   private later(ms: number): string {
     return new Date(this.now().getTime() + ms).toISOString();
   }
+}
+
+/** The title of one conversation: the owner's, or its local start. */
+function conversationTitle(
+  session: RecordingSession,
+  c: Pick<RecordingConversation, "title" | "startedAt">,
+): string {
+  return recordingTitle({ ...session, title: c.title, startedAt: c.startedAt });
+}
+
+/**
+ * Each mark goes to the last conversation that started at or before it, or to
+ * the first. While the session is open, a mark after the end of its last
+ * closed conversation waits for the conversation still going on.
+ */
+function marksByConversation(
+  marks: readonly RecordingMark[],
+  conversations: readonly RecordingConversation[],
+  chunks: readonly RecordingChunk[],
+  finished: boolean,
+): Map<number, RecordingMark[]> {
+  const out = new Map<number, RecordingMark[]>();
+  const last = conversations.at(-1);
+  const lastChunk = last ? chunks.find((c) => c.seq === last.lastSeq) : undefined;
+  const closedUntil = lastChunk
+    ? Date.parse(lastChunk.startedAt) + lastChunk.durationMs
+    : Number.POSITIVE_INFINITY;
+  for (const mark of marks) {
+    const at = Date.parse(mark.markedAt);
+    if (!finished && at > closedUntil) continue;
+    const target =
+      [...conversations].reverse().find((c) => Date.parse(c.startedAt) <= at) ?? conversations[0];
+    if (!target) continue;
+    out.set(target.n, [...(out.get(target.n) ?? []), mark]);
+  }
+  return out;
 }

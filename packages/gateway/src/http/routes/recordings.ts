@@ -66,6 +66,7 @@ import {
   listRecordingsQuery,
   recordingChunkMetadata,
   recordingSpeakerNumber,
+  recordingSuggestionsQuery,
   setRecordingSpeakerBody,
   recordingChunkSeq,
   recordingId,
@@ -290,13 +291,35 @@ export function mountRecordingRoutes(app: RouteApp, deps: RecordingRoutesDeps): 
     },
   );
 
-  app.get("/recordings/:id/suggestions", scope.writeAny(), async (c) => {
-    enforceScope(c);
-    const suggestions = await deps.service.suggestions(parseId(c.req.param("id")));
-    if (!suggestions) throw new NotFoundError("recording not found");
-    c.header("Cache-Control", "no-store");
-    return c.json(suggestions);
-  });
+  app.put(
+    "/recordings/:id/conversations/:n/title",
+    scope.writeAny(),
+    validateJson(setRecordingTitleBody),
+    async (c) => {
+      enforceScope(c);
+      const id = parseId(c.req.param("id"));
+      const n = recordingSpeakerNumber.safeParse(c.req.param("n"));
+      if (!n.success) throw new NotFoundError("conversation not found");
+      if (!(await deps.service.setConversationTitle(id, n.data, c.req.valid("json").title))) {
+        throw new NotFoundError("conversation not found");
+      }
+      return c.json(deps.service.summary(id));
+    },
+  );
+
+  app.get(
+    "/recordings/:id/suggestions",
+    scope.writeAny(),
+    validateQuery(recordingSuggestionsQuery),
+    async (c) => {
+      enforceScope(c);
+      const { conversation } = c.req.valid("query");
+      const suggestions = await deps.service.suggestions(parseId(c.req.param("id")), conversation);
+      if (!suggestions) throw new NotFoundError("recording not found");
+      c.header("Cache-Control", "no-store");
+      return c.json(suggestions);
+    },
+  );
 
   app.post(
     "/recordings/:id/suggestions/dismiss",

@@ -4,6 +4,7 @@
 import { describe, expect, test } from "vitest";
 
 import { formatOffset, formatSpan, renderRecording } from "./render.js";
+import { buildRecordingDocument, conversationExternalId } from "./index.js";
 import type { RecordingChunk, RecordingSession } from "../../recordings/storage.js";
 
 const START = "2026-03-02T09:00:00.000Z";
@@ -168,5 +169,56 @@ describe("renderRecording", () => {
     expect(formatSpan(45_000)).toBe("45 s");
     expect(formatSpan(80 * 60_000)).toBe("1 h 20 min");
     expect(formatSpan(120 * 60_000)).toBe("2 h");
+  });
+});
+
+describe("one conversation of a split session", () => {
+  const split = session({ origin: "ambient", chunkCount: 6, endedAt: "2026-03-02T09:06:00.000Z" });
+  const chunks = [
+    chunk(0, 0, "Morning, all."),
+    chunk(1, 60, null),
+    chunk(2, 120, null),
+    chunk(3, 180, "Is the projector free?"),
+    // 4 never arrived; 5 is silence.
+    chunk(5, 300, null),
+  ];
+
+  test("the first keeps the session's id; the others are numbered after it", () => {
+    expect(conversationExternalId("rec-1", 1)).toBe("rec-1");
+    expect(conversationExternalId("rec-1", 2)).toBe("rec-1:2");
+  });
+
+  test("holds only its chunks, timed from its own start, under its own title", () => {
+    const doc = buildRecordingDocument(split, chunks, [], [], {
+      n: 2,
+      firstSeq: 3,
+      lastSeq: 5,
+      startedAt: chunks[3]!.startedAt,
+      title: null,
+      last: true,
+    })!;
+    expect(doc.externalId).toBe("rec-1:2");
+    expect(doc.title).toBe("Conversation, 2026-03-02 10:03");
+    expect(doc.sourceCreatedAt).toBe(chunks[3]!.startedAt);
+    expect(doc.metadata.extra).toMatchObject({ recordingOrigin: "ambient", conversation: 2 });
+    expect(doc.content.split("\n").slice(4)).toEqual([
+      "[00:00:00] Is the projector free?",
+      "[00:01:00] — a part of the recording did not arrive —",
+      "[00:02:00] — silence, 1 min —",
+    ]);
+  });
+
+  test("only the last conversation names the parts that never arrived at the end", () => {
+    const doc = buildRecordingDocument(split, chunks, [], [], {
+      n: 1,
+      firstSeq: 0,
+      lastSeq: 0,
+      startedAt: START,
+      title: "Stand-up",
+      last: false,
+    })!;
+    expect(doc.externalId).toBe("rec-1");
+    expect(doc.title).toBe("Stand-up");
+    expect(doc.content.split("\n").slice(4)).toEqual(["[00:00:00] Morning, all."]);
   });
 });

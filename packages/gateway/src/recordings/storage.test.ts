@@ -9,6 +9,12 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
 import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import {
+  closeRecordingConversations,
+  listOpenAmbientRecordingSessions,
+  listRecordingConversations,
+  listUnprojectedOpenRecordingSessions,
+  markRecordingConversationProjected,
+  setRecordingConversationTitle,
   deleteRecordingSession,
   finishRecordingSession,
   getRecordingSession,
@@ -185,5 +191,65 @@ describe("recording storage", () => {
     expect(insertRecordingMark(db, { ...mark, noteId: "n0", markedAt: NOW })).toBe(true);
     expect(getRecordingSession(db, "s1")!.revision).toBe(before + 1);
     expect(listRecordingMarks(db, "s1").map((m) => m.noteId)).toEqual(["n0", "n1"]);
+  });
+});
+
+describe("conversations of a split session", () => {
+  const span = (n: number, firstSeq: number, lastSeq: number) => ({
+    n,
+    firstSeq,
+    lastSeq,
+    startedAt: NOW,
+    endedAt: LATER,
+  });
+
+  test("closing is idempotent, only ever reaches further, and changes the session", () => {
+    session("s1", "ambient");
+    const before = getRecordingSession(db, "s1")!.revision;
+    expect(closeRecordingConversations(db, "s1", [span(1, 0, 2)], LATER)).toBe(1);
+    expect(getRecordingSession(db, "s1")!.revision).toBe(before + 1);
+
+    expect(closeRecordingConversations(db, "s1", [span(1, 0, 2)], LATER)).toBe(0);
+    expect(closeRecordingConversations(db, "s1", [span(1, 0, 1)], LATER)).toBe(0);
+    expect(getRecordingSession(db, "s1")!.revision).toBe(before + 1);
+    expect(closeRecordingConversations(db, "s1", [span(1, 0, 4), span(2, 6, 7)], LATER)).toBe(2);
+    expect(listRecordingConversations(db, "s1").map((c) => [c.n, c.firstSeq, c.lastSeq])).toEqual([
+      [1, 0, 4],
+      [2, 6, 7],
+    ]);
+    expect(closeRecordingConversations(db, "nope", [span(1, 0, 0)], LATER)).toBe(0);
+  });
+
+  test("a conversation keeps the owner's title and the hash of its document", () => {
+    session("s1", "ambient");
+    closeRecordingConversations(db, "s1", [span(1, 0, 0)], LATER);
+    const before = getRecordingSession(db, "s1")!.revision;
+    expect(setRecordingConversationTitle(db, "s1", 1, "Stand-up")).toBe(true);
+    expect(setRecordingConversationTitle(db, "s1", 2, "Nope")).toBe(false);
+    expect(getRecordingSession(db, "s1")!.revision).toBe(before + 1);
+    markRecordingConversationProjected(db, "s1", 1, "abc");
+    expect(listRecordingConversations(db, "s1")[0]).toMatchObject({
+      title: "Stand-up",
+      contentHash: "abc",
+    });
+  });
+
+  test("the sweeps read open all-day sessions, and open ones with a conversation behind", () => {
+    session("explicit");
+    session("ambient", "ambient");
+    expect(listOpenAmbientRecordingSessions(db, 10).map((x) => x.id)).toEqual(["ambient"]);
+    expect(listUnprojectedOpenRecordingSessions(db, 10)).toEqual([]);
+    closeRecordingConversations(db, "ambient", [span(1, 0, 0)], LATER);
+    expect(listUnprojectedOpenRecordingSessions(db, 10).map((x) => x.id)).toEqual(["ambient"]);
+    finishRecordingSession(db, "ambient", 1, LATER, LATER);
+    expect(listOpenAmbientRecordingSessions(db, 10)).toEqual([]);
+    expect(listUnprojectedOpenRecordingSessions(db, 10)).toEqual([]);
+  });
+
+  test("deleting a session deletes its conversations", () => {
+    session("s1", "ambient");
+    closeRecordingConversations(db, "s1", [span(1, 0, 0)], LATER);
+    deleteRecordingSession(db, "s1");
+    expect(listRecordingConversations(db, "s1")).toEqual([]);
   });
 });

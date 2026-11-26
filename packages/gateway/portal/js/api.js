@@ -1891,9 +1891,13 @@ export async function getRecordingChunkAudio(id, seq) {
 
 /**
  * Who likely took part in a recording and what it was, from the owner's
- * calendar and names heard in it: `{ suggestions }`. Nothing is applied.
+ * calendar and names heard in it: `{ suggestions }`. Nothing is applied. With
+ * `conversation`, for that conversation of a split all-day recording.
  */
-export const getRecordingSuggestions = (id) => request("GET", `${recordingPath(id)}/suggestions`);
+export const getRecordingSuggestions = (id, conversation) =>
+  request("GET", `${recordingPath(id)}/suggestions`, {
+    ...(conversation === undefined ? {} : { query: { conversation } }),
+  });
 
 /** Stop offering one suggestion for a recording. */
 export const dismissRecordingSuggestion = (id, key) =>
@@ -1902,3 +1906,12 @@ export const dismissRecordingSuggestion = (id, key) =>
 /** Give a recording the owner's title; null goes back to the date-based one. Answers its summary. */
 export const setRecordingTitle = (id, title) =>
   request("PUT", `${recordingPath(id)}/title`, { body: { title } });
+
+/**
+ * Give conversation `n` of a split all-day recording the owner's title; null
+ * goes back to the time-based one. Answers the recording's summary.
+ */
+export const setRecordingConversationTitle = (id, n, title) =>
+  request("PUT", `${recordingPath(id)}/conversations/${encodeURIComponent(String(n))}/title`, {
+    body: { title },
+  });

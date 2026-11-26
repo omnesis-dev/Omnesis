@@ -58,6 +58,8 @@ let separator: VoiceSeparator | null;
 let release: () => void;
 /** The operator's `inference.recordings.keepAudioDays`. */
 let keepDays: number;
+/** The operator's `inference.recordings.conversationGapSeconds`, in ms; 0 never splits. */
+let gapMs: number;
 /** What the owner's calendar holds for any window; a function to see the window asked for. */
 let calendar: (from: string, to: string) => CalendarEventCandidate[];
 
@@ -125,6 +127,7 @@ beforeEach(() => {
   held = null;
   separator = null;
   keepDays = 0;
+  gapMs = 0;
   calendar = () => [];
   service = new RecordingTranscriptionService({
     writeGate: directWriteGate(db),
@@ -151,6 +154,7 @@ beforeEach(() => {
     buildDocument: buildRecordingDocument,
     voices: () => separator,
     keepAudioDays: () => keepDays,
+    conversationGapMs: () => gapMs,
     calendarEvents: async (from, to) => calendar(from, to),
     now: () => now,
   });
@@ -633,6 +637,7 @@ describe("RecordingTranscriptionService kept audio", () => {
         speakers: 0,
         namedSpeakers: 0,
         documentId: null,
+        conversations: [],
       },
     ]);
   });
@@ -881,5 +886,206 @@ describe("RecordingTranscriptionService speakers", () => {
       )
       .get(id)!.n;
     expect(vectors).toBe(0);
+  });
+});
+
+describe("RecordingTranscriptionService conversations of an all-day session", () => {
+  type Line = { startMs: number; endMs: number; text: string; voice: string };
+  function spoken(sessionId: string, seq: number, lines: Line[]) {
+    transcripts.push({
+      text: lines.map((l) => l.text).join(" "),
+      segments: lines.map(({ startMs, endMs, text }) => ({ startMs, endMs, text })),
+    });
+    const script = { segments: lines };
+    return chunk(sessionId, seq, { audio: new TextEncoder().encode(JSON.stringify(script)) });
+  }
+  const silence = (sessionId: string, seq: number) =>
+    chunk(sessionId, seq, { silent: true, audio: null, mimeType: null });
+  const vectorsOf = (id: string) =>
+    db
+      .prepare<[string], { seq: number }>(
+        "SELECT seq FROM recording_chunks WHERE session_id = ? AND voice_vectors IS NOT NULL ORDER BY seq",
+      )
+      .all(id)
+      .map((r) => r.seq);
+
+  /**
+   * Two minutes of talk, two minutes of silence, then more talk, all in
+   * minute-long chunks; the session is left open.
+   */
+  async function morning(origin: "explicit" | "ambient" = "ambient"): Promise<string> {
+    const id = await start(undefined, undefined, origin);
+    await service.addChunk(
+      spoken(id, 0, [
+        { startMs: 0, endMs: 3_000, text: "Shall we look at the budget?", voice: "maya" },
+        { startMs: 4_000, endMs: 7_000, text: "Yes, travel first.", voice: "owner" },
+      ]),
+    );
+    await service.addChunk(silence(id, 1));
+    await service.addChunk(silence(id, 2));
+    await service.addChunk(
+      spoken(id, 3, [
+        { startMs: 10_000, endMs: 14_000, text: "Is the projector free?", voice: "jamie" },
+      ]),
+    );
+    await service.idle();
+    return id;
+  }
+
+  beforeEach(() => {
+    separator = new ReplayVoiceSeparator();
+    gapMs = 90_000;
+  });
+
+  test("a conversation a long silence ended is written, with its speakers, while the session goes on", async () => {
+    const id = await morning();
+
+    expect(service.status(id)!.state).toBe("recording");
+    const doc = docs.get(id)!;
+    expect(doc.title).toBe("Conversation, 2026-03-02 10:00");
+    expect(doc.content.split("\n").slice(4)).toEqual([
+      "[00:00:00] Speaker 1: Shall we look at the budget?",
+      "[00:00:04] Speaker 2: Yes, travel first.",
+    ]);
+    expect(doc.metadata.extra).toMatchObject({ recordingOrigin: "ambient", conversation: 1 });
+    expect(docs.size).toBe(1);
+    expect(service.speakers(id)!.map((s) => [s.speaker, s.conversation])).toEqual([
+      [1, 1],
+      [2, 1],
+    ]);
+    // Only the closed conversation's vectors are gone; the talk still going on keeps its own.
+    expect(vectorsOf(id)).toEqual([3]);
+    expect(service.summary(id)!.conversations).toEqual([
+      expect.objectContaining({ n: 1, title: "Conversation, 2026-03-02 10:00", titled: false }),
+    ]);
+    // The session itself reads as the day's recording.
+    expect(service.summary(id)!.title).toBe("All-day recording, 2026-03-02 10:00");
+  });
+
+  test("finishing the session writes its last conversation, timed from its own start", async () => {
+    const id = await morning();
+    await service.finish(id, 4, at(4 * 60_000));
+    await service.idle();
+
+    const second = docs.get(`${id}:2`)!;
+    expect(second.title).toBe("Conversation, 2026-03-02 10:03");
+    // Speakers are numbered on across the session: voices of one conversation
+    // are never compared with another's.
+    expect(second.content.split("\n").slice(4)).toEqual([
+      "[00:00:10] Speaker 3: Is the projector free?",
+    ]);
+    expect(docs.get(id)!.content).not.toContain("projector");
+    expect(vectorsOf(id)).toEqual([]);
+    expect(service.status(id)!.state).toBe("done");
+  });
+
+  test("a recording the owner started stays one document, however long its silences", async () => {
+    const id = await morning("explicit");
+    expect(docs.size).toBe(0);
+    await service.finish(id, 4, at(4 * 60_000));
+    await service.idle();
+
+    expect([...docs.keys()]).toEqual([id]);
+    expect(docs.get(id)!.content).toContain("projector");
+    expect(service.summary(id)!.conversations).toEqual([]);
+  });
+
+  test("with no gap set, an all-day session is one document as before", async () => {
+    gapMs = 0;
+    const id = await morning();
+    expect(docs.size).toBe(0);
+    await service.finish(id, 4, at(4 * 60_000));
+    await service.idle();
+
+    expect([...docs.keys()]).toEqual([id]);
+  });
+
+  test("an all-day session that was one conversation stays one document under its own id", async () => {
+    const id = await start(undefined, undefined, "ambient");
+    await service.addChunk(
+      spoken(id, 0, [{ startMs: 0, endMs: 3_000, text: "Morning, all.", voice: "maya" }]),
+    );
+    await service.finish(id, 1, at(60_000));
+    await service.idle();
+
+    expect([...docs.keys()]).toEqual([id]);
+    expect(service.summary(id)!.conversations).toEqual([]);
+  });
+
+  test("naming a speaker writes again only the conversation they spoke in", async () => {
+    const id = await morning();
+    await service.finish(id, 4, at(4 * 60_000));
+    await service.idle();
+    const second = docs.get(`${id}:2`);
+
+    expect(await service.setSpeaker(id, 2, { kind: "self" })).toBe("set");
+    await service.idle();
+
+    expect(docs.get(id)!.content).toContain("[00:00:04] You: Yes, travel first.");
+    expect(docs.get(`${id}:2`)).toBe(second);
+  });
+
+  test("a conversation takes the owner's title", async () => {
+    const id = await morning();
+    expect(await service.setConversationTitle(id, 1, " Budget chat ")).toBe(true);
+    expect(await service.setConversationTitle(id, 7, "Nope")).toBe(false);
+    await service.idle();
+
+    expect(docs.get(id)!.title).toBe("Budget chat");
+    expect(service.summary(id)!.conversations[0]).toMatchObject({
+      title: "Budget chat",
+      titled: true,
+    });
+  });
+
+  test("a marked moment goes to its conversation, and waits while its conversation goes on", async () => {
+    const id = await morning();
+    await service.mark(id, "note-1", at(5_000));
+    await service.mark(id, "note-2", at(3 * 60_000 + 12_000));
+    await service.idle();
+
+    expect(docs.get(id)!.content).toContain("★ Marked moment");
+    expect(docs.get(id)!.content.match(/★/g)).toHaveLength(1);
+
+    await service.finish(id, 4, at(4 * 60_000));
+    await service.idle();
+    expect(docs.get(`${id}:2`)!.content).toContain("[00:00:12] ★ Marked moment");
+  });
+
+  test("deleting the session deletes every conversation's document", async () => {
+    const id = await morning();
+    await service.finish(id, 4, at(4 * 60_000));
+    await service.idle();
+    expect(docs.size).toBe(2);
+
+    expect(await service.delete(id)).toBe(true);
+    expect(docs.size).toBe(0);
+  });
+
+  test("suggestions are made per conversation, and dismissed per conversation", async () => {
+    calendar = () => [
+      {
+        documentId: "doc-standup",
+        title: "Facilities sync",
+        start: at(3 * 60_000),
+        end: at(4 * 60_000),
+        attendees: [],
+      },
+    ];
+    const id = await morning();
+    await service.finish(id, 4, at(4 * 60_000));
+    await service.idle();
+
+    expect((await service.suggestions(id, 1))!.suggestions).toEqual([]);
+    const [title] = (await service.suggestions(id, 2))!.suggestions;
+    expect(title).toMatchObject({
+      kind: "title",
+      title: "Facilities sync",
+      key: "c2:title:doc-standup",
+    });
+    expect(await service.suggestions(id, 9)).toBeNull();
+
+    await service.dismissSuggestion(id, title!.key);
+    expect((await service.suggestions(id, 2))!.suggestions).toEqual([]);
   });
 });

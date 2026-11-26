@@ -5,7 +5,8 @@
  * The omnesis-recordings built-in source (experimental): conversations a
  * phone records on the table and uploads in chunks while it records. The
  * gateway transcribes the chunks (`src/recordings/`) and projects each
- * finished session into one document here.
+ * finished session into one document here — or, for an all-day session the
+ * gateway split, one document per conversation.
  *
  * Like omnesis-notes it is gateway-internal: no descriptor, no collector,
  * no `sources` row. It is listed only in experimental mode, and its
@@ -50,16 +51,63 @@ export interface SpeakerIdentity {
   name: string | null;
 }
 
+/** One conversation of a split session, as its document is written. */
+export interface ConversationPart {
+  n: number;
+  firstSeq: number;
+  lastSeq: number;
+  startedAt: string;
+  /** The owner's title for it; null for the time-based one. */
+  title: string | null;
+  /** The session's last conversation, which names the parts that never arrived. */
+  last: boolean;
+}
+
+/**
+ * The document of conversation `n` of a session: the first keeps the
+ * session's own id, so a session's document stays where it was once the
+ * session is split.
+ */
+export function conversationExternalId(sessionId: string, n: number): string {
+  return n === 1 ? sessionId : `${sessionId}:${n}`;
+}
+
 /**
  * The session's document, or null when nothing in it was understood as
  * speech — a recording of silence is not worth a document. Speakers the
- * owner mapped to people make those people participants.
+ * owner mapped to people make those people participants. With
+ * `conversation`, the document of that conversation of a split session:
+ * only its chunks, timed from its own start, under its own title.
  */
 export function buildRecordingDocument(
   session: RecordingSession,
   chunks: readonly RecordingChunk[],
   marks: readonly RecordingMark[] = [],
   speakers: readonly SpeakerIdentity[] = [],
+  conversation?: ConversationPart,
+): DocumentInput | null {
+  if (conversation) {
+    const part: RecordingSession = {
+      ...session,
+      startedAt: conversation.startedAt,
+      title: conversation.title,
+      chunkCount: conversation.last ? session.chunkCount : null,
+      endedAt: conversation.last ? session.endedAt : null,
+    };
+    const inPart = chunks.filter(
+      (c) => c.seq >= conversation.firstSeq && c.seq <= conversation.lastSeq,
+    );
+    return documentOf(part, inPart, marks, speakers, conversation);
+  }
+  return documentOf(session, chunks, marks, speakers);
+}
+
+function documentOf(
+  session: RecordingSession,
+  chunks: readonly RecordingChunk[],
+  marks: readonly RecordingMark[],
+  speakers: readonly SpeakerIdentity[],
+  conversation?: ConversationPart,
 ): DocumentInput | null {
   const names = new Map<number, string>();
   const people: PersonMention[] = [{ name: "You", role: "participant", isSelf: true }];
@@ -76,12 +124,12 @@ export function buildRecordingDocument(
       });
     }
   }
-  const rendered = renderRecording(session, chunks, marks, names);
+  const rendered = renderRecording(session, chunks, marks, names, conversation?.firstSeq ?? 0);
   if (!rendered.hasSpeech) return null;
   return {
     providerId: ProviderId(OMNESIS_RECORDINGS_PROVIDER_ID),
     sourceId: SourceId(OMNESIS_RECORDINGS_SOURCE_ID),
-    externalId: session.id,
+    externalId: conversation ? conversationExternalId(session.id, conversation.n) : session.id,
     title: rendered.title,
     content: rendered.body,
     contentHash: createHash("sha256").update(rendered.body).digest("hex"),
@@ -95,6 +143,7 @@ export function buildRecordingDocument(
       people,
       extra: {
         recordingOrigin: session.origin,
+        ...(conversation ? { conversation: conversation.n } : {}),
         ...(marks.length > 0 ? { markedMoments: marks.length } : {}),
       },
     },

@@ -16,6 +16,9 @@
  * A moment the owner marked is a line of its own after the transcript it
  * falls in; the marked audio itself was saved as a note.
  *
+ * One conversation of a session split into several renders the same way,
+ * with its own start, title and first chunk (see `buildRecordingDocument`).
+ *
  * Pure: the same session, chunks and marks always render the same text.
  */
 
@@ -80,6 +83,8 @@ export function renderRecording(
   marks: readonly RecordingMark[] = [],
   /** What to call each speaker; an unnamed one is "Speaker N". */
   speakerNames: ReadonlyMap<number, string> = new Map(),
+  /** The first chunk expected: a conversation of a split session starts later. */
+  fromSeq = 0,
 ): RenderedRecording {
   const label = (speaker: number | undefined): string =>
     speaker === undefined ? "" : `${speakerNames.get(speaker) ?? `Speaker ${speaker}`}: `;
@@ -94,7 +99,7 @@ export function renderRecording(
   let silentRunMs = 0;
   let silentRunAt = 0;
   let hasSpeech = false;
-  let expectedSeq = 0;
+  let expectedSeq = fromSeq;
 
   const flushSilence = (): void => {
     if (silentRunMs >= GAP_THRESHOLD_MS) {
