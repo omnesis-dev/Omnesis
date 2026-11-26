@@ -9,7 +9,8 @@
 # What it does, in order:
 #   1. Detect OS/arch (macOS + Linux; everything else gets an honest refusal).
 #   2. Ensure Node >= 24; source builds need >=24.16 <25 or >=26.1.
-#      Uses Homebrew on macOS or NodeSource via apt/dnf on Linux.
+#      Uses Homebrew on macOS, NodeSource via apt/dnf on Linux, or the
+#      distro's own Node 24 LTS package via pacman on Arch Linux.
 #   3. Install the `omnesis` CLI from the newest stable source tag. `--method
 #      package` installs the published npm package instead, and `--method auto`
 #      prefers the package when the registry serves it.
@@ -773,6 +774,13 @@ apt_get() {
   run_privileged env DEBIAN_FRONTEND=noninteractive apt-get "$@"
 }
 
+# Arch Linux and Arch Linux ARM. No -y: refreshing the package databases
+# without a full upgrade is a partial upgrade, which Arch does not support.
+# A stale database makes the install fail, and the message says to upgrade.
+pacman_install() {
+  run_privileged pacman -S --needed --noconfirm "$@"
+}
+
 configure_network_budget() {
   GIT_HTTP_LOW_SPEED_LIMIT="${GIT_HTTP_LOW_SPEED_LIMIT:-1}"
   GIT_HTTP_LOW_SPEED_TIME="${GIT_HTTP_LOW_SPEED_TIME:-$NETWORK_TIMEOUT_SECONDS}"
@@ -808,6 +816,9 @@ ensure_git() {
   elif command -v dnf >/dev/null 2>&1; then
     info "Installing git (dnf)..."
     set -x; run_privileged dnf install -y git; set +x
+  elif command -v pacman >/dev/null 2>&1; then
+    info "Installing git (pacman)..."
+    set -x; pacman_install git || { set +x; fail "Could not install git. Run 'sudo pacman -Syu git' and re-run."; }; set +x
   else
     fail "git is required. Install it for your distro and re-run."
   fi
@@ -835,6 +846,10 @@ ensure_source_build_tools() {
     info "Installing source build tools (dnf)..."
     run_privileged dnf install -y gcc-c++ make python3 || \
       fail "Could not install C/C++ compilers, make, and Python 3. Install them for your distro and re-run."
+  elif command -v pacman >/dev/null 2>&1; then
+    info "Installing source build tools (pacman)..."
+    pacman_install base-devel python || \
+      fail "Could not install base-devel and Python 3. Run 'sudo pacman -Syu base-devel python' and re-run."
   else
     fail "A source build needs make, C/C++ compilers, and Python 3. Install them for your distro and re-run."
   fi
@@ -923,6 +938,10 @@ ensure_node() {
       info "Installing Node 24 via NodeSource (dnf)... commands shown as they run"
       run_nodesource_setup https://rpm.nodesource.com/setup_24.x
       set -x; run_privileged dnf install -y nodejs; set +x
+    elif command -v pacman >/dev/null 2>&1; then
+      # Arch packages Node 24 LTS itself; NodeSource has no pacman repository.
+      info "Installing Node 24 LTS (pacman)... commands shown as they run"
+      set -x; pacman_install nodejs-lts-krypton npm || { set +x; fail "Could not install Node 24 (nodejs-lts-krypton). Run 'sudo pacman -Syu nodejs-lts-krypton npm' (it replaces an older nodejs package) and re-run."; }; set +x
     else
       fail "Node $NODE_INSTALL_RANGE is required. Install it for your distro (https://nodejs.org) and re-run. (Immutable/declarative distros: add nodejs_24 to your system config.)"
     fi
