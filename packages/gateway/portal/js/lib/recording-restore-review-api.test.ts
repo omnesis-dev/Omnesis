@@ -5,12 +5,13 @@ import { beforeEach, expect, test, vi } from "vitest";
 const api = vi.hoisted(() => ({ apiFetch: vi.fn(), getScope: vi.fn() }));
 vi.mock("../api.js", () => api);
 // @ts-expect-error — portal modules are plain JS.
-import {
+import * as recordingReview from "./recording-restore-review-api.js";
+const {
   getRecordingRestoreReview,
   mayRequestRecordingReview,
   recordingReviewSnapshot,
   resumeRecordingRestoreReview,
-} from "./recording-restore-review-api.js";
+} = recordingReview;
 const version = "a".repeat(64);
 const snapshot = {
   reviewRequired: true,

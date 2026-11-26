@@ -148,6 +148,12 @@ describe("native architecture inventory", () => {
     await expect(inventoryBundle(root, "arm64")).rejects.toThrow(error);
   });
 
+  test("refuses unrecognized target .bare bytes rather than treating an addon as data", async () => {
+    const root = await temporary();
+    await put(root, "prebuilds/darwin-arm64/addon.bare", "invented invalid addon");
+    await expect(inventoryBundle(root, "arm64")).rejects.toThrow(/Non-macOS native module/);
+  });
+
   test("native .so links cannot escape the bundle or dangle", async () => {
     const root = await temporary();
     await mkdir(join(root, "bundle"));

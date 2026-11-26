@@ -27,6 +27,7 @@ import {
   copyNodeTools,
   copyProductionDependencies,
 } from "./runtime-assets.mjs";
+import { createNativeDependencyFilter } from "./native-dependency-assets.mjs";
 import { stageCodexNotices } from "./codex-notices.mjs";
 import { buildDesktopAnalytics } from "./build-analytics.mjs";
 import { stageDesktopAnalytics } from "./stage-analytics.mjs";
@@ -109,11 +110,9 @@ export async function prepareRuntime({
       stdio: "inherit",
     });
     const entries = localRuntimeClosure(["omnesis"]);
-    const dependencyPlan = createRuntimeDependencyPlan(
-      input,
-      entries,
-      JSON.parse(readFileSync(join(input, "package-lock.json"), "utf8")),
-    );
+    const lock = JSON.parse(readFileSync(join(input, "package-lock.json"), "utf8"));
+    const dependencyPlan = createRuntimeDependencyPlan(input, entries, lock);
+    const nativeFilter = createNativeDependencyFilter(input, lock, architecture);
     if (build) compileRuntimeClosure(entries);
     const staged = stageRuntime(target, entries);
     ownsTarget = true;
@@ -121,13 +120,21 @@ export async function prepareRuntime({
       join(input, "node_modules"),
       join(target, "node_modules"),
       dependencyPlan,
+      nativeFilter,
     );
     for (const entry of entries) {
       const source = join(input, entry.dir, "node_modules");
       if (existsSync(source))
-        copyProductionDependencies(source, join(target, entry.dir, "node_modules"), dependencyPlan);
+        copyProductionDependencies(
+          source,
+          join(target, entry.dir, "node_modules"),
+          dependencyPlan,
+          nativeFilter,
+        );
     }
     assertRuntimeDependencyLinks(target, dependencyPlan);
+    // Fail on unexpected foreign assets before compiling the replacement analytics engine.
+    await inventoryBundle(target, architecture);
     stageCodexNotices({
       target,
       architecture,

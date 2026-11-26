@@ -80,7 +80,7 @@ export async function inventoryBundle(root, architecture) {
         }
         if (architectures && !architectures.includes(architecture))
           throw new Error(`Wrong native architecture in ${local}: ${architectures.join(", ")}`);
-        if (/\.(?:node|dylib|so)$/u.test(name) && !architectures)
+        if (/\.(?:node|dylib|so|bare)$/u.test(name) && !architectures)
           throw new Error(`Non-macOS native module in ${local}`);
         records.push({
           path: local,

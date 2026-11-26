@@ -83,14 +83,14 @@ export function assertRuntimeDependencyLinks(target, plan) {
 }
 
 /** npm's source-workspace bin links are unnecessary and can point at excluded src files. */
-export function copyProductionDependencies(source, target, plan) {
+export function copyProductionDependencies(source, target, plan, nativeFilter) {
   cpSync(source, target, {
     recursive: true,
     verbatimSymlinks: true,
     filter: (path) => {
       if (basename(path) === ".bin") return false;
       const workspace = plan?.links.get(resolve(path));
-      if (!workspace) return true;
+      if (!workspace) return nativeFilter ? nativeFilter(path) : true;
       if (
         !lstatSync(path).isSymbolicLink() ||
         isAbsolute(readlinkSync(path)) ||
