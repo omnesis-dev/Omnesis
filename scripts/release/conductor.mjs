@@ -49,7 +49,12 @@ import {
   releasePrRefusal,
   resolveTargetVersion,
 } from "./plan.mjs";
-import { releaseRunEvidence, writeReleaseFiles } from "./github-release.mjs";
+import {
+  publishDesktopGitHubRelease,
+  releaseRunEvidence,
+  writeReleaseFiles,
+} from "./github-release.mjs";
+import { readDesktopReleasePolicy } from "./desktop-artifacts.mjs";
 import { OVERRIDE_FLAG as ALLOW_FAILED_INSTALL_E2E } from "./install-e2e-gate.mjs";
 import { preflightTag } from "./preflight-tag.mjs";
 import { syncPluginVersions } from "./sync-plugin-versions.mjs";
@@ -417,6 +422,69 @@ function commandStatus({ registry, storeVersions }) {
  * It uses that run's own artifacts and the same notes code as the workflow,
  * and the operator's `gh` login instead of the run's token.
  */
+export function assertDesktopRecoveryRun(run, runId, sha) {
+  if (
+    run.html_url !== `https://github.com/omnesis-dev/Omnesis/actions/runs/${runId}` ||
+    run.path !== ".github/workflows/release.yml" ||
+    !["push", "workflow_dispatch"].includes(run.event) ||
+    (run.event === "push" ? run.head_sha !== sha : run.head_branch !== "main")
+  )
+    throw new Error("Desktop recovery requires the canonical stable-tag release workflow run.");
+}
+
+/** Refetch enabled recovery evidence from GitHub.com, never from inherited GH_HOST/default-repo metadata. */
+export function readDesktopRecoveryRun(runId, sha, read = capture) {
+  if (!/^\d+$/u.test(runId) || !/^[a-f0-9]{40}$/u.test(sha))
+    throw new Error("Invalid desktop recovery run binding.");
+  const run = JSON.parse(
+    read(
+      "gh",
+      [
+        "run",
+        "view",
+        runId,
+        "--repo",
+        "github.com/omnesis-dev/Omnesis",
+        "--json",
+        "workflowName,headBranch,event,jobs,url",
+      ],
+      { quiet: true },
+    ),
+  );
+  if (
+    run.url !== `https://github.com/omnesis-dev/Omnesis/actions/runs/${runId}` ||
+    run.workflowName !== "release"
+  )
+    throw new Error("Desktop recovery cannot consume another repository's artifacts.");
+  const metadata = JSON.parse(
+    read(
+      "gh",
+      ["api", "--hostname", "github.com", `repos/omnesis-dev/Omnesis/actions/runs/${runId}`],
+      { quiet: true },
+    ),
+  );
+  assertDesktopRecoveryRun(metadata, runId, sha);
+  const evidence = releaseRunEvidence(run.jobs, true);
+  if (evidence.refusal) throw new Error(evidence.refusal);
+  return { run, evidence };
+}
+
+export function desktopRecoveryArchitectures(jobs, policy, { version, sha }) {
+  const desktopJobs = jobs.filter((job) => /^desktop \((?:arm64|x64)\)$/u.test(job.name));
+  if (desktopJobs.length && !policy)
+    throw new Error("This release run is missing its desktop publication policy.");
+  if (policy && (policy.version !== version || policy.sha !== sha))
+    throw new Error("This run's desktop policy belongs to another release.");
+  if (policy?.enabled) {
+    const evidence = releaseRunEvidence(jobs, true);
+    if (evidence.refusal) throw new Error(evidence.refusal);
+    return ["arm64", "x64"];
+  }
+  if (desktopJobs.some((job) => job.conclusion !== "skipped"))
+    throw new Error("Desktop run evidence conflicts with its disabled policy.");
+  return [];
+}
+
 function commandGithubRelease({ requestedVersion, runId, dryRun }) {
   const version = requestedVersion ?? readProductVersion(repoRoot);
   assertStrictSemver(version);
@@ -424,19 +492,14 @@ function commandGithubRelease({ requestedVersion, runId, dryRun }) {
   if (!runId || !/^\d+$/u.test(runId)) {
     throw new Error("Usage: release github-release [x.y.z] --run <release workflow run id>");
   }
-  const existing = tryCapture("gh", ["release", "view", tag, "--json", "url", "--jq", ".url"]);
-  if (existing) {
-    console.log(`${tag} already has its release page: ${existing}`);
-    return 0;
-  }
 
   const remote = (ref) =>
     tryCapture("git", ["ls-remote", "--tags", "origin", ref])?.split(/\s+/u)[0] || null;
   const sha = remote(`refs/tags/${tag}^{}`) ?? remote(`refs/tags/${tag}`);
   if (!sha) throw new Error(`${tag} does not exist on origin.`);
 
-  const workflowRun = JSON.parse(
-    capture("gh", ["run", "view", runId, "--json", "workflowName,headBranch,event,jobs"]),
+  let workflowRun = JSON.parse(
+    capture("gh", ["run", "view", runId, "--json", "workflowName,headBranch,event,jobs,url"]),
   );
   if (workflowRun.workflowName !== "release") {
     throw new Error(`Run ${runId} is a ${workflowRun.workflowName} run, not a release run.`);
@@ -446,14 +509,60 @@ function commandGithubRelease({ requestedVersion, runId, dryRun }) {
   if (workflowRun.event === "push" && workflowRun.headBranch !== tag) {
     throw new Error(`Run ${runId} was started by ${workflowRun.headBranch}, not ${tag}.`);
   }
-  const evidence = releaseRunEvidence(workflowRun.jobs);
+  let evidence = releaseRunEvidence(workflowRun.jobs);
   if (evidence.refusal) throw new Error(`Run ${runId} cannot be finished: ${evidence.refusal}.`);
+  const desktopJobs = workflowRun.jobs.filter((job) =>
+    /^desktop \((?:arm64|x64)\)$/u.test(job.name),
+  );
+  // Legacy/headless completion preserves its existing non-mutating already-published shortcut.
+  if (desktopJobs.length === 0) {
+    const existing = tryCapture("gh", ["release", "view", tag, "--json", "url", "--jq", ".url"]);
+    if (existing) {
+      console.log(`${tag} already has its release page: ${existing}`);
+      return 0;
+    }
+  }
 
   const dir = mkdtempSync(join(tmpdir(), "omnesis-github-release-"));
   try {
-    capture("gh", ["run", "download", runId, "--name", "release-artifacts", "--dir", dir], {
-      quiet: true,
-    });
+    const repositoryFlags =
+      workflowRun.url === `https://github.com/omnesis-dev/Omnesis/actions/runs/${runId}`
+        ? ["--repo", "github.com/omnesis-dev/Omnesis"]
+        : [];
+    capture(
+      "gh",
+      ["run", "download", runId, ...repositoryFlags, "--name", "release-artifacts", "--dir", dir],
+      {
+        quiet: true,
+      },
+    );
+    const policy = readDesktopReleasePolicy(dir);
+    if (policy?.enabled) {
+      // Initial artifacts already use the canonical repo when their claimed URL is canonical;
+      // reject a different context and replace every job/arming fact with canonical evidence.
+      if (workflowRun.url !== `https://github.com/omnesis-dev/Omnesis/actions/runs/${runId}`)
+        throw new Error("Desktop recovery cannot consume another repository's artifacts.");
+      const canonical = readDesktopRecoveryRun(runId, sha);
+      workflowRun = canonical.run;
+      evidence = canonical.evidence;
+    }
+    const architectures = desktopRecoveryArchitectures(workflowRun.jobs, policy, { version, sha });
+    for (const arch of architectures)
+      capture(
+        "gh",
+        [
+          "run",
+          "download",
+          runId,
+          "--repo",
+          "github.com/omnesis-dev/Omnesis",
+          "--name",
+          `desktop-release-${arch}`,
+          "--dir",
+          join(dir, "desktop", arch),
+        ],
+        { quiet: true },
+      );
     const tarballs = existsSync(join(dir, "tarballs")) ? readdirSync(join(dir, "tarballs")) : [];
     if (tarballs.length === 0 || tarballs.some((name) => !name.endsWith(`-${version}.tgz`))) {
       throw new Error(`Run ${runId}'s release artifacts were not built for ${version}.`);
@@ -464,6 +573,7 @@ function commandGithubRelease({ requestedVersion, runId, dryRun }) {
       dir,
       extractChangelogSection(changelog, version),
       evidence.packagesPublished,
+      { version, sha },
     );
     const args = [
       "release",
@@ -485,7 +595,11 @@ function commandGithubRelease({ requestedVersion, runId, dryRun }) {
       console.log("Dry run — nothing created.");
       return 0;
     }
-    run("gh", args);
+    if (policy?.enabled) publishDesktopGitHubRelease({ directory: dir, version, sha });
+    else {
+      const existing = tryCapture("gh", ["release", "view", tag, "--json", "url", "--jq", ".url"]);
+      if (!existing) run("gh", args);
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

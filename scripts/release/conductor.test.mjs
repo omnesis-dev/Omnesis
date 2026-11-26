@@ -5,7 +5,12 @@ import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
-import { parseArgs } from "./conductor.mjs";
+import {
+  assertDesktopRecoveryRun,
+  desktopRecoveryArchitectures,
+  readDesktopRecoveryRun,
+  parseArgs,
+} from "./conductor.mjs";
 import { formatReleasePrBody, formatTagDryRun, formatVersionDryRun } from "./plan.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -131,4 +136,115 @@ test("the version command refuses a version that is not strict SemVer", () => {
   const result = runConductor(["version", "1.2", "--dry-run"]);
   expect(result.code).toBe(1);
   expect(result.out).toMatch(/strict SemVer/u);
+});
+
+const desktopRecoveryBinding = { version: "1.2.3", sha: "a".repeat(40) };
+const completedReleaseJobs = [
+  { name: "verify", conclusion: "success" },
+  { name: "packages", conclusion: "success" },
+  { name: "images (gateway, amd64)", conclusion: "success" },
+  { name: "images-manifest (gateway)", conclusion: "success" },
+  { name: "desktop (arm64)", conclusion: "success" },
+  { name: "desktop (x64)", conclusion: "success" },
+];
+test("manual desktop recovery cannot bypass same-run policy, both architectures or source binding", () => {
+  const policy = { ...desktopRecoveryBinding, format: 1, enabled: true };
+  expect(
+    desktopRecoveryArchitectures(completedReleaseJobs, policy, desktopRecoveryBinding),
+  ).toEqual(["arm64", "x64"]);
+  expect(() =>
+    desktopRecoveryArchitectures(completedReleaseJobs, null, desktopRecoveryBinding),
+  ).toThrow(/missing/);
+  expect(() =>
+    desktopRecoveryArchitectures(
+      completedReleaseJobs,
+      { ...policy, sha: "b".repeat(40) },
+      desktopRecoveryBinding,
+    ),
+  ).toThrow(/another release/);
+  expect(() =>
+    desktopRecoveryArchitectures(
+      completedReleaseJobs,
+      { ...policy, enabled: false },
+      desktopRecoveryBinding,
+    ),
+  ).toThrow(/conflicts/);
+  for (const conclusion of ["skipped", "failure"])
+    expect(() =>
+      desktopRecoveryArchitectures(
+        completedReleaseJobs.map((job) =>
+          job.name === "desktop (x64)" ? { ...job, conclusion } : job,
+        ),
+        policy,
+        desktopRecoveryBinding,
+      ),
+    ).toThrow(/desktop/);
+});
+test("legacy and explicitly disabled headless recovery do not require desktop artifacts", () => {
+  const legacy = completedReleaseJobs.filter((job) => !job.name.startsWith("desktop"));
+  expect(desktopRecoveryArchitectures(legacy, null, desktopRecoveryBinding)).toEqual([]);
+  expect(
+    desktopRecoveryArchitectures(
+      legacy,
+      { ...desktopRecoveryBinding, enabled: false },
+      desktopRecoveryBinding,
+    ),
+  ).toEqual([]);
+});
+
+test("desktop recovery rejects foreign-repository and lookalike-workflow evidence", () => {
+  const run = {
+    html_url: "https://github.com/omnesis-dev/Omnesis/actions/runs/123",
+    path: ".github/workflows/release.yml",
+    event: "push",
+    head_sha: desktopRecoveryBinding.sha,
+    head_branch: "v1.2.3",
+  };
+  expect(() => assertDesktopRecoveryRun(run, "123", desktopRecoveryBinding.sha)).not.toThrow();
+  for (const change of [
+    { html_url: "https://github.com/example/fork/actions/runs/123" },
+    { path: ".github/workflows/lookalike.yml" },
+    { head_sha: "b".repeat(40) },
+    { event: "pull_request" },
+    { event: "workflow_dispatch", head_branch: "feature" },
+  ])
+    expect(() =>
+      assertDesktopRecoveryRun({ ...run, ...change }, "123", desktopRecoveryBinding.sha),
+    ).toThrow();
+  expect(() =>
+    assertDesktopRecoveryRun(
+      { ...run, event: "workflow_dispatch", head_branch: "main" },
+      "123",
+      desktopRecoveryBinding.sha,
+    ),
+  ).not.toThrow();
+});
+
+test("enabled recovery replaces hostile default-host success with actual canonical job evidence", () => {
+  const claimed = {
+    workflowName: "release",
+    url: "https://github.com/omnesis-dev/Omnesis/actions/runs/123",
+    jobs: completedReleaseJobs,
+  };
+  const calls = [];
+  const read = (command, args) => {
+    calls.push(args);
+    if (args[0] === "run")
+      return JSON.stringify({
+        ...claimed,
+        jobs: completedReleaseJobs.map((job) =>
+          job.name === "desktop (x64)" ? { ...job, conclusion: "failure" } : job,
+        ),
+      });
+    return JSON.stringify({
+      html_url: claimed.url,
+      path: ".github/workflows/release.yml",
+      event: "push",
+      head_sha: desktopRecoveryBinding.sha,
+    });
+  };
+  expect(() => readDesktopRecoveryRun("123", desktopRecoveryBinding.sha, read)).toThrow(/desktop/);
+  expect(calls[0]).toContain("github.com/omnesis-dev/Omnesis");
+  expect(calls[1][calls[1].indexOf("--hostname") + 1]).toBe("github.com");
+  expect(claimed.jobs.every((job) => job.conclusion === "success")).toBe(true);
 });

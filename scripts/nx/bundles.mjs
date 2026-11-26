@@ -301,6 +301,7 @@ const desktopRuntimeBuildInputs = new Set(
     "prepare-runtime.mjs",
     "qualify-analytics.mjs",
     "release-application.mjs",
+    "release-build.mjs",
     "runtime-assets.mjs",
     "smoke-runtime.mjs",
     "stage-analytics.mjs",

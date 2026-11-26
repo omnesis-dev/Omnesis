@@ -10,7 +10,8 @@ One command drives a release: `npm run release -- <subcommand>` (§ [The
 release conductor](#the-release-conductor)). It owns everything from the
 changeset to the annotated tag and reads nothing outside the repository.
 Pushing that tag triggers `.github/workflows/release.yml`, which creates the
-GitHub Release, publishes the container images and, once npm publication is
+GitHub Release, builds signed macOS installers when desktop publication is enabled,
+publishes the container images and, once npm publication is
 armed, the packages (§ [The tag-triggered workflow](#the-tag-triggered-workflow)).
 
 A release is an annotated `vX.Y.Z` tag on `main`. Both distribution channels
@@ -332,7 +333,8 @@ package and an unreachable registry are both answers.
 
 **`github-release --run <id>`** creates the GitHub Release page for a
 release workflow run whose `verify`, `packages`, `images` and
-`images-manifest` jobs succeeded but whose `github-release` job did not create
+`images-manifest` jobs succeeded (and both `desktop` jobs when enabled) but whose
+`github-release` job did not create
 the page. It refuses a run that is not a release run, a push run for another
 tag, artifacts built for another version, and an installer that does not match
 its checksum. It downloads that run's `release-artifacts` and composes the
@@ -474,6 +476,10 @@ dispatch against an existing tag). In order:
   succeeded at that exact commit (`ci-verdict.mjs` over the workflow's runs; a pull-request run or
   a later descendant cannot bless the tag), and `website/install.sh` still
   mirrors `scripts/install.sh` byte for byte.
+- **desktop**, when `OMNESIS_DESKTOP_RELEASE=1` — both native architecture jobs
+  build, qualify, sign and notarize their complete apps and canonical DMGs.
+  Missing credentials or either failed architecture blocks subsequent publication.
+  Disabled desktop jobs leave the headless release path unchanged.
 - **packages** — build, then the local-registry round trip: publish the staged
   graph to a throwaway Verdaccio, install it through
   `install.sh --method package`, and check the installed `--version` against the
@@ -488,7 +494,10 @@ dispatch against an existing tag). In order:
   reconnection. Release images publish by default; set the repository variable
   `OMNESIS_IMAGE_PUBLISH=0` only for an explicit rehearsal without publication.
   npm publication keeps its separate `OMNESIS_RELEASE_PUBLISH=1` opt-in.
-- **github-release** — created on every run, armed or not. The release notes
+- **github-release** — created on every successful release run, npm armed or not.
+  With desktop enabled it waits for both installers, verifies same-run bytes and
+  GitHub upload digests while still a draft, then publishes the complete release.
+  The release notes
   are the changelog section the release commit generated, plus the SHA-256 of
   `install.sh` and, when the packages were published, of every tarball. The
   installer and that checksum list are attached to the release, so the script
@@ -498,12 +507,11 @@ dispatch against an existing tag). In order:
   GitHub feed of anyone who stars or follows the repository, and in its
   `releases.atom` feed.
 
-Each job needs the ones before it, so a publication that stops partway
-leaves no release page and no images for that version: the registry holds
-the packages that landed and nothing else advertises the version. Because the
-publisher orders the graph leaves-first, the `omnesis` entry package lands
-only after everything it depends on, and an install of that version fails to
-resolve until it does.
+The release page waits for its required build and publication jobs. A failed
+job can still leave packages or individual image digests that already published;
+these channels have no shared transaction. The npm publisher orders the graph
+leaves-first, so the `omnesis` entry package lands only after everything it
+depends on, and an install of that version fails to resolve until it does.
 To finish an interrupted publication, first rerun the failed jobs of the
 tag's own run (`gh run rerun <run-id> --failed`), which keeps the tag's
 workflow file. When the fix is in the workflow itself, dispatch it from `main`
@@ -539,6 +547,79 @@ is also accepted) to use that URL for publication instead; that host receives on
 credential and override are never exposed to it. In both cases, publication
 still requires the exact `OMNESIS_RELEASE_PUBLISH=1`. That switch controls npm packages only. For a package-registry rehearsal, also set
 `OMNESIS_IMAGE_PUBLISH=0` if images must not be published.
+
+## Signed macOS desktop releases
+
+Desktop publication is an explicit additional channel. Set the repository variable
+`OMNESIS_DESKTOP_RELEASE=1` only after signing and installed-app qualification.
+Unset or `0` preserves the headless release flow; other values fail verification.
+Enabling it requires both native architectures, not a best-effort subset. The
+`desktop-release` GitHub environment should restrict permitted release refs and
+require the organization's release approval. Its credentials are never exposed
+to pull-request jobs or fork repositories.
+
+Configure these public variables in that environment:
+
+- `OMNESIS_DESKTOP_SIGNING_IDENTITY`: the certificate's 40-character SHA-1 identity.
+- `OMNESIS_DESKTOP_TEAM_ID`: the Developer ID team identifier.
+- `OMNESIS_DESKTOP_NOTARY_KEY_ID` and `OMNESIS_DESKTOP_NOTARY_ISSUER_ID`: the
+  organization's App Store Connect API key and issuer identifiers.
+
+Configure these protected environment secrets:
+
+- `OMNESIS_DESKTOP_SIGNING_P12_BASE64`: the exported Developer ID Application
+  certificate and private key, base64 encoded.
+- `OMNESIS_DESKTOP_SIGNING_P12_PASSWORD`: that export's password.
+- `OMNESIS_DESKTOP_NOTARY_PRIVATE_KEY`: the API key's PEM `.p8` contents.
+
+Each architecture validates configuration before building, then validates the
+actual imported signing identity/team and notarization credentials before any
+package or image publication. Presence alone is not proof a credential works.
+The build step has no signing secrets; the signing step uses a temporary private
+Keychain, explicit tool access and explicit Keychain selectors without changing
+the user's default or search list. Signing failures expose fixed diagnostics,
+not raw tool arguments. Cleanup removes only that attempt's signing material,
+including after a failed credentialed step. No credential file, Keychain,
+unsigned app or notarization transcript is uploaded as a release artifact.
+
+Both native jobs build the verified tag revision using the pinned Node version,
+production dependencies, strict native inventory and encrypted-runtime smoke.
+The signed runtime is smoked again. App and DMG notarization, stapling and
+verification are mandatory for this channel; the manual diagnostic packaging
+mode without notarization cannot satisfy it. A failure on either architecture
+blocks the following package/image jobs and GitHub Release publication.
+
+The canonical attachments are
+`Omnesis-X.Y.Z-macos-arm64.dmg` and `Omnesis-X.Y.Z-macos-x64.dmg`.
+Each same-run artifact carries its version, source revision, architecture, byte
+size and actual SHA-256. The release job independently verifies both files and
+retains their checksums even when npm publication is disabled. It creates a
+draft, uploads the complete attachment set, then checks GitHub's actual asset
+sizes, uploaded states and SHA-256 digests before publishing. The desktop updater
+continues to require that canonical filename, official URL and GitHub digest,
+then independently assesses the downloaded application signature.
+
+An interrupted upload leaves a draft, not a partially advertised desktop release.
+Rerunning resumes matching attachments without overwriting them. Conflicting
+assets or an absent GitHub digest refuse publication; investigate the draft
+rather than replacing bytes silently. The conductor's `github-release --run`
+recovery uses that run's recorded desktop policy, both successful native jobs
+and the same artifact verification. It cannot bypass the desktop gate or
+substitute today's repository setting for the run's policy. Older headless
+release artifacts retain their existing recovery path.
+
+There is no transaction across npm, GHCR and GitHub Releases. A later upload or
+network failure can occur after packages/images were published; use the recorded
+run and resumable commands to finish it. The desktop gate prevents an already
+known missing installer/signing failure from starting those publications, not
+all possible partial publication. Local `release version` stays offline and
+never reads signing secrets or proves their validity. Pushing a stable tag or
+explicitly dispatching its release remains the deliberate publication action.
+
+The unsigned build and unit tests do not qualify Developer ID signing,
+notarization, installed-app permissions, login, relocation or update/rollback.
+Record the exact signed source/artifacts and test those separately before
+announcing an installable release. No Mac App Store eligibility is implied.
 
 ## Native modules and the platform matrix
 

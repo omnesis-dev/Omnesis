@@ -14,6 +14,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { writeFileSync } from "node:fs";
 import { stagePinnedDuckDbExtensions } from "./pinned-extensions.mjs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
@@ -682,4 +683,55 @@ describe("offline pinned analytics crypto staging", () => {
     ).toThrow("differs");
     await expect(access(join(root, "refused"))).rejects.toThrow();
   });
+});
+
+test("isolated release Keychain is used for every signature and both notarization submissions", async () => {
+  const { distribute } = await import("./distribute.mjs");
+  const options = await inputs();
+  await assembleApp(options);
+  await put(
+    options.output,
+    "Contents/Library/LoginItems/OmnesisBackground.app/Contents/Info.plist",
+    "invented metadata",
+  );
+  const output = join(options.root, "Omnesis.dmg"),
+    keychain = join(options.root, "private-signing.keychain-db"),
+    calls = [];
+  const run = (command, args) => {
+    calls.push([command, args]);
+    if (command === "/usr/bin/plutil")
+      return JSON.stringify({
+        CFBundleIdentifier: args.at(-1).includes("LoginItems")
+          ? "dev.omnesis.desktop.background"
+          : "dev.omnesis.desktop",
+        OmnesisBuildConfiguration: "Release",
+      });
+    if (command === "hdiutil") writeFileSync(args.at(-1), "invented notarized installer");
+  };
+  await expect(
+    distribute({
+      app: options.output,
+      architecture: "arm64",
+      identity: "Invented identity",
+      output,
+      keychain,
+      notaryProfile: "invented-profile",
+      run,
+      platform: "darwin",
+    }),
+  ).resolves.toMatchObject({ notarized: true });
+  const signatures = calls.filter(
+    ([command, args]) => command === "codesign" && args.includes("--sign"),
+  );
+  expect(signatures.length).toBeGreaterThan(3);
+  for (const [, args] of signatures) expect(args.slice(0, 2)).toEqual(["--keychain", keychain]);
+  const submissions = calls.filter(
+    ([command, args]) => command === "xcrun" && args[0] === "notarytool",
+  );
+  expect(submissions).toHaveLength(2);
+  for (const [, args] of submissions) expect(args.slice(-2)).toEqual(["--keychain", keychain]);
+  const smoke = calls.findIndex(([command]) => command === process.execPath),
+    installer = calls.findIndex(([command]) => command === "hdiutil");
+  expect(smoke).toBeGreaterThan(-1);
+  expect(smoke).toBeLessThan(installer);
 });

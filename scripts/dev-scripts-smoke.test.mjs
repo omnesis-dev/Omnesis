@@ -2247,12 +2247,17 @@ describe("release.yml verification permissions", () => {
     expect(dryRun.if).toBe("needs.verify.outputs.armed != 'true'");
   });
 
-  it("creates the GitHub Release on every tag and lists tarball sums only when they were published", async () => {
+  it("selects the required release publisher and lists tarball sums only when they were published", async () => {
     const { parse } = await import("yaml");
     const workflow = parse(readFileSync(join(repoRoot, ".github/workflows/release.yml"), "utf8"));
     const steps = workflow.jobs["github-release"].steps;
     const create = steps.find((step) => step.name === "Create the GitHub Release");
-    expect(create.if).toBeUndefined();
+    expect(create.if).toBe("needs.verify.outputs.desktop_armed != 'true'");
+    const desktop = steps.find(
+      (step) => step.name === "Publish complete verified desktop release from a draft",
+    );
+    expect(desktop.if).toBe("needs.verify.outputs.desktop_armed == 'true'");
+    expect(desktop.run).toBe("node scripts/release/github-release.mjs release --publish-desktop");
     const notes = steps.find((step) => step.name === "Compose the release notes");
     expect(notes.env.PACKAGES_PUBLISHED).toBe("${{ needs.verify.outputs.armed }}");
     // github-release.test.mjs covers what the shared module attaches.
@@ -2394,6 +2399,7 @@ describe("full-validation workflow topology", () => {
       knip: "knip",
       swift: "swift_lint",
       ios: "apple",
+      desktop: "desktop",
       android: "android",
       "docker-smoke": "docker_smoke",
       "install-smoke": "install_smoke",

@@ -32,6 +32,7 @@ export async function distribute({
   identity,
   output,
   notaryProfile,
+  keychain,
   run = execFileSync,
   platform = process.platform,
 }) {
@@ -50,7 +51,13 @@ export async function distribute({
   }
   await assertReleaseApplication(app, run);
   const entries = await inventoryBundle(app, architecture);
-  const exec = (command, args) => run(command, args, { stdio: "inherit" });
+  const exec = (command, args) => {
+    if (keychain && command === "codesign" && args.includes("--sign"))
+      args = ["--keychain", keychain, ...args];
+    if (keychain && command === "xcrun" && args[0] === "notarytool")
+      args = [...args, "--keychain", keychain];
+    return run(command, args, { stdio: "inherit" });
+  };
   const nodeEntitlements = fileURLToPath(new URL("./node-entitlements.plist", import.meta.url));
   // Sign nested code individually, deepest paths first. --deep is verification,
   // never a substitute for explicitly signing each native dependency.
@@ -132,7 +139,7 @@ export async function distribute({
 
 if (import.meta.main) {
   const options = parseArguments(process.argv.slice(2), {
-    values: ["app", "arch", "identity", "out", "notary-profile"],
+    values: ["app", "arch", "identity", "out", "notary-profile", "keychain"],
     required: ["app", "arch", "identity", "out"],
   });
   await distribute({
@@ -141,5 +148,6 @@ if (import.meta.main) {
     identity: options.get("identity"),
     output: options.get("out"),
     notaryProfile: options.get("notary-profile"),
+    keychain: options.get("keychain"),
   });
 }

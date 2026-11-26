@@ -58,15 +58,16 @@ code signing changes native bytes. Signed bundle integrity is checked by
 `codesign`, and the final DMG gets its own SHA-256 file.
 
 Signing is a separate explicit step using a configured Developer ID Application
-identity. Credentials are never arguments or source files; notarization uses a
-previously configured Keychain profile. Omitting `--notary-profile` produces a
-signed diagnostic DMG without a notarization claim.
+identity. Do not put credential values in shell commands or source files;
+diagnostic packaging uses an existing Keychain profile. Release tooling reads
+protected environment secrets and reports fixed tool diagnostics. Omitting `--notary-profile` produces a
+diagnostic DMG containing a signed app, without a notarization claim.
 
 ```sh
 node scripts/desktop/distribute.mjs \
   --app /tmp/Omnesis.app --arch arm64 \
   --identity 'Developer ID Application: Example Organization (TEAMID)' \
-  --notary-profile omnesis-notarization --out /tmp/Omnesis-arm64.dmg
+  --notary-profile omnesis-notarization --out /tmp/Omnesis-0.8.1-macos-arm64.dmg
 ```
 
 Nested Mach-O code and embedded app/framework containers are signed individually
@@ -74,6 +75,18 @@ before the outer app. JIT entitlements
 apply to the bundled Node alone. A notarized build submits/staples the app,
 checks Gatekeeper assessment, creates/signs the DMG, submits/staples it and
 validates its ticket. None of this publishes an artifact.
+
+The stable-tag release workflow optionally owns both native architecture builds,
+signing and notarization with `OMNESIS_DESKTOP_RELEASE=1`. Its release-only wrapper
+requires notarization and an isolated temporary signing Keychain. It uploads only
+canonical `Omnesis-X.Y.Z-macos-{arm64,x64}.dmg` files and bounded manifests, then
+verifies actual GitHub asset digests in a draft before publication. Both installers
+must succeed before package/image publication starts. The default headless release
+flow remains unchanged; local versioning reads no signing credentials.
+See [the release configuration](../../docs/releasing.md#signed-macos-desktop-releases)
+for required protected variables/secrets and interrupted-run recovery. These
+commands and unsigned package checks are not evidence of a signed installed-app
+qualification, and no script invocation here publishes a release by itself.
 
 The packaging unit suite uses invented tiny Mach-O headers and prebuilt fixture
 closures, never downloads dependencies or contacts production services:
