@@ -41,6 +41,8 @@ let priorExperimental: string | undefined;
 let recordings: RecordingTranscriptionService | undefined;
 /** The operator's `inference.recordings.keepAudioDays`; undefined leaves it unset. */
 let keepAudioDays: number | undefined;
+/** The operator's `inference.recordings.selfVoice`; undefined leaves it unset. */
+let selfVoice: "off" | "match" | undefined;
 
 const START = "2026-03-02T09:00:00.000Z";
 const voices = new ReplayVoiceSeparator();
@@ -108,6 +110,7 @@ beforeEach(() => {
   ADMIN_TOKEN = mintToken([SCOPE_ADMIN, SCOPE_READ]);
   optedIn = undefined;
   keepAudioDays = undefined;
+  selfVoice = undefined;
   const transcribeService = new TranscribeService({
     resolveAssignment: () => ({ role: "transcriber", kind: "replay" }),
     deps: {
@@ -132,9 +135,14 @@ beforeEach(() => {
     voiceSeparator: () => voices,
     configStore: {
       get: () =>
-        (keepAudioDays === undefined
-          ? {}
-          : { inference: { recordings: { keepAudioDays } } }) as OmnesisConfig,
+        ({
+          inference: {
+            recordings: {
+              ...(keepAudioDays === undefined ? {} : { keepAudioDays }),
+              ...(selfVoice === undefined ? {} : { selfVoice }),
+            },
+          },
+        }) as OmnesisConfig,
     } as unknown as ConfigStore,
   });
 });
@@ -294,6 +302,83 @@ describe("recordings routes", () => {
       (await request("PUT", `/recordings/${id}/speakers/1`, { self: true, name: "x" })).status,
     ).toBe(400);
     expect((await request("GET", `/recordings/${randomUUID()}/speakers`)).status).toBe(404);
+  });
+
+  test("the owner's voice is enrolled, recognised in a recording, undone and deleted", async () => {
+    const clip = (seconds: number, voice = "owner") => {
+      const form = new FormData();
+      const segments = Array.from({ length: Math.ceil(seconds / 8) }, (_, i) => ({
+        startMs: i * 8_000,
+        endMs: Math.min((i + 1) * 8_000, seconds * 1000),
+        text: "",
+        voice,
+      }));
+      form.set(
+        "audio",
+        new Blob([new TextEncoder().encode(JSON.stringify({ segments }))], { type: "audio/webm" }),
+        "voice.webm",
+      );
+      return form;
+    };
+    const codeOf = async (res: Response) => ((await res.json()) as { code: string }).code;
+
+    expect(await (await request("GET", "/recordings/self-voice")).json()).toEqual({
+      setting: "off",
+      ready: true,
+      minSpeechMs: 20_000,
+      profile: null,
+    });
+    const off = await request("PUT", "/recordings/self-voice", clip(24));
+    expect(off.status).toBe(409);
+    expect(await codeOf(off)).toBe("SELF_VOICE_OFF");
+
+    selfVoice = "match";
+    const short = await request("PUT", "/recordings/self-voice", clip(10));
+    expect(short.status).toBe(422);
+    expect(await codeOf(short)).toBe("SELF_VOICE_TOO_SHORT");
+    expect((await request("PUT", "/recordings/self-voice", new FormData())).status).toBe(400);
+    const enrolled = await request("PUT", "/recordings/self-voice", clip(24));
+    expect(enrolled.status).toBe(200);
+    expect(await enrolled.json()).toMatchObject({
+      setting: "match",
+      profile: { speechMs: 24_000, current: true },
+    });
+
+    const id = randomUUID();
+    await startRecording(id);
+    const script = JSON.stringify({
+      segments: [
+        { startMs: 0, endMs: 3_000, text: "Is the venue booked?", voice: "jamie" },
+        { startMs: 4_000, endMs: 6_000, text: "Booked for Friday.", voice: "owner" },
+      ],
+    });
+    await request("PUT", `/recordings/${id}/chunks/0`, chunkForm(0, script));
+    await request("POST", `/recordings/${id}/finish`, {
+      chunkCount: 1,
+      endedAt: "2026-03-02T09:01:00.000Z",
+    });
+    await vi.waitFor(async () => {
+      expect(await (await request("GET", `/recordings/${id}`)).json()).toMatchObject({
+        state: "done",
+      });
+    });
+    expect(documentContent(id)).toContain("[00:00:04] You: Booked for Friday.");
+    expect((await (await request("GET", `/recordings/${id}/speakers`)).json()).speakers).toEqual([
+      expect.objectContaining({ speaker: 1, isSelf: false, selfMatched: false }),
+      expect.objectContaining({ speaker: 2, isSelf: true, selfMatched: true }),
+    ]);
+
+    const cleared = await request("PUT", `/recordings/${id}/speakers/2`, { clear: true });
+    expect((await cleared.json()).speakers[1]).toMatchObject({ isSelf: false, selfMatched: false });
+    await vi.waitFor(() => {
+      expect(documentContent(id)).toContain("[00:00:04] Speaker 2: Booked for Friday.");
+    });
+
+    expect((await request("DELETE", "/recordings/self-voice")).status).toBe(204);
+    expect((await (await request("GET", "/recordings/self-voice")).json()).profile).toBeNull();
+    const readOnly = mintToken([SCOPE_READ]);
+    expect((await request("GET", "/recordings/self-voice", undefined, readOnly)).status).toBe(403);
+    expect((await request("PUT", "/recordings/self-voice", clip(24), readOnly)).status).toBe(403);
   });
 
   test("a session's chunks are listed, and audio kept by the operator is served as audio only", async () => {
@@ -576,6 +661,7 @@ describe("recordings routes", () => {
     delete process.env.OMNESIS_EXPERIMENTAL;
     expect((await startRecording()).status).toBe(404);
     expect((await request("GET", `/recordings/${randomUUID()}`)).status).toBe(404);
+    expect((await request("GET", "/recordings/self-voice")).status).toBe(404);
     const stable = await (await app.request("/health")).json();
     expect(stable.capabilities.recordings).toBeUndefined();
   });

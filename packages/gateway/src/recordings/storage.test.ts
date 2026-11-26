@@ -7,8 +7,16 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
+import Sqlite from "better-sqlite3";
 import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import {
+  assignRecordingVoices,
+  createRecordingTables,
+  deleteRecordingVoiceProfile,
+  getRecordingVoiceProfile,
+  listRecordingSpeakers,
+  setRecordingSpeaker,
+  setRecordingVoiceProfile,
   deleteRecordingSession,
   finishRecordingSession,
   getRecordingSession,
@@ -185,5 +193,91 @@ describe("recording storage", () => {
     expect(insertRecordingMark(db, { ...mark, noteId: "n0", markedAt: NOW })).toBe(true);
     expect(getRecordingSession(db, "s1")!.revision).toBe(before + 1);
     expect(listRecordingMarks(db, "s1").map((m) => m.noteId)).toEqual(["n0", "n1"]);
+  });
+});
+
+describe("the owner's voice in recording storage", () => {
+  const windows = (speakers: number[]) =>
+    speakers.map((speaker, i) => ({ startMs: i * 1_000, endMs: i * 1_000 + 900, speaker }));
+
+  test("keeps one profile, replaced by the next and deleted on request", () => {
+    expect(getRecordingVoiceProfile(db)).toBeNull();
+    setRecordingVoiceProfile(db, {
+      model: "m1",
+      vector: Float32Array.from([0.6, 0.8]),
+      speechMs: 25_000,
+      enrolledAt: NOW,
+    });
+    setRecordingVoiceProfile(db, {
+      model: "m2",
+      vector: Float32Array.from([1, 0]),
+      speechMs: 30_000,
+      enrolledAt: LATER,
+    });
+    expect(getRecordingVoiceProfile(db)).toEqual({
+      model: "m2",
+      vector: Float32Array.from([1, 0]),
+      speechMs: 30_000,
+      enrolledAt: LATER,
+    });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM recording_voice_profile").get()).toEqual({ n: 1 });
+    expect(deleteRecordingVoiceProfile(db)).toBe(true);
+    expect(deleteRecordingVoiceProfile(db)).toBe(false);
+    expect(getRecordingVoiceProfile(db)).toBeNull();
+  });
+
+  test("a recognised speaker is the owner until the owner says otherwise, then never again", () => {
+    const id = randomUUID();
+    session(id);
+    assignRecordingVoices(db, id, [{ seq: 0, windows: windows([1, 2]) }], [2]);
+    expect(listRecordingSpeakers(db, id).map((s) => [s.speaker, s.isSelf, s.selfMatch])).toEqual([
+      [1, false, null],
+      [2, true, "matched"],
+    ]);
+
+    // Confirming it as the owner makes it the owner's own mapping.
+    expect(setRecordingSpeaker(db, id, 2, { kind: "self" })).toBe(true);
+    expect(listRecordingSpeakers(db, id)[1]).toMatchObject({ isSelf: true, selfMatch: null });
+
+    // A later grouping recognises a new speaker; the owner clears it.
+    assignRecordingVoices(db, id, [{ seq: 1, windows: windows([3]) }], [3]);
+    expect(listRecordingSpeakers(db, id)[2]).toMatchObject({ isSelf: true, selfMatch: "matched" });
+    expect(setRecordingSpeaker(db, id, 3, { kind: "clear" })).toBe(true);
+    expect(listRecordingSpeakers(db, id)[2]).toMatchObject({
+      isSelf: false,
+      selfMatch: "rejected",
+    });
+
+    // Nothing in this session is recognised again, nor is an existing speaker remapped.
+    assignRecordingVoices(db, id, [{ seq: 2, windows: windows([1, 4]) }], [1, 4]);
+    expect(listRecordingSpeakers(db, id).map((s) => [s.speaker, s.isSelf, s.selfMatch])).toEqual([
+      [1, false, null],
+      [2, true, null],
+      [3, false, "rejected"],
+      [4, false, null],
+    ]);
+  });
+
+  test("an existing speaker table gains the recognition column on upgrade", () => {
+    // The tables as a gateway from before the column left them.
+    const old = new Sqlite(":memory:");
+    createRecordingTables(old);
+    old.exec(`
+      ALTER TABLE recording_speakers DROP COLUMN self_match;
+      DROP TABLE recording_voice_profile;
+      INSERT INTO recording_sessions (id, started_at, last_activity_at, created_at)
+        VALUES ('s', '${NOW}', '${NOW}', '${NOW}');
+      INSERT INTO recording_speakers (session_id, speaker, is_self) VALUES ('s', 1, 1);
+    `);
+    try {
+      createRecordingTables(old);
+      createRecordingTables(old);
+      expect(listRecordingSpeakers(old, "s")).toEqual([
+        { sessionId: "s", speaker: 1, personId: null, isSelf: true, name: null, selfMatch: null },
+      ]);
+      expect(getRecordingVoiceProfile(old)).toBeNull();
+    } finally {
+      old.close();
+    }
   });
 });

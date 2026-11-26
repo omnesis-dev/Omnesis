@@ -42,12 +42,23 @@
  *   - `PUT /recordings/:id/speakers/:n` says who speaker `n` is — `{self:
  *     true}`, `{personId}`, `{name}` or `{clear: true}` — and the document is
  *     written again. 404 for a speaker the session does not have, 400 for a
- *     person id that names nobody.
+ *     person id that names nobody. A speaker the gateway recognised by the
+ *     owner's voice reads `selfMatched: true`; mapping it otherwise undoes the
+ *     recognition for that session.
+ *   - `GET /recordings/self-voice` says whether the owner's voice is enrolled
+ *     and can be used (`inference.recordings.selfVoice`).
+ *   - `PUT /recordings/self-voice` enrols it from a multipart `audio` part of
+ *     the owner reading aloud, replacing any before; only one mean voice
+ *     vector is kept. 409 `SELF_VOICE_OFF` while the setting is off, 503
+ *     `VOICES_UNAVAILABLE` while voices cannot be separated, 422
+ *     `SELF_VOICE_UNREADABLE`, `SELF_VOICE_TOO_SHORT` or
+ *     `SELF_VOICE_SEVERAL_VOICES` for a clip that cannot be enrolled.
+ *   - `DELETE /recordings/self-voice` deletes it.
  *
  * Scope: `write:omnesis-recordings` (satisfied by admin).
  */
 
-import { experimentalEnabled } from "@omnesis/core";
+import { assertNever, experimentalEnabled } from "@omnesis/core";
 import { bodyLimit } from "hono/body-limit";
 import { recordingsRateLimiter } from "../../rate-limit.js";
 import { OMNESIS_RECORDINGS_SOURCE_ID } from "../../sources/omnesis-recordings/index.js";
@@ -73,6 +84,7 @@ import {
 } from "../schemas/index.js";
 import { transcriptionVocabularyAllowed } from "../transcription-access.js";
 import { validateJson, validateQuery } from "../validate.js";
+import { MIN_ENROLMENT_SPEECH_MS } from "../../recordings/service.js";
 import { credentialRateLimitKey, isLoopbackRequest } from "./admin/internals.js";
 import { languageHint } from "./voice-notes.js";
 import type { DictationFeatureStatus } from "../../dictation/index.js";
@@ -233,6 +245,79 @@ export function mountRecordingRoutes(app: RouteApp, deps: RecordingRoutesDeps): 
       return c.json(deps.service.status(id));
     },
   );
+
+  // Before `/recordings/:id`, which would take `self-voice` for an id.
+  app.get("/recordings/self-voice", scope.writeAny(), (c) => {
+    enforceScope(c);
+    c.header("Cache-Control", "no-store");
+    return c.json(deps.service.selfVoiceStatus());
+  });
+
+  app.put(
+    "/recordings/self-voice",
+    scope.writeAny(),
+    bodyLimit({
+      maxSize: MAX_RECORDING_CHUNK_BYTES + METADATA_ALLOWANCE_BYTES,
+      onError: (c) => c.json(tooLarge, 413),
+    }),
+    async (c) => {
+      enforceScope(c);
+      let form: FormData;
+      try {
+        form = await c.req.formData();
+      } catch {
+        throw new BadRequestError("expected a multipart/form-data body");
+      }
+      const audio = form.get("audio");
+      if (!(audio instanceof File) || audio.size === 0) {
+        throw new BadRequestError("missing the audio part");
+      }
+      if (audio.size > MAX_RECORDING_CHUNK_BYTES) return c.json(tooLarge, 413);
+      const outcome = await deps.service.enrollSelfVoice(
+        new Uint8Array(await audio.arrayBuffer()),
+        audio.type || "application/octet-stream",
+      );
+      switch (outcome.kind) {
+        case "enrolled":
+          return c.json(outcome.status);
+        case "off":
+          throw new HttpError(
+            409,
+            "SELF_VOICE_OFF",
+            "Recognising your voice is off: set inference.recordings.selfVoice to match.",
+          );
+        case "unavailable":
+          throw new HttpError(
+            503,
+            "VOICES_UNAVAILABLE",
+            "Voices cannot be told apart yet: speakers are off, or the voice models are still downloading.",
+          );
+        case "unreadable":
+          throw new HttpError(422, "SELF_VOICE_UNREADABLE", "The recording could not be read.");
+        case "too-short":
+          throw new HttpError(
+            422,
+            "SELF_VOICE_TOO_SHORT",
+            `The recording holds ${Math.round(outcome.speechMs / 1000)} seconds of speech; read aloud for at least ${Math.round(MIN_ENROLMENT_SPEECH_MS / 1000)}.`,
+            { speechMs: outcome.speechMs, minSpeechMs: MIN_ENROLMENT_SPEECH_MS },
+          );
+        case "several-voices":
+          throw new HttpError(
+            422,
+            "SELF_VOICE_SEVERAL_VOICES",
+            "More than one voice is heard in the recording; record yourself alone.",
+          );
+        default:
+          return assertNever(outcome);
+      }
+    },
+  );
+
+  app.delete("/recordings/self-voice", scope.writeAny(), async (c) => {
+    enforceScope(c);
+    await deps.service.deleteSelfVoice();
+    return c.body(null, 204);
+  });
 
   app.get("/recordings/:id", scope.writeAny(), (c) => {
     enforceScope(c);

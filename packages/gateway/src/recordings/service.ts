@@ -27,6 +27,14 @@
  * just before its document is written — at which point every voice vector is
  * deleted (see `voices/voices.ts`). The owner then says who each speaker is;
  * each mapping rewrites the document through the same revision path.
+ *
+ * With `inference.recordings.selfVoice` set to `match`, the owner can enrol
+ * their own voice from a short read-aloud clip: its audio is separated like a
+ * chunk's, summarised into one mean vector and dropped. Each grouping then
+ * compares its new speakers with that vector before the vectors are deleted,
+ * and maps the closest one above `SELF_VOICE_SIMILARITY` as the owner, marked
+ * as recognised so the owner can undo it. Undone once, nothing in that session
+ * is recognised again. Turning the setting off deletes the enrolled voice.
  */
 
 import { assertNever, createLogger } from "@omnesis/core";
@@ -49,6 +57,8 @@ import {
   readRecordingChunkAudio,
   sumRecordingChunkDurations,
   listDismissedRecordingSuggestions,
+  getRecordingVoiceProfile,
+  hasRejectedSelfMatch,
   type FinishRecordingOutcome,
   type InsertRecordingChunkOutcome,
   type RecordingChunk,
@@ -65,6 +75,7 @@ import {
   type RecordingSuggestion,
   type SuggestionTurn,
 } from "./suggestions.js";
+import { matchSelf, meanVoice } from "./voices/voices.js";
 import type { SpeakerIdentity } from "../sources/omnesis-recordings/index.js";
 import type { SeparatedVoices, VoiceSeparator, VoiceWindow } from "./voices/voices.js";
 import type {
@@ -114,6 +125,8 @@ export interface RecordingServiceDeps {
     | "addRecordingMark"
     | "assignRecordingVoices"
     | "setRecordingSpeaker"
+    | "setRecordingVoiceProfile"
+    | "deleteRecordingVoiceProfile"
   >;
   readDb: Database.Database;
   transcribe: (
@@ -143,6 +156,11 @@ export interface RecordingServiceDeps {
    */
   keepAudioDays?: () => number;
   /**
+   * Whether the owner's enrolled voice is recognised among a session's
+   * speakers; `off` (the default) also deletes it. Read on every pass.
+   */
+  selfVoice?: () => SelfVoiceSetting;
+  /**
    * Events on the owner's calendar overlapping `[from, toExclusive)`, with who
    * was invited; absent, no calendar suggestion is made.
    */
@@ -160,7 +178,44 @@ export interface RecordingSpeakerView extends SpeakerIdentity {
   talkMs: number;
   /** The first few things they said. */
   samples: string[];
+  /** The gateway mapped this speaker as the owner by their enrolled voice. */
+  selfMatched: boolean;
 }
+
+export type SelfVoiceSetting = "off" | "match";
+
+/** The least speech an enrolment clip must hold. */
+export const MIN_ENROLMENT_SPEECH_MS = 20_000;
+/** The share of a clip's speech its main voice must hold to be enrolled. */
+const ENROLMENT_MAIN_VOICE_SHARE = 0.8;
+
+/** What the owner sees of their enrolled voice. */
+export interface SelfVoiceStatus {
+  setting: SelfVoiceSetting;
+  /** Whether voices can be separated now: speakers are told apart and the models are ready. */
+  ready: boolean;
+  /** The least speech an enrolment clip must hold, ms. */
+  minSpeechMs: number;
+  profile: {
+    enrolledAt: string;
+    speechMs: number;
+    /** False when it came from another voice model than the one in use: enrol again. */
+    current: boolean;
+  } | null;
+}
+
+export type EnrollSelfVoiceOutcome =
+  | { kind: "enrolled"; status: SelfVoiceStatus }
+  /** The setting is off. */
+  | { kind: "off" }
+  /** No voice separator is ready. */
+  | { kind: "unavailable" }
+  /** The audio could not be read. */
+  | { kind: "unreadable" }
+  /** Too little speech; `speechMs` is what the clip held. */
+  | { kind: "too-short"; speechMs: number }
+  /** No one voice holds most of the clip. */
+  | { kind: "several-voices" };
 
 /** What a recording's suggestions are offered against: its window, and the suggestions. */
 export interface RecordingSuggestions {
@@ -418,6 +473,11 @@ export class RecordingTranscriptionService {
   speakers(id: string): RecordingSpeakerView[] | null {
     if (!getRecordingSession(this.deps.readDb, id)) return null;
     const identities = this.speakerIdentities(id);
+    const matched = new Set(
+      listRecordingSpeakers(this.deps.readDb, id)
+        .filter((s) => s.isSelf && s.selfMatch === "matched")
+        .map((s) => s.speaker),
+    );
     const talk = new Map<number, number>();
     const samples = new Map<number, string[]>();
     for (const chunk of listRecordingChunks(this.deps.readDb, id)) {
@@ -443,7 +503,82 @@ export class RecordingTranscriptionService {
       ...s,
       talkMs: talk.get(s.speaker) ?? 0,
       samples: samples.get(s.speaker) ?? [],
+      selfMatched: matched.has(s.speaker),
     }));
+  }
+
+  /** The owner's enrolled voice and whether it can be used. */
+  selfVoiceStatus(): SelfVoiceStatus {
+    const profile = getRecordingVoiceProfile(this.deps.readDb);
+    const separator = this.deps.voices?.() ?? null;
+    return {
+      setting: this.selfVoiceSetting(),
+      ready: separator !== null,
+      minSpeechMs: MIN_ENROLMENT_SPEECH_MS,
+      profile: profile
+        ? {
+            enrolledAt: profile.enrolledAt,
+            speechMs: profile.speechMs,
+            // Without a separator nothing is compared, so nothing says it is stale.
+            current: separator === null || separator.model === profile.model,
+          }
+        : null,
+    };
+  }
+
+  /**
+   * Enrol the owner's voice from a clip of them reading aloud, replacing any
+   * enrolled before. The clip's audio and its window vectors are dropped
+   * here; only their mean is kept.
+   */
+  async enrollSelfVoice(audio: Uint8Array, mimeType: string): Promise<EnrollSelfVoiceOutcome> {
+    if (this.selfVoiceSetting() !== "match") return { kind: "off" };
+    const separator = this.deps.voices?.() ?? null;
+    if (!separator) return { kind: "unavailable" };
+    let separated: SeparatedVoices;
+    try {
+      separated = await separator.separate(audio, mimeType);
+    } catch (err) {
+      log.warn(`Voice enrolment not read: ${err instanceof Error ? err.message : String(err)}`);
+      return { kind: "unreadable" };
+    }
+    const durations = separated.windows.map((w) => w.endMs - w.startMs);
+    const total = durations.reduce((sum, d) => sum + d, 0);
+    if (total < MIN_ENROLMENT_SPEECH_MS) return { kind: "too-short", speechMs: total };
+    let labels: number[];
+    try {
+      labels = await separator.group(separated.vectors, durations);
+    } catch (err) {
+      log.warn(`Voice enrolment not grouped: ${err instanceof Error ? err.message : String(err)}`);
+      return { kind: "unavailable" };
+    }
+    // The clip's main voice; a stray window of someone else, or of noise, is left out.
+    const talk = new Map<number, number>();
+    labels.forEach((l, i) => talk.set(l, (talk.get(l) ?? 0) + durations[i]!));
+    const [main, mainMs] = [...talk].reduce((a, b) => (b[1] > a[1] ? b : a));
+    if (mainMs < total * ENROLMENT_MAIN_VOICE_SHARE) return { kind: "several-voices" };
+    if (mainMs < MIN_ENROLMENT_SPEECH_MS) return { kind: "too-short", speechMs: mainMs };
+    await this.deps.writeGate.setRecordingVoiceProfile({
+      model: separator.model,
+      vector: meanVoice(separated.vectors.filter((_, i) => labels[i] === main)),
+      speechMs: mainMs,
+      enrolledAt: this.now().toISOString(),
+    });
+    log.info(
+      `Enrolled the owner's voice: ${Math.round(mainMs / 1000)}s of speech (${separator.model})`,
+    );
+    return { kind: "enrolled", status: this.selfVoiceStatus() };
+  }
+
+  /** Delete the owner's enrolled voice. False when none was enrolled. */
+  async deleteSelfVoice(): Promise<boolean> {
+    const deleted = await this.deps.writeGate.deleteRecordingVoiceProfile();
+    if (deleted) log.info("Deleted the owner's enrolled voice");
+    return deleted;
+  }
+
+  private selfVoiceSetting(): SelfVoiceSetting {
+    return this.deps.selfVoice?.() === "match" ? "match" : "off";
   }
 
   /** Say who one speaker of a session is; its document is written again. */
@@ -589,6 +724,9 @@ export class RecordingTranscriptionService {
   }
 
   private async pass(): Promise<void> {
+    if (this.selfVoiceSetting() === "off" && getRecordingVoiceProfile(this.deps.readDb)) {
+      await this.deleteSelfVoice();
+    }
     await this.finishAbandoned();
     await this.purgeExpiredAudio();
     for (;;) {
@@ -717,10 +855,11 @@ export class RecordingTranscriptionService {
     if (ungrouped.length === 0) return;
     const separator = this.deps.voices?.() ?? null;
     let labels: number[] | null = null;
+    const vectors = ungrouped.flatMap((c) => c.vectors);
     if (separator) {
       try {
         labels = await separator.group(
-          ungrouped.flatMap((c) => c.vectors),
+          vectors,
           ungrouped.flatMap((c) => c.windows.map((w) => w.endMs - w.startMs)),
         );
       } catch (err) {
@@ -743,7 +882,33 @@ export class RecordingTranscriptionService {
           : { ...w, speaker: base + label + 1 };
       }),
     }));
-    await this.deps.writeGate.assignRecordingVoices(sessionId, chunks);
+    const self =
+      labels && separator ? this.recogniseSelf(sessionId, separator, vectors, labels) : null;
+    await this.deps.writeGate.assignRecordingVoices(
+      sessionId,
+      chunks,
+      self === null ? [] : [base + self + 1],
+    );
+  }
+
+  /** The label of this grouping that is the owner by their enrolled voice, if any. */
+  private recogniseSelf(
+    sessionId: string,
+    separator: VoiceSeparator,
+    vectors: readonly Float32Array[],
+    labels: readonly number[],
+  ): number | null {
+    if (this.selfVoiceSetting() !== "match") return null;
+    const profile = getRecordingVoiceProfile(this.deps.readDb);
+    if (!profile || profile.model !== separator.model) return null;
+    if (hasRejectedSelfMatch(this.deps.readDb, sessionId)) return null;
+    const match = matchSelf(vectors, labels, profile.vector);
+    if (match) {
+      log.info(
+        `Recording ${sessionId}: recognised the owner's voice (similarity ${match.similarity.toFixed(2)})`,
+      );
+    }
+    return match?.label ?? null;
   }
 
   /** The session's speakers, with the names of the people they are mapped to. */

@@ -2331,6 +2331,8 @@ export function createServer(
       ...(opts.voiceSeparator ? { voices: opts.voiceSeparator } : {}),
       // Read on every pass, so a changed retention applies without a restart.
       keepAudioDays: () => opts.configStore?.get().inference?.recordings?.keepAudioDays ?? 0,
+      // Read on every pass too: turning it off deletes the enrolled voice.
+      selfVoice: () => opts.configStore?.get().inference?.recordings?.selfVoice ?? "off",
       // Suggestions read the owner's calendars through the same time index
       // the portal's Calendar and the agent read.
       calendarEvents: calendarEventsFrom(

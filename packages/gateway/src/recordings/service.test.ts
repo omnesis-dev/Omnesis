@@ -21,11 +21,12 @@ import { findOrCreatePerson } from "../people.js";
 import {
   ABANDONED_AFTER_MS,
   MAX_ATTEMPTS,
+  MIN_ENROLMENT_SPEECH_MS,
   MISSING_GRACE_MS,
   RecordingTranscriptionService,
   type RecordingChunkInput,
 } from "./service.js";
-import { getRecordingChunk, readRecordingChunkAudio } from "./storage.js";
+import { getRecordingChunk, getRecordingVoiceProfile, readRecordingChunkAudio } from "./storage.js";
 import { ReplayVoiceSeparator } from "./voices/replay-voice-separator.js";
 import type { VoiceSeparator } from "./voices/voices.js";
 import type { CalendarEventCandidate } from "./suggestions.js";
@@ -58,6 +59,8 @@ let separator: VoiceSeparator | null;
 let release: () => void;
 /** The operator's `inference.recordings.keepAudioDays`. */
 let keepDays: number;
+/** The operator's `inference.recordings.selfVoice`. */
+let selfVoice: "off" | "match";
 /** What the owner's calendar holds for any window; a function to see the window asked for. */
 let calendar: (from: string, to: string) => CalendarEventCandidate[];
 
@@ -125,6 +128,7 @@ beforeEach(() => {
   held = null;
   separator = null;
   keepDays = 0;
+  selfVoice = "off";
   calendar = () => [];
   service = new RecordingTranscriptionService({
     writeGate: directWriteGate(db),
@@ -151,6 +155,7 @@ beforeEach(() => {
     buildDocument: buildRecordingDocument,
     voices: () => separator,
     keepAudioDays: () => keepDays,
+    selfVoice: () => selfVoice,
     calendarEvents: async (from, to) => calendar(from, to),
     now: () => now,
   });
@@ -857,6 +862,7 @@ describe("RecordingTranscriptionService speakers", () => {
 
     separator = {
       name: "broken",
+      model: "broken",
       separate: () => Promise.reject(new Error("model crashed")),
       group: () => Promise.reject(new Error("model crashed")),
       dispose: async () => {},
@@ -869,6 +875,7 @@ describe("RecordingTranscriptionService speakers", () => {
     const replay = new ReplayVoiceSeparator();
     separator = {
       name: "flaky",
+      model: "flaky",
       separate: (audio) => replay.separate(audio),
       group: () => Promise.reject(new Error("worker died")),
       dispose: async () => {},
@@ -881,5 +888,218 @@ describe("RecordingTranscriptionService speakers", () => {
       )
       .get(id)!.n;
     expect(vectors).toBe(0);
+  });
+});
+
+describe("RecordingTranscriptionService recognising the owner's voice", () => {
+  type Line = { startMs: number; endMs: number; text: string; voice: string };
+  const encode = (lines: Line[]) => new TextEncoder().encode(JSON.stringify({ segments: lines }));
+  function spoken(sessionId: string, seq: number, lines: Line[]) {
+    transcripts.push({
+      text: lines.map((l) => l.text).join(" "),
+      segments: lines.map(({ startMs, endMs, text }) => ({ startMs, endMs, text })),
+    });
+    return chunk(sessionId, seq, { audio: encode(lines) });
+  }
+  /** A read-aloud clip: `seconds` of one voice, in eight-second windows. */
+  function clip(voice: string, seconds: number, other?: { voice: string; seconds: number }) {
+    const lines: Line[] = [];
+    let t = 0;
+    const add = (v: string, s: number) => {
+      for (let left = s * 1000; left > 0; left -= 8_000) {
+        const len = Math.min(8_000, left);
+        lines.push({ startMs: t, endMs: t + len, text: "", voice: v });
+        t += len;
+      }
+    };
+    add(voice, seconds);
+    if (other) add(other.voice, other.seconds);
+    return encode(lines);
+  }
+  const conversation: Line[] = [
+    { startMs: 0, endMs: 3_000, text: "Shall we look at the budget?", voice: "maya" },
+    { startMs: 4_000, endMs: 7_000, text: "Yes, travel first.", voice: "owner" },
+  ];
+
+  async function recorded(lines: Line[] = conversation): Promise<string> {
+    const id = await start();
+    await service.addChunk(spoken(id, 0, lines));
+    await service.finish(id, 1, at(60_000));
+    await service.idle();
+    return id;
+  }
+
+  beforeEach(() => {
+    separator = new ReplayVoiceSeparator();
+    selfVoice = "match";
+  });
+
+  test("enrols the owner from a read-aloud clip, keeping one mean vector and no audio", async () => {
+    const outcome = await service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    expect(outcome).toEqual({
+      kind: "enrolled",
+      status: {
+        setting: "match",
+        ready: true,
+        minSpeechMs: MIN_ENROLMENT_SPEECH_MS,
+        profile: { enrolledAt: now.toISOString(), speechMs: 24_000, current: true },
+      },
+    });
+    const profile = getRecordingVoiceProfile(db)!;
+    expect(profile.model).toBe("replay");
+    expect(Math.hypot(...profile.vector)).toBeCloseTo(1, 6);
+    // Nothing of the clip is stored as a recording.
+    expect(service.recent(10)).toEqual([]);
+  });
+
+  test("refuses a clip it cannot enrol, and enrols nothing while it cannot", async () => {
+    expect(await service.enrollSelfVoice(clip("owner", 12), "audio/webm")).toEqual({
+      kind: "too-short",
+      speechMs: 12_000,
+    });
+    expect(await service.enrollSelfVoice(new Uint8Array([1, 2]), "audio/webm")).toEqual({
+      kind: "too-short",
+      speechMs: 0,
+    });
+    expect(
+      await service.enrollSelfVoice(
+        clip("owner", 16, { voice: "maya", seconds: 16 }),
+        "audio/webm",
+      ),
+    ).toEqual({ kind: "several-voices" });
+
+    separator = null;
+    expect(await service.enrollSelfVoice(clip("owner", 24), "audio/webm")).toEqual({
+      kind: "unavailable",
+    });
+    separator = {
+      name: "broken",
+      model: "broken",
+      separate: () => Promise.reject(new Error("ffmpeg could not decode")),
+      group: () => Promise.reject(new Error("unused")),
+      dispose: async () => {},
+    };
+    expect(await service.enrollSelfVoice(clip("owner", 24), "audio/webm")).toEqual({
+      kind: "unreadable",
+    });
+    const replay = new ReplayVoiceSeparator();
+    separator = {
+      name: "flaky",
+      model: "flaky",
+      separate: (audio) => replay.separate(audio),
+      group: () => Promise.reject(new Error("worker died")),
+      dispose: async () => {},
+    };
+    expect(await service.enrollSelfVoice(clip("owner", 24), "audio/webm")).toEqual({
+      kind: "unavailable",
+    });
+    selfVoice = "off";
+    separator = new ReplayVoiceSeparator();
+    expect(await service.enrollSelfVoice(clip("owner", 24), "audio/webm")).toEqual({ kind: "off" });
+    expect(getRecordingVoiceProfile(db)).toBeNull();
+  });
+
+  test("a stray voice in the clip is left out of the enrolled voice", async () => {
+    const outcome = await service.enrollSelfVoice(
+      clip("owner", 40, { voice: "maya", seconds: 8 }),
+      "audio/webm",
+    );
+    expect(outcome).toMatchObject({ kind: "enrolled", status: { profile: { speechMs: 40_000 } } });
+    // Enrolled from the owner alone: Maya is never taken for the owner.
+    const id = await recorded();
+    expect(service.speakers(id)!.map((s) => [s.speaker, s.isSelf])).toEqual([
+      [1, false],
+      [2, true],
+    ]);
+  });
+
+  test("names the owner in a new recording with no tap, marked as recognised", async () => {
+    await service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    const id = await recorded();
+
+    expect(service.speakers(id)!.map((s) => [s.speaker, s.isSelf, s.selfMatched])).toEqual([
+      [1, false, false],
+      [2, true, true],
+    ]);
+    expect(docs.get(id)!.content).toContain("[00:00:04] You: Yes, travel first.");
+    expect(docs.get(id)!.metadata.people).toEqual([
+      { name: "You", role: "participant", isSelf: true },
+    ]);
+    expect(service.recent(1)[0]).toMatchObject({ speakers: 2, namedSpeakers: 1 });
+
+    // Confirming it makes it the owner's own mapping.
+    expect(await service.setSpeaker(id, 2, { kind: "self" })).toBe("set");
+    expect(service.speakers(id)![1]).toMatchObject({ isSelf: true, selfMatched: false });
+  });
+
+  test("a recording without the owner's voice names nobody", async () => {
+    await service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    const id = await recorded([
+      { startMs: 0, endMs: 3_000, text: "Shall we look at the budget?", voice: "maya" },
+      { startMs: 4_000, endMs: 7_000, text: "Yes, travel first.", voice: "guest" },
+    ]);
+    expect(service.speakers(id)!.every((s) => !s.isSelf)).toBe(true);
+  });
+
+  /** A recording the gateway finished, then a chunk from its device after it. */
+  async function withLateChunk(undo: boolean): Promise<string> {
+    const id = await start();
+    await service.addChunk(spoken(id, 0, conversation));
+    advance(ABANDONED_AFTER_MS);
+    await pass();
+    expect(service.speakers(id)![1]).toMatchObject({ speaker: 2, isSelf: true });
+    if (undo) expect(await service.setSpeaker(id, 2, { kind: "clear" })).toBe("set");
+    await service.addChunk(
+      spoken(id, 1, [{ startMs: 0, endMs: 4_000, text: "Agreed, then.", voice: "owner" }]),
+    );
+    await service.finish(id, 2, at(120_000));
+    await service.idle();
+    return id;
+  }
+
+  test("a late chunk's owner is recognised, unless the owner undid it in that session", async () => {
+    await service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    const kept = await withLateChunk(false);
+    // The late voice cannot be compared with deleted vectors, but it is the owner's.
+    expect(service.speakers(kept)!.map((s) => [s.speaker, s.isSelf])).toEqual([
+      [1, false],
+      [2, true],
+      [3, true],
+    ]);
+
+    const undone = await withLateChunk(true);
+    expect(service.speakers(undone)!.map((s) => [s.speaker, s.isSelf])).toEqual([
+      [1, false],
+      [2, false],
+      [3, false],
+    ]);
+    expect(docs.get(undone)!.content).not.toContain("You:");
+  });
+
+  test("a voice enrolled with another model is not used, and says so", async () => {
+    await service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    const other = new ReplayVoiceSeparator();
+    Object.defineProperty(other, "model", { value: "replay-v2" });
+    separator = other;
+    expect(service.selfVoiceStatus().profile).toMatchObject({ current: false });
+    const id = await recorded();
+    expect(service.speakers(id)!.some((s) => s.isSelf)).toBe(false);
+  });
+
+  test("with the setting off nobody is recognised and the enrolled voice is deleted", async () => {
+    await service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    selfVoice = "off";
+    const id = await recorded();
+    expect(service.speakers(id)!.some((s) => s.isSelf)).toBe(false);
+    expect(getRecordingVoiceProfile(db)).toBeNull();
+    expect(service.selfVoiceStatus()).toMatchObject({ setting: "off", profile: null });
+  });
+
+  test("the owner can delete the enrolled voice", async () => {
+    await service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    expect(await service.deleteSelfVoice()).toBe(true);
+    expect(await service.deleteSelfVoice()).toBe(false);
+    const id = await recorded();
+    expect(service.speakers(id)!.some((s) => s.isSelf)).toBe(false);
   });
 });

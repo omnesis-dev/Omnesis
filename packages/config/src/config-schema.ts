@@ -3805,12 +3805,21 @@ const dictationSettings = z
 // into the models directory on first use), `replay` is the test double.
 // `keepAudioDays` keeps each chunk's audio that long after it is transcribed,
 // for the portal to play; 0, the default, deletes it at once.
+// `selfVoice: "match"` recognises the owner's enrolled voice among each
+// recording's speakers and maps that speaker as the owner; `off`, the
+// default, also deletes the enrolled voice.
 const recordingsSettings = z
   .object({
     speakers: z
       .enum(["off", "local", "replay"])
       .describe(
         "Tell the speakers of a recorded conversation apart (experimental). `local` downloads two small voice models on first use and separates voices on this machine; voice vectors are deleted once each recording's transcript is written. Default `off`.",
+      )
+      .optional(),
+    selfVoice: z
+      .enum(["off", "match"])
+      .describe(
+        "Recognise your own voice in recorded conversations (experimental). With `match` and speakers told apart, you record a short clip of yourself reading aloud in the portal; the gateway keeps one voice summary of it and names the speaker who sounds like you as you in each recording. Nobody else's voice is kept. Default `off`, which also deletes the kept summary.",
       )
       .optional(),
     keepAudioDays: z

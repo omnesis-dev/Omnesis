@@ -87,6 +87,8 @@ interface Pending {
 
 export interface LocalVoiceSeparatorOptions {
   models: VoiceModelPaths;
+  /** Identifies the embedding model, for the owner's voice profile. */
+  model: string;
   spawnWorker?: VoiceWorkerSpawner;
   decodeAudio?: AudioDecoder;
   requestTimeoutMs?: number;
@@ -95,6 +97,7 @@ export interface LocalVoiceSeparatorOptions {
 
 export class LocalVoiceSeparator implements VoiceSeparator {
   readonly name = "sherpa-onnx";
+  readonly model: string;
   private readonly models: VoiceModelPaths;
   private readonly spawnWorker: VoiceWorkerSpawner;
   private readonly decodeAudio: AudioDecoder;
@@ -108,6 +111,7 @@ export class LocalVoiceSeparator implements VoiceSeparator {
 
   constructor(opts: LocalVoiceSeparatorOptions) {
     this.models = opts.models;
+    this.model = opts.model;
     this.spawnWorker = opts.spawnWorker ?? defaultVoiceWorkerSpawner;
     this.decodeAudio = opts.decodeAudio ?? ((bytes) => decodeToPcm16kMono(bytes));
     this.requestTimeoutMs = opts.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;

@@ -3,7 +3,16 @@
 
 import { describe, expect, test } from "vitest";
 
-import { groupVoices, packVectors, unpackVectors, voiceWindows } from "./voices.js";
+import {
+  groupVoices,
+  matchSelf,
+  meanVoice,
+  packVectors,
+  SAME_SPEAKER_SIMILARITY,
+  SELF_VOICE_SIMILARITY,
+  unpackVectors,
+  voiceWindows,
+} from "./voices.js";
 
 /** A unit-ish vector near `base` (one of a few orthogonal voices), with a little noise. */
 function voice(base: number, noise: number, dim = 16): Float32Array {
@@ -74,6 +83,45 @@ describe("groupVoices", () => {
   test("an empty recording or a single window", () => {
     expect(groupVoices([])).toEqual([]);
     expect(groupVoices([voice(0, 0)])).toEqual([0]);
+  });
+});
+
+describe("matchSelf", () => {
+  const profile = meanVoice([voice(5, 0.1), voice(5, 0.3)]);
+
+  test("names the speaker whose mean voice is the enrolled one", () => {
+    const vectors = [voice(3, 0.1), voice(5, 0.2), voice(3, 0.2), voice(5, 0.0)];
+    expect(matchSelf(vectors, [0, 1, 0, 1], profile)).toEqual({
+      label: 1,
+      similarity: expect.closeTo(1, 1),
+    });
+  });
+
+  test("names nobody below the threshold, or when the profile is of another size", () => {
+    const vectors = [voice(3, 0.1), voice(9, 0.1)];
+    expect(matchSelf(vectors, [0, 1], profile)).toBeNull();
+    expect(matchSelf([voice(5, 0.1, 8)], [0], profile)).toBeNull();
+    expect(matchSelf([], [], profile)).toBeNull();
+  });
+
+  test("of two speakers above the threshold, only the more similar one is the owner", () => {
+    // One voice split in two: both halves resemble the owner, one more closely.
+    const closer = voice(5, 0.1);
+    const looser = voice(5, 0.9);
+    expect(matchSelf([looser, closer], [0, 1], profile, 0.5)).toMatchObject({ label: 1 });
+  });
+
+  test("the threshold sits above the one that groups a session's windows", () => {
+    expect(SELF_VOICE_SIMILARITY).toBeGreaterThan(SAME_SPEAKER_SIMILARITY);
+  });
+});
+
+describe("meanVoice", () => {
+  test("is unit length whatever the vectors' lengths", () => {
+    const mean = meanVoice([voice(1, 0, 4).map((x) => x * 10), voice(2, 0, 4)]);
+    expect(Math.hypot(...mean)).toBeCloseTo(1, 6);
+    expect(mean[1]).toBeCloseTo(mean[2]!, 6);
+    expect(meanVoice([])).toEqual(new Float32Array(0));
   });
 });
 

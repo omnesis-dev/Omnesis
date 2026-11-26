@@ -554,7 +554,10 @@ import {
   markRecordingSessionProjected,
   assignRecordingVoices,
   setRecordingSpeaker,
+  setRecordingVoiceProfile,
+  deleteRecordingVoiceProfile,
   type RecordingSpeakerMapping,
+  type RecordingVoiceProfile,
   deleteRecordingSession,
   insertRecordingMark,
   type NewRecordingSession,
@@ -2130,7 +2133,11 @@ export const writerHandlers = {
     db: Db,
     sessionId: string,
     chunks: Array<{ seq: number; windows: VoiceWindow[] }>,
-  ) => assignRecordingVoices(db, sessionId, chunks),
+    selfSpeakers: number[] = [],
+  ) => assignRecordingVoices(db, sessionId, chunks, selfSpeakers),
+  "recordings.setVoiceProfile": (db: Db, profile: RecordingVoiceProfile) =>
+    setRecordingVoiceProfile(db, profile),
+  "recordings.deleteVoiceProfile": (db: Db): boolean => deleteRecordingVoiceProfile(db),
   "recordings.setSpeaker": (
     db: Db,
     sessionId: string,

@@ -660,6 +660,9 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   // Bounded by one session's chunks: a four-hour recording has 240.
   { name: "recordings.assignVoices", priority: "background" },
   { name: "recordings.setSpeaker", priority: "user" },
+  // The owner's enrolled voice: one row, one vector.
+  { name: "recordings.setVoiceProfile", priority: "user" },
+  { name: "recordings.deleteVoiceProfile", priority: "user" },
   { name: "recordings.setTitle", priority: "user" },
   { name: "recordings.dismissSuggestion", priority: "user" },
 
