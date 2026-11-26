@@ -87,6 +87,22 @@ export type RenderedCitation = RenderedDocumentCitation | RenderedRecordCitation
 const USER_LABEL = "You";
 const ASSISTANT_LABEL = "Omnesis";
 
+/**
+ * Remove the markup {@link renderConversation} adds around the dialogue: the
+ * title heading and each speaker label, so a passage reads as what was said.
+ */
+export function stripDialogueMarkup(passage: string): string {
+  return passage
+    .replace(/^#\s.*$/m, " ")
+    .replace(
+      new RegExp(
+        `\\*\\*(?:${USER_LABEL}|${ASSISTANT_LABEL})\\*\\*(?: \\(\\d{4}-\\d{2}-\\d{2}\\))?:`,
+        "g",
+      ),
+      " ",
+    );
+}
+
 export function renderConversation(record: ConversationRecord): RenderedConversation {
   const { body, utterances } = renderDialogue(record);
   const citations = harvestCitations(record.messages);

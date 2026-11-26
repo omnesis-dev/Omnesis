@@ -453,6 +453,48 @@ a:hover { text-decoration: underline; }
   color: var(--text-muted);
   padding: 6px 2px;
 }
+.sidebar-convos-search {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+.sidebar-convos-search::placeholder {
+  color: var(--text-muted);
+}
+.sidebar-convos-search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+/* A search result shows the passage that matched under its title. */
+.sidebar-convo-row.has-snippet .sidebar-convo-item {
+  flex-wrap: wrap;
+  white-space: normal;
+}
+.sidebar-convo-row.has-snippet .sidebar-convo-title {
+  white-space: nowrap;
+}
+/* Beside the title, not the middle of the two lines. */
+.sidebar-convo-row.has-snippet .sidebar-convo-unread {
+  top: 12px;
+}
+.sidebar-convo-snippet {
+  flex: 1 0 100%;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 /* Each conversation row contains a link (the title) and an absolutely
    positioned "…" trigger that fades in on hover. Keeping them as siblings
    (rather than nesting the button inside the anchor) avoids interactive

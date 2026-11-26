@@ -18,6 +18,8 @@ import type {
 
 /** Backend-independent read access to durable agent conversations. */
 export interface ConversationReader {
+  /** Every listed conversation, in list order. */
+  listConversations(): Promise<ConversationSummary[]>;
   listConversationPage(options?: ConversationListOptions): Promise<ConversationListPage>;
   loadConversation(id: string): Promise<ConversationRecord | null>;
   listConversationMessages(
@@ -34,6 +36,10 @@ export class StoredConversationReader implements ConversationReader {
     private readonly store: ConversationStore,
     private readonly listSummaries: () => Promise<ConversationSummary[]> = () => store.list(),
   ) {}
+
+  listConversations(): Promise<ConversationSummary[]> {
+    return this.listSummaries();
+  }
 
   async listConversationPage(options: ConversationListOptions = {}): Promise<ConversationListPage> {
     return paginateConversations(await this.listSummaries(), options, this.listSnapshots);
