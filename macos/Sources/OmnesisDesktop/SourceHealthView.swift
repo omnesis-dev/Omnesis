@@ -21,14 +21,14 @@ struct DesktopSourceHealthView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.xSmall) {
             if DesktopSourceActionPolicy(source: source, devices: devices).historical {
                 Label("Historical data", systemImage: "clock.arrow.circlepath")
                 Text("Indexed information is kept. Attach a computer to collect again.")
                     .foregroundStyle(DesktopTheme.secondary)
             } else if let status, current {
                 Label(source.enabled ? status.title : "Paused", systemImage: source.enabled ? symbol(status) : "pause.circle")
-                    .foregroundStyle(source.enabled && status.needsAttention ? DesktopTheme.accent : DesktopTheme.ink)
+                    .foregroundStyle(source.enabled && status.needsAttention ? DesktopTheme.warning : DesktopTheme.ink)
                 if source.enabled, status.state == "syncing", !status.needsAccessRecovery {
                     if let fraction = status.progress?.fraction { ProgressView(value: fraction) }
                     else { ProgressView().controlSize(.small) }
@@ -74,22 +74,23 @@ struct DesktopSourceHealthView: View {
                         .accessibilityLabel("Check collection status for \(source.accountId)")
                 }
             }
-        }.font(.callout).frame(maxWidth: 290, alignment: .leading)
+        }.font(DesktopDesignTokens.Typography.secondary).frame(maxWidth: 290, alignment: .leading)
             .omnesisSheet(isPresented: $showDetails) {
-                VStack(alignment: .leading, spacing: 20) {
-                    Text("Collection details").font(.title2.bold())
+                VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.large) {
+                    Text("Collection details").font(DesktopDesignTokens.Typography.pageTitle).accessibilityAddTraits(.isHeader)
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 20) {
+                        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.large) {
                             ForEach(reports) { report in
-                                VStack(alignment: .leading, spacing: 10) {
-                                    if reports.count > 1 { Text(deviceName(report)).font(.headline) }
+                                VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.small) {
+                                    if reports
+                                        .count > 1 { Text(deviceName(report)).font(DesktopDesignTokens.Typography.body.weight(.medium)) }
                                     ForEach(Array(report.displayNotices.enumerated()), id: \.offset) { _, notice in
                                         VStack(alignment: .leading, spacing: 6) {
                                             Label(
                                                 notice.title,
                                                 systemImage: notice.severity == "error" ? "exclamationmark.circle" : "info.circle"
                                             )
-                                            .font(.headline)
+                                            .font(DesktopDesignTokens.Typography.body.weight(.medium))
                                             if let detail = notice.detail { Text(detail).foregroundStyle(DesktopTheme.secondary) }
                                             ForEach(
                                                 Array((report.needsAccessRecovery ? [] : notice.steps ?? []).enumerated()),
@@ -112,7 +113,7 @@ struct DesktopSourceHealthView: View {
                     HStack { Spacer()
                         Button("Done") { showDetails = false }.keyboardShortcut(.cancelAction)
                     }
-                }.padding(28).frame(width: 520, height: 440).omnesisTheme()
+                }.padding(DesktopDesignTokens.Space.section).frame(width: 520, height: 440).omnesisTheme()
             }
     }
 

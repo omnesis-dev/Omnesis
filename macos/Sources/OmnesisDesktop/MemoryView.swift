@@ -35,7 +35,7 @@ struct DesktopMemoryView: View {
                 Text(
                     "These settings control the library process on the computer that stores it. Connected source apps and downloaded AI models may use additional memory."
                 )
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DesktopTheme.secondary)
                 Toggle("Choose the library memory budget automatically", isOn: $automatic)
                 if !automatic { TextField("Library budget (MiB, at least 256)", text: $budget) }
                 Toggle("Choose the analytics memory budget automatically", isOn: $analyticsAutomatic)
@@ -43,7 +43,7 @@ struct DesktopMemoryView: View {
                 Text(
                     "Smaller budgets can reduce semantic search and move analytics work to disk. They are startup settings, not an immediate limit on total app memory."
                 )
-                .font(.callout).foregroundStyle(.secondary)
+                .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                 Button("Save memory settings") { context?.run { _ in await save() } }.accessibilityIdentifier("memory-save")
                     .disabled(working || store.busy || !loaded || !valid)
                 if saved {
@@ -64,6 +64,8 @@ struct DesktopMemoryView: View {
                 (awaitingRestart && store.busy) { ProgressView(awaitingRestart ? "Restarting the library…" : "Reading memory settings…") }
             if let error = error ?? store.failure { Text(error).foregroundStyle(DesktopTheme.danger) }
         }.formStyle(.grouped)
+            .frame(maxWidth: DesktopDesignTokens.Layout.formWidth)
+            .frame(maxWidth: .infinity)
             .task(id: context?.id) { await load() }
             .onChange(of: [automatic ? "automatic" : budget, analyticsAutomatic ? "automatic" : analyticsBudget]) { _, _ in
                 saved = false

@@ -16,7 +16,7 @@ struct DesktopModelRolesView: View {
                     ? "Your model connections were kept. Choose which models may use your restored information; nothing is turned back on automatically."
                     : "Start with a model for questions and answers. You can leave the other model choices unchanged."
             )
-            .foregroundStyle(.secondary)
+            .foregroundStyle(DesktopTheme.secondary)
             ForEach(overview.capabilities.filter { !$0.experimental && $0.configurableOnDevice && $0.role == "agent" }) { capability in
                 DesktopModelRoleRow(capability: capability, overview: overview, context: context, updated: updated)
             }
@@ -44,16 +44,17 @@ private struct DesktopModelRoleRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(capability.title).font(.headline)
-            Text(capability.description).font(.callout).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.small) {
+            Text(capability.title).font(DesktopDesignTokens.Typography.body.weight(.medium))
+            Text(capability.description).font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
             if let current = overview.assignmentDisplays[capability.role], current.configured {
                 Text("Selected: \(current.providerLabel) · \(current.modelName)")
                 if !current
                     .available {
-                    Text("This model is currently unavailable. Check its connection or choose another model.").foregroundStyle(.orange)
+                    Text("This model is currently unavailable. Check its connection or choose another model.")
+                        .foregroundStyle(DesktopTheme.warning)
                 }
-            } else { Text("Not in use").foregroundStyle(.secondary) }
+            } else { Text("Not in use").foregroundStyle(DesktopTheme.secondary) }
             Picker("Model for \(capability.title)", selection: $selection) {
                 Text("Choose a model").tag("")
                 Text("Do not use a model for this").tag("disabled")
@@ -67,9 +68,9 @@ private struct DesktopModelRoleRow: View {
                 }
             }.accessibilityIdentifier("model-role-save-" + capability.role).disabled(loading || selection.isEmpty)
             if loading { ProgressView("Saving selection…") }
-            if let notice { Text(notice).font(.callout).foregroundStyle(.secondary) }
+            if let notice { Text(notice).font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary) }
             if let error { Text(error).foregroundStyle(DesktopTheme.danger) }
-        }.padding(.vertical, 8)
+        }.padding(.vertical, DesktopDesignTokens.Space.small)
             .confirmationDialog("Use a model outside your library server?", isPresented: Binding(
                 get: { pending != nil }, set: { if !$0 { pending = nil } }
             ), presenting: pending) { choice in

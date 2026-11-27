@@ -144,6 +144,8 @@ const groups: Record<
     "recording_chunks",
     "recording_marks",
     "recording_speakers",
+    "recording_participants",
+    "recording_conversations",
     "recording_suggestion_dismissals",
     "agent_messages",
     "cognition_consumption_edges",

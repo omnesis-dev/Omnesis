@@ -19,31 +19,36 @@ struct DesktopChatSourcesView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("Documents used").font(.headline).accessibilityIdentifier("chat-sources-title")
+                Text("Documents used").font(DesktopDesignTokens.Typography.body.weight(.medium))
+                    .accessibilityIdentifier("chat-sources-title").accessibilityAddTraits(.isHeader)
                 Spacer()
                 Button("Close sources", systemImage: "xmark", action: close).labelStyle(.iconOnly)
+                    .buttonStyle(DesktopButtonStyle(iconOnly: true)).help("Close sources")
                     .accessibilityIdentifier("chat-sources-close")
-            }.padding(20)
+            }.padding(DesktopDesignTokens.Space.large)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(references) { ref in
                         Button { selected = ref } label: {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text(ref.title ?? "Source document").font(.system(size: 14, weight: .medium))
+                            VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.small) {
+                                Text(ref.title ?? "Source document").font(DesktopDesignTokens.Typography.body.weight(.medium))
                                     .foregroundStyle(DesktopTheme.ink).multilineTextAlignment(.leading)
                                 Text(store.descriptors.first(where: { $0.id == ref.sourceType })?.name ?? ref.sourceType)
-                                    .font(.caption).foregroundStyle(DesktopTheme.secondary)
+                                    .font(DesktopDesignTokens.Typography.metadata).foregroundStyle(DesktopTheme.secondary)
                                 if let snippet = ref.snippet, !snippet.isEmpty {
-                                    Text(snippet).font(.callout).lineLimit(3).foregroundStyle(DesktopTheme.secondary)
+                                    Text(snippet).font(DesktopDesignTokens.Typography.secondary).lineLimit(3)
+                                        .foregroundStyle(DesktopTheme.secondary)
                                         .multilineTextAlignment(.leading)
                                 }
-                                Text("Read document").font(.callout).foregroundStyle(DesktopTheme.primary)
-                            }.frame(maxWidth: .infinity, alignment: .leading).padding(20).contentShape(Rectangle())
+                                Text("Read document").font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.primary)
+                            }.frame(maxWidth: .infinity, alignment: .leading).padding(DesktopDesignTokens.Space.large)
+                                .contentShape(Rectangle())
                         }.buttonStyle(.plain).accessibilityIdentifier("chat-document-" + ref.documentId)
-                        Divider().padding(.horizontal, 20)
+                        Divider().padding(.horizontal, DesktopDesignTokens.Space.large)
                     }
                     Text("Only documents explicitly cited in this conversation appear here.")
-                        .font(.callout).foregroundStyle(DesktopTheme.secondary).padding(20)
+                        .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
+                        .padding(DesktopDesignTokens.Space.large)
                 }
             }
         }.background(DesktopTheme.panel)
@@ -72,23 +77,24 @@ struct DesktopDocumentView: View {
     @State private var loading = false
     @State private var requestGeneration = UUID()
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.large) {
             HStack(alignment: .top) {
-                Text(document?.title ?? selection.title).font(.title2.weight(.semibold)).textSelection(.enabled)
+                Text(document?.title ?? selection.title).font(DesktopDesignTokens.Typography.section).accessibilityAddTraits(.isHeader)
+                    .textSelection(.enabled)
                 Spacer()
                 Button("Done") { dismiss() }.keyboardShortcut(.cancelAction).accessibilityIdentifier("chat-document-done")
             }
             if loading { ProgressView("Opening the source document…") }
             if let error { Label(error, systemImage: "exclamationmark.circle").foregroundStyle(DesktopTheme.secondary) }
             if let document {
-                ScrollView { DesktopAnswerText(text: document.content).padding(.trailing, 12) }
+                ScrollView { DesktopAnswerText(text: document.content).padding(.trailing, DesktopDesignTokens.Space.medium) }
                     .accessibilityIdentifier("chat-document-content")
                 if let url = selection.originalURL, DesktopAnswerBlock.allowsLink(url) {
                     Link("Open original", destination: url)
                 }
             }
             Spacer(minLength: 0)
-        }.padding(28).frame(width: 680, height: 600).omnesisTheme()
+        }.padding(DesktopDesignTokens.Space.section).frame(width: 680, height: 600).omnesisTheme()
             .task(id: DesktopDocumentRequest(id: selection.id, api: context.map { ObjectIdentifier($0.api) })) {
                 let generation = UUID()
                 requestGeneration = generation

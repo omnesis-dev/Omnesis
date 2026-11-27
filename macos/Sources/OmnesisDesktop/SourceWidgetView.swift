@@ -55,7 +55,7 @@ struct SourceWidgetView: View {
     @State private var configuration: SourceWidgetConfiguration?
     @State private var failure: String?
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.medium) {
             if let configuration {
                 SourceWidgetBrowser(configuration: configuration, origins: flow.descriptor.widgetOrigins) { type, token, metadata in
                     Task {

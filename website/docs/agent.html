@@ -347,6 +347,13 @@
           recall what you discussed with it before.
         </p>
         <p>
+          On the portal, the search field above the conversation list finds past conversations by
+          their title or by words said in them, and shows the passage that matched under each title.
+          A conversation can be found by what was said in it a short while after its turn ends, once
+          the <code>omnesis-chat</code> source has indexed it; before that its title alone matches.
+          Clearing the field returns to the full list.
+        </p>
+        <p>
           Omnesis never compacts, summarizes, prunes, or silently truncates a conversation to fit a
           model's context window. When a conversation reaches the model's limit, Omnesis keeps the
           failed turn and any partial answer, makes the conversation read-only, and asks you to

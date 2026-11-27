@@ -100,6 +100,15 @@ export const setRecordingSpeakerBody = z.union([
   z.object({ clear: z.literal(true) }).strict(),
 ]);
 
+// POST /recordings/:id/participants — someone present without a speaking turn.
+export const addRecordingParticipantBody = z.union([
+  z.object({ personId: z.string().min(1).max(128) }).strict(),
+  z.object({ name: z.string().trim().min(1).max(120) }).strict(),
+]);
+
+/** A participant's key, as `GET /recordings/:id/speakers` lists it. */
+export const recordingParticipantKey = z.string().regex(/^(person|name):.{1,128}$/s);
+
 export const listRecordingsQuery = z
   .object({
     limit: z
@@ -114,6 +123,11 @@ export const listRecordingsQuery = z
 // PUT /recordings/:id/title — the owner's title; null goes back to the date-based one.
 export const setRecordingTitleBody = z
   .object({ title: z.string().trim().max(200).nullable() })
+  .strict();
+
+// GET /recordings/:id/suggestions?conversation=n — one conversation of a split session.
+export const recordingSuggestionsQuery = z
+  .object({ conversation: recordingSpeakerNumber.optional() })
   .strict();
 
 // POST /recordings/:id/suggestions/dismiss

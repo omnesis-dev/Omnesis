@@ -18,7 +18,11 @@ final class DesktopSearchDocumentTests: XCTestCase {
         ]))
         let store = DesktopStore(startRuntime: false)
         store.api = try DesktopAPI(connection: connection)
-        let hosting = NSHostingView(rootView: DesktopSearchView(context: store.apiContext).environment(store).omnesisTheme())
+        let suite = "dev.omnesis.document-render-tests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let hosting = NSHostingView(rootView: DesktopSearchView(context: store.apiContext).environment(store).omnesisTheme()
+            .defaultAppStorage(defaults).environment(\.desktopAppearanceOverride, .dark))
         hosting.sizingOptions = []
         hosting.autoresizingMask = [.width, .height]
         hosting.frame = NSRect(x: 0, y: 0, width: 860, height: 600)
@@ -55,17 +59,19 @@ final class DesktopSearchDocumentTests: XCTestCase {
         XCTAssertEqual(status.unauthorized, 0)
         let documentWindow = try XCTUnwrap(window.attachedSheet, "The full document must open in the actual native sheet")
         let output = URL(fileURLWithPath: "/tmp/omnesis-macos-snapshots")
-        try DesktopNativeColorReference.validateLogicalCanvas(NSColor(DesktopTheme.canvas))
+        try DesktopNativeColorReference.validateLogicalCanvas(NSColor(DesktopTheme.canvas), appearance: documentWindow.effectiveAppearance)
         let reference = try await DesktopNativeColorReference.capture(for: documentWindow, output: output)
+        let appearance = try XCTUnwrap(documentWindow.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]))
+        XCTAssertEqual(appearance, .darkAqua, "The isolated document fixture explicitly selects Dark appearance")
         try await DesktopSnapshotRenderer.captureOwnedWindow(
             documentWindow,
             output: output,
             name: "search-full-indexed-document",
-            appearance: .darkAqua,
+            appearance: appearance,
             requireActive: true
         )
         let bitmap = try XCTUnwrap(NSBitmapImageRep(data: Data(contentsOf: output.appendingPathComponent(
-            "search-full-indexed-document-window-NSAppearanceNameDarkAqua.png"
+            "search-full-indexed-document-window-\(appearance.rawValue).png"
         ))))
         try DesktopNativeColorReference.validatePipeline(bitmap, window: documentWindow, reference: reference)
         let background = try DesktopNativeColorReference.pixel(bitmap, x: bitmap.pixelsWide - 40, y: bitmap.pixelsHigh - 40)

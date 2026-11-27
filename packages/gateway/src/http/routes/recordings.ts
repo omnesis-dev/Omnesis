@@ -33,15 +33,21 @@
  *     written again.
  *   - `GET /recordings/:id/suggestions` offers who likely took part and what
  *     the recording was: attendees and the title of calendar events it
- *     overlaps, and names addressed in the transcript, each for the speaker
- *     who answered. Nothing is applied: the owner accepts one through the
+ *     overlaps. Nothing is applied: the owner accepts one through the
  *     speaker and title routes, or dismisses it with
  *     `POST /recordings/:id/suggestions/dismiss` (`{key}`).
  *   - `GET /recordings/:id/speakers` lists a session's speakers with how long
- *     each spoke and the first things they said.
+ *     each spoke and the first things they said, and the people present
+ *     without a speaking turn (`participants`).
  *   - `PUT /recordings/:id/speakers/:n` says who speaker `n` is — `{self:
  *     true}`, `{personId}`, `{name}` or `{clear: true}` — and the document is
  *     written again. 404 for a speaker the session does not have, 400 for a
+ *     person id that names nobody.
+ *   - `POST /recordings/:id/participants` adds someone who was present but
+ *     not told apart as a speaker — `{personId}` or `{name}` — and the
+ *     document is written again; adding them twice changes nothing.
+ *     `DELETE /recordings/:id/participants/:key` removes one. Both answer the
+ *     participants; 404 for an unknown session or participant, 400 for a
  *     person id that names nobody.
  *
  * Scope: `write:omnesis-recordings` (satisfied by admin).
@@ -60,12 +66,15 @@ import {
 } from "../errors.js";
 import { enforceWriteScopeForSource, scope } from "../scope.js";
 import {
+  addRecordingParticipantBody,
   dismissRecordingSuggestionBody,
   finishRecordingBody,
   setRecordingTitleBody,
   listRecordingsQuery,
   recordingChunkMetadata,
+  recordingParticipantKey,
   recordingSpeakerNumber,
+  recordingSuggestionsQuery,
   setRecordingSpeakerBody,
   recordingChunkSeq,
   recordingId,
@@ -290,13 +299,35 @@ export function mountRecordingRoutes(app: RouteApp, deps: RecordingRoutesDeps): 
     },
   );
 
-  app.get("/recordings/:id/suggestions", scope.writeAny(), async (c) => {
-    enforceScope(c);
-    const suggestions = await deps.service.suggestions(parseId(c.req.param("id")));
-    if (!suggestions) throw new NotFoundError("recording not found");
-    c.header("Cache-Control", "no-store");
-    return c.json(suggestions);
-  });
+  app.put(
+    "/recordings/:id/conversations/:n/title",
+    scope.writeAny(),
+    validateJson(setRecordingTitleBody),
+    async (c) => {
+      enforceScope(c);
+      const id = parseId(c.req.param("id"));
+      const n = recordingSpeakerNumber.safeParse(c.req.param("n"));
+      if (!n.success) throw new NotFoundError("conversation not found");
+      if (!(await deps.service.setConversationTitle(id, n.data, c.req.valid("json").title))) {
+        throw new NotFoundError("conversation not found");
+      }
+      return c.json(deps.service.summary(id));
+    },
+  );
+
+  app.get(
+    "/recordings/:id/suggestions",
+    scope.writeAny(),
+    validateQuery(recordingSuggestionsQuery),
+    async (c) => {
+      enforceScope(c);
+      const { conversation } = c.req.valid("query");
+      const suggestions = await deps.service.suggestions(parseId(c.req.param("id")), conversation);
+      if (!suggestions) throw new NotFoundError("recording not found");
+      c.header("Cache-Control", "no-store");
+      return c.json(suggestions);
+    },
+  );
 
   app.post(
     "/recordings/:id/suggestions/dismiss",
@@ -314,10 +345,36 @@ export function mountRecordingRoutes(app: RouteApp, deps: RecordingRoutesDeps): 
 
   app.get("/recordings/:id/speakers", scope.writeAny(), (c) => {
     enforceScope(c);
-    const speakers = deps.service.speakers(parseId(c.req.param("id")));
+    const id = parseId(c.req.param("id"));
+    const speakers = deps.service.speakers(id);
     if (!speakers) throw new NotFoundError("recording not found");
     c.header("Cache-Control", "no-store");
-    return c.json({ speakers });
+    return c.json({ speakers, participants: deps.service.participants(id) ?? [] });
+  });
+
+  app.post(
+    "/recordings/:id/participants",
+    scope.writeAny(),
+    validateJson(addRecordingParticipantBody),
+    async (c) => {
+      enforceScope(c);
+      const id = parseId(c.req.param("id"));
+      const outcome = await deps.service.addParticipant(id, c.req.valid("json"));
+      if (outcome === "missing") throw new NotFoundError("recording not found");
+      if (outcome === "no-such-person") throw new BadRequestError("no such person");
+      return c.json({ participants: deps.service.participants(id) ?? [] });
+    },
+  );
+
+  app.delete("/recordings/:id/participants/:key", scope.writeAny(), async (c) => {
+    enforceScope(c);
+    const id = parseId(c.req.param("id"));
+    const key = recordingParticipantKey.safeParse(c.req.param("key"));
+    if (!key.success) throw new NotFoundError("participant not found");
+    if (!(await deps.service.removeParticipant(id, key.data))) {
+      throw new NotFoundError("participant not found");
+    }
+    return c.json({ participants: deps.service.participants(id) ?? [] });
   });
 
   app.put(

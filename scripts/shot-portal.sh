@@ -63,6 +63,8 @@ DEV_INSTANCE="${ROOT}/scripts/dev-instance.sh"
 # in scripts/lib/gateway-boot-budget.json.
 # shellcheck source=lib/boot_budget
 source "${ROOT}/scripts/lib/boot_budget"
+# shellcheck source=lib/test_instance
+source "${ROOT}/scripts/lib/test_instance"
 
 # Node 24 is keg-only on the macOS build host; on Linux the keg dir is absent so
 # this prepend is a harmless no-op. Guarded so it never shadows a system node.
@@ -175,7 +177,7 @@ else
 fi
 
 # ── Capture ───────────────────────────────────────────────────────
-TOKEN="$(cat "${TOKEN_FILE}")"
+TOKEN="$(read_instance_token "${CONFIG_DIR}")"
 export NODE_EXTRA_CA_CERTS="${CA_CERT}"
 
 # Playwright's bundled Chromium must be present; install it loudly if missing

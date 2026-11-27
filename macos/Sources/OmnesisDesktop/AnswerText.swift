@@ -9,26 +9,34 @@ struct DesktopAnswerText: View {
     @State private var blocks: [DesktopAnswerBlock] = []
     @State private var inlineText: [String: AttributedString] = [:]
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.medium) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
                 switch block {
                 case .paragraph(let raw): inline(raw)
-                case .heading(let raw): inline(raw).font(.system(size: 19, weight: .semibold)).padding(.top, 4)
-                case .bullet(let raw): HStack(alignment: .top, spacing: 10) { Text("•").foregroundStyle(DesktopTheme.secondary)
+                case .heading(let raw): inline(raw).font(DesktopDesignTokens.Typography.section).accessibilityAddTraits(.isHeader).padding(
+                        .top,
+                        DesktopDesignTokens.Space.xSmall
+                    )
+                case .bullet(let raw): HStack(alignment: .top, spacing: DesktopDesignTokens.Space.small) {
+                        Text("•").foregroundStyle(DesktopTheme.secondary)
                         inline(raw)
                     }
-                case .numbered(let number, let raw): HStack(alignment: .top, spacing: 10) {
+                case .numbered(let number, let raw): HStack(alignment: .top, spacing: DesktopDesignTokens.Space.small) {
                         Text(number + ".").foregroundStyle(DesktopTheme.secondary)
                         inline(raw)
                     }
-                case .quote(let raw): inline(raw).foregroundStyle(DesktopTheme.secondary).padding(.leading, 14)
+                case .quote(let raw): inline(raw).foregroundStyle(DesktopTheme.secondary).padding(
+                        .leading,
+                        DesktopDesignTokens.Space.medium
+                    )
                     .overlay(alignment: .leading) { Rectangle().fill(DesktopTheme.border).frame(width: 2) }
                 case .code(let raw): ScrollView(.horizontal) {
-                        Text(raw).font(.system(size: 13, design: .monospaced)).textSelection(.enabled).padding(14)
-                    }.background(DesktopTheme.panel, in: RoundedRectangle(cornerRadius: 10))
+                        Text(raw).font(.system(size: 13, design: .monospaced)).textSelection(.enabled)
+                            .padding(DesktopDesignTokens.Space.medium)
+                    }.background(DesktopTheme.panel, in: RoundedRectangle(cornerRadius: DesktopDesignTokens.Radius.medium))
                 }
             }
-        }.font(.system(size: 15)).lineSpacing(4).frame(maxWidth: .infinity, alignment: .leading)
+        }.font(DesktopDesignTokens.Typography.body).lineSpacing(4).frame(maxWidth: .infinity, alignment: .leading)
             .tint(DesktopTheme.primary)
             .environment(\.openURL, OpenURLAction { url in DesktopAnswerBlock.allowsLink(url) ? .systemAction : .handled })
             .task(id: text) {

@@ -102,7 +102,10 @@ import { mountTranscriptionVocabularyRoutes } from "./http/routes/transcription-
 import { mountVoiceNoteRoutes } from "./http/routes/voice-notes.js";
 import { VoiceNoteService, pendingVoiceNoteIds } from "./voice-notes/index.js";
 import { mountRecordingRoutes } from "./http/routes/recordings.js";
-import { RecordingTranscriptionService } from "./recordings/index.js";
+import {
+  DEFAULT_CONVERSATION_GAP_SECONDS,
+  RecordingTranscriptionService,
+} from "./recordings/index.js";
 import { calendarEventsFrom } from "./recordings/calendar.js";
 import { TemporalQueryService } from "./enrichment/temporal/temporal-query-service.js";
 import {
@@ -223,6 +226,7 @@ import {
   portalCsrfToken,
   sessionCookieName,
 } from "./http/cookies.js";
+import { createConversationSearch } from "./sources/omnesis-chat/search.js";
 import type { StorageAccounting } from "./storage/accounting.js";
 import type { StoragePressureManager } from "./storage/pressure.js";
 import type { SemanticSearchStatus } from "@omnesis/source-sdk";
@@ -2163,6 +2167,12 @@ export function createServer(
   // An injected `deviceAnswerScope` (a test double) takes precedence.
   agentDeps.deviceAnswerScope ??= (deviceId, tokenId) =>
     resolveDeviceAnswerScope(db, deviceId, tokenId);
+  if (opts?.searchPipeline) {
+    agentDeps.conversationSearch ??= createConversationSearch({
+      pipeline: opts.searchPipeline,
+      db,
+    });
+  }
   mountAgentRoutes(app, agentDeps);
   const mcpHttpRuntime = mountMcpStreamableRoutes(app, {
     notesRuntime: () => getOmnesisNotesRuntime(),
@@ -2391,6 +2401,9 @@ export function createServer(
               opts.configStore!.get().inference?.recordings?.restoreReviewRequired === true,
           }
         : {}),
+      conversationGapMs: () =>
+        (opts.configStore?.get().inference?.recordings?.conversationGapSeconds ??
+          DEFAULT_CONVERSATION_GAP_SECONDS) * 1000,
       // Suggestions read the owner's calendars through the same time index
       // the portal's Calendar and the agent read.
       calendarEvents: calendarEventsFrom(

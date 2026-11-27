@@ -31,7 +31,7 @@ struct DesktopSearchView: View {
                 Button("Search") { context?.run { _ in await search() } }
                     .disabled(searching || query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .accessibilityIdentifier("library-search-submit")
-            }.padding()
+            }.padding(DesktopDesignTokens.Layout.pageMargin)
             if searching { ProgressView("Searching…") }
             if let error { Text(error).foregroundStyle(DesktopTheme.danger).padding() }
             if results.isEmpty, !searching, error == nil {
@@ -52,18 +52,19 @@ struct DesktopSearchView: View {
                 }
             } else {
                 List(results) { result in
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.small) {
                         Button(result.title) {
                             selectedDocument = DesktopDocumentSelection(
                                 id: result.documentId,
                                 title: result.title,
                                 originalURL: (result.sourceUrl ?? result.appUrl).flatMap(URL.init(string:))
                             )
-                        }.font(.headline).buttonStyle(.plain).accessibilityLabel("Read \(result.title)")
+                        }.font(DesktopDesignTokens.Typography.body.weight(.medium)).buttonStyle(.plain)
+                            .accessibilityLabel("Read \(result.title)")
                             .accessibilityIdentifier("search-document-" + result.documentId)
                         Text(result.chunkText).lineLimit(4).textSelection(.enabled)
                         if let link = result.appUrl ?? result.sourceUrl, let url = URL(string: link), DesktopAnswerBlock.allowsLink(url) {
-                            Link("Open original", destination: url).font(.caption)
+                            Link("Open original", destination: url).font(DesktopDesignTokens.Typography.metadata)
                         }
                     }.padding(.vertical, 10)
                 }
@@ -72,7 +73,9 @@ struct DesktopSearchView: View {
             .omnesisSheet(item: $selectedDocument) { selection in
                 DesktopDocumentView(selection: selection, context: context).environment(store)
             }
-            .toolbar { Button("Focus search", systemImage: "magnifyingglass") { searchFocused = true }.keyboardShortcut("f") }
+            .toolbar {
+                Button("Focus search", systemImage: "magnifyingglass") { searchFocused = true }.keyboardShortcut("f").help("Focus search")
+            }
     }
 
     private func search() async {
@@ -103,33 +106,33 @@ struct DesktopDevicesView: View {
     @State private var pairingPhone = false
     @State private var repairDevice: DesktopDevice?
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("Your devices").font(.largeTitle.bold())
+        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.regular) {
+            Text("Your devices").font(DesktopDesignTokens.Typography.pageTitle).accessibilityAddTraits(.isHeader)
             Text(
                 "Connect your other computers to the same library. Keep your library server running and awake so your devices can connect."
             )
             .foregroundStyle(DesktopTheme.secondary)
             List(store.devices.filter { $0.revokedAt == nil || $0.needsPairing == true }) { device in
-                HStack(spacing: 14) {
+                HStack(spacing: DesktopDesignTokens.Space.medium) {
                     Image(systemName: device.kind == "collector" ? "desktopcomputer" : "iphone")
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(device.name).font(.headline)
+                    VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.xSmall) {
+                        Text(device.name).font(DesktopDesignTokens.Typography.body.weight(.medium))
                         if device.needsPairing == true {
-                            Text("Needs pairing").foregroundStyle(DesktopTheme.accent)
-                            Button("Repair instructions") { repairDevice = device }.font(.callout)
+                            Text("Needs pairing").foregroundStyle(DesktopTheme.warning)
+                            Button("Repair instructions") { repairDevice = device }.font(DesktopDesignTokens.Typography.secondary)
                         } else { Text(device.online == true ? "Connected" : "Not connected").foregroundStyle(DesktopTheme.secondary) }
                     }
                     Spacer()
-                }.padding(.vertical, 8)
+                }.padding(.vertical, DesktopDesignTokens.Space.small)
             }
-            HStack {
+            HStack(spacing: DesktopDesignTokens.Space.regular) {
                 Link("Connect another computer", destination: URL(string: "https://omnesis.dev/docs/setup#collector")!)
                 Link("Get the iPhone app", destination: URL(string: "https://omnesis.dev/docs/apps")!)
                 Link("Get the Android app", destination: URL(string: "https://omnesis.dev/docs/apps")!)
                 Spacer()
                 Button("Connect a phone") { pairingPhone = true }
             }
-        }.padding(28).navigationTitle("Devices")
+        }.padding(DesktopDesignTokens.Space.section).navigationTitle("Devices")
             .alert(
                 "Repair this device",
                 isPresented: Binding(get: { repairDevice != nil }, set: { if !$0 { repairDevice = nil } }),
@@ -147,6 +150,6 @@ struct DesktopDevicesView: View {
             .omnesisSheet(isPresented: $pairingPhone) {
                 DesktopPhonePairingView(context: store.apiContext).environment(store).id(store.apiContextEpoch)
             }
-            .toolbar { Button("Refresh", systemImage: "arrow.clockwise") { Task { await store.refresh() } } }
+            .toolbar { Button("Refresh", systemImage: "arrow.clockwise") { Task { await store.refresh() } }.help("Refresh devices") }
     }
 }

@@ -40,11 +40,13 @@ struct DesktopSettingsView: View {
     var body: some View {
         @Bindable var store = store
         VStack(spacing: 0) {
-            DesktopBrandHeading(subtitle: "Settings").padding(22).background(DesktopTheme.sidebar)
             TabView(selection: $store.settingsTab) {
                 Form {
                     ForEach(prerequisiteOrder.isEmpty ? currentPrerequisiteOrder : prerequisiteOrder, id: \.self) { section in
                         prerequisite(section)
+                    }
+                    Section("Appearance") {
+                        DesktopAppearancePicker()
                     }
                     Section("Your library") {
                         LabeledContent("Connection", value: store.state.statusLabel)
@@ -79,7 +81,7 @@ struct DesktopSettingsView: View {
                     }
                     Section("Maintenance") {
                         Text("Stopping or removing Omnesis is separate from protecting your library or choosing what it may collect.")
-                            .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                            .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                         Button("Stop Omnesis on this Mac", role: .destructive) { showStopConfirmation = true }
                         Button("Remove Omnesis from this Mac…", role: .destructive) {
                             store.removalPlan = nil
@@ -88,7 +90,8 @@ struct DesktopSettingsView: View {
                             openWindow(id: "main", value: DesktopWindowIdentity.main)
                         }.disabled(store.busy)
                     }
-                }.formStyle(.grouped).omnesisTheme().onAppear { prerequisiteOrder = currentPrerequisiteOrder }
+                }.formStyle(.grouped).frame(maxWidth: DesktopDesignTokens.Layout.formWidth).frame(maxWidth: .infinity)
+                    .omnesisTheme().onAppear { prerequisiteOrder = currentPrerequisiteOrder }
                     .onChange(of: store.state.mode) { prerequisiteOrder = currentPrerequisiteOrder }.tabItem { Label(
                         "General",
                         systemImage: "gearshape"
@@ -115,8 +118,9 @@ struct DesktopSettingsView: View {
                     )
                     .foregroundStyle(DesktopTheme.secondary)
                     Button("Open the web portal") { store.openPortal() }
-                }.formStyle(.grouped).omnesisTheme().tabItem { Label("Privacy", systemImage: "hand.raised") }.tag("privacy")
-            }.padding(12)
+                }.formStyle(.grouped).frame(maxWidth: DesktopDesignTokens.Layout.formWidth).frame(maxWidth: .infinity)
+                    .omnesisTheme().tabItem { Label("Privacy", systemImage: "hand.raised") }.tag("privacy")
+            }.padding(DesktopDesignTokens.Space.small)
         }.frame(minWidth: 640, minHeight: 500).omnesisTheme().omnesisWindowChrome()
             .onChange(of: store.settingsTab) { if store.settingsTab == "general" { prerequisiteOrder = currentPrerequisiteOrder } }
             .confirmationDialog("Stop Omnesis on this Mac?", isPresented: $showStopConfirmation) {
@@ -137,7 +141,7 @@ struct DesktopSettingsView: View {
                 Text(
                     "Closing a window leaves Omnesis open. Collection still needs source access and a working background connection. Automatic startup starts Omnesis at sign-in; it does not prevent sleep."
                 )
-                .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
             } header: { Text("Launch at sign-in · Required").accessibilityIdentifier("settings-prerequisite-startup") }
         case .power:
             Section {
@@ -183,10 +187,10 @@ struct DesktopModelsView: View {
                 Text(
                     "A model running on your library server keeps its work there. A cloud model receives the information needed for each answer. Provider API keys can incur usage charges; check your provider’s pricing before connecting."
                 )
-                .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                 if store.reviewModelsAfterRestore {
                     Text("After restoring, your saved connections stay available but no model is used until you choose it below.")
-                        .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                        .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                 }
             }
             Button("Refresh model connections") { context?.run { _ in await refreshModels() } }.disabled(loading || store.api == nil)
@@ -210,17 +214,19 @@ struct DesktopModelsView: View {
                     .foregroundStyle(DesktopTheme.secondary)
                     if overview?.inference.codex?.runtime?.supported == true {
                         if overview?.inference.codex?.loggedIn != true {
-                            Button("Sign in with ChatGPT") { context?.run { _ in await startLogin() } }.disabled(loading)
+                            Button("Sign in with ChatGPT") { context?.run { _ in await startLogin() } }
+                                .buttonStyle(DesktopButtonStyle(primary: true)).disabled(loading)
                         }
                         if overview?.inference.codex?.loggedIn == true {
                             Button("Sign out of ChatGPT…") { confirmingSignOut = true }.disabled(loading)
                         }
                     }
                     if let status = overview?.inference.codex, status.status != "ok", let reason = status.reason {
-                        Text(reason).font(.callout).foregroundStyle(DesktopTheme.secondary)
+                        Text(reason).font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                     }
                     if let login {
-                        if let code = login.userCode { Text(code).font(.title.monospaced()).textSelection(.enabled) }
+                        if let code = login
+                            .userCode { Text(code).font(DesktopDesignTokens.Typography.pageTitle.monospaced()).textSelection(.enabled) }
                         if let link = login.verificationUri,
                            let url = URL(string: link) { Button("Open sign-in page") { store.openBrowser(url) } }
                         Text(login.reason ?? login.status).foregroundStyle(DesktopTheme.secondary)
@@ -236,7 +242,7 @@ struct DesktopModelsView: View {
                 Text(
                     "Choose the provider whose API key you have, then a chat model listed in that provider’s dashboard. Your ChatGPT subscription and provider API billing can be separate. You can change the model later."
                 )
-                .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                 Picker("Provider", selection: $provider) {
                     Text("Choose a provider").tag("")
                     ForEach((overview?.presets ?? []).filter { $0.defaultUrl != nil }, id: \.id) { preset in
@@ -246,7 +252,7 @@ struct DesktopModelsView: View {
                 Text(
                     "Connecting allows models you select outside your library server to receive information for their work, including any other cloud models you have already selected."
                 )
-                .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                 SecureField("API key", text: $apiKey)
                 Picker("Model", selection: $selectedModel) {
                     Text("Choose a model").tag("")
@@ -255,11 +261,13 @@ struct DesktopModelsView: View {
                     }
                 }
                 Button("Connect provider") { context?.run { _ in await saveProvider() } }
+                    .buttonStyle(DesktopButtonStyle(primary: true))
                     .disabled(provider.isEmpty || apiKey.isEmpty || selectedModel.isEmpty || loading)
             }
             if let error { Text(error).foregroundStyle(DesktopTheme.danger) }
             if loading { ProgressView("Updating AI settings…") }
-        }.formStyle(.grouped).omnesisTheme()
+        }.formStyle(.grouped).frame(maxWidth: DesktopDesignTokens.Layout.formWidth).frame(maxWidth: .infinity)
+            .omnesisTheme()
             .task(id: context?.id) { if loadModels { await refreshModels() } }
             .onDisappear { apiKey = ""
                 login = nil
@@ -357,4 +365,24 @@ struct DesktopModelsView: View {
             await refreshModels()
         } catch { self.error = error.localizedDescription }
     }
+}
+
+#Preview("Settings · Light") {
+    DesktopSettingsView().environment(DesktopStore.preview()).environment(\.desktopAppearanceOverride, .light)
+        .frame(width: 720, height: 640)
+}
+
+#Preview("Settings · Dark") {
+    DesktopSettingsView().environment(DesktopStore.preview()).environment(\.desktopAppearanceOverride, .dark)
+        .frame(width: 720, height: 640)
+}
+
+#Preview("Answer connections · Light") {
+    DesktopModelsView(loadModels: false).environment(DesktopStore.preview()).environment(\.desktopAppearanceOverride, .light)
+        .frame(width: 720, height: 640)
+}
+
+#Preview("Answer connections · Dark") {
+    DesktopModelsView(loadModels: false).environment(DesktopStore.preview()).environment(\.desktopAppearanceOverride, .dark)
+        .frame(width: 720, height: 640)
 }

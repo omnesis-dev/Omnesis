@@ -10,6 +10,112 @@ import XCTest
 
 @MainActor
 final class DesktopAPIContextTests: XCTestCase {
+    func testActualAppearancePickerMenuPersistsChoicesAndRemountsWithoutWritingTheBindingDirectly() async throws {
+        @MainActor final class ActionReceipt { var count = 0 }
+        let receipt = ActionReceipt()
+        let suite = "dev.omnesis.picker-action-tests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        var windows: [NSWindow] = []
+        var menus: [NSMenu] = []
+        var observers: [NSObjectProtocol] = []
+        defer {
+            observers.forEach { NotificationCenter.default.removeObserver($0) }
+            menus.forEach { $0.cancelTracking() }
+            for window in windows {
+                window.contentView = nil
+                window.close()
+            }
+            defaults.removePersistentDomain(forName: suite)
+        }
+        @MainActor func mountPicker() -> (window: NSWindow, host: NSView) {
+            let host = NSHostingView(rootView: DesktopAppearancePicker().padding(24)
+                .omnesisTheme().defaultAppStorage(defaults))
+            host.frame = NSRect(x: 0, y: 0, width: 520, height: 240)
+            let window = NSWindow(
+                contentRect: host.frame,
+                styleMask: [.titled, .closable],
+                backing: .buffered,
+                defer: false
+            )
+            window.isReleasedWhenClosed = false
+            window.contentView = host
+            windows.append(window)
+            window.center()
+            window.makeKeyAndOrderFront(nil)
+            return (window, host)
+        }
+        @MainActor func picker(in mounted: (window: NSWindow, host: NSView)) throws -> (NSPopUpButton, NSCell, NSMenu) {
+            let identified = try DesktopAccessibilityDriver.element("desktop-appearance", in: mounted.host)
+            let cell = try XCTUnwrap(identified.object as? NSCell, "Observe the actual identified native picker cell")
+            let picker = try XCTUnwrap(cell.controlView as? NSPopUpButton)
+            let menu = try XCTUnwrap(picker.menu)
+            XCTAssertTrue(picker.window === mounted.window && picker.isDescendant(of: mounted.host))
+            XCTAssertTrue(picker.cell === cell && cell.controlView === picker)
+            XCTAssertEqual(identified.accessibilityRole(), .popUpButton)
+            XCTAssertTrue(identified.isAccessibilityEnabled())
+            let frame = identified.accessibilityFrame()
+            XCTAssertGreaterThan(frame.width, 0)
+            XCTAssertGreaterThan(frame.height, 0)
+            XCTAssertTrue(mounted.window.frame.contains(frame))
+            if !menus.contains(where: { $0 === menu }) {
+                menus.append(menu)
+                observers.append(NotificationCenter.default.addObserver(
+                    forName: NSMenu.didSendActionNotification, object: menu, queue: .main
+                ) { _ in MainActor.assumeIsolated { receipt.count += 1 } })
+            }
+            return (picker, cell, menu)
+        }
+        let mounted = mountPicker()
+        try await DesktopAccessibilityDriver.materializeOwnedApplication()
+        try await wait { (try? DesktopAccessibilityDriver.element("desktop-appearance", in: mounted.host)) != nil }
+        let initial = try picker(in: mounted)
+        XCTAssertEqual(initial.0.titleOfSelectedItem, "System")
+        XCTAssertNil(
+            defaults.persistentDomain(forName: suite)?[DesktopAppearance.storageKey],
+            "Merely mounting a default System picker must not persist a selection"
+        )
+        XCTAssertEqual(receipt.count, 0)
+        var expectedActions = 0
+        for mode in [DesktopAppearance.light, .dark, .system, .dark] {
+            let (control, cell, menu) = try picker(in: mounted)
+            let selection = DesktopOwnedPopupTracking(
+                picker: control,
+                cell: cell,
+                menu: menu,
+                root: mounted.host,
+                window: mounted.window,
+                title: mode.title
+            )
+            try await selection.select()
+            expectedActions += 1
+            try await wait {
+                let stored = defaults.persistentDomain(forName: suite)?[DesktopAppearance.storageKey] as? String
+                let expectedAppearance: NSAppearance.Name? = mode == .system
+                    ? NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])
+                    : (mode == .light ? .aqua : .darkAqua)
+                return stored == mode.rawValue && control.titleOfSelectedItem == mode.title &&
+                    mounted.window.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == expectedAppearance &&
+                    (mode != .system || mounted.window.appearance == nil)
+            }
+            XCTAssertEqual(receipt.count, expectedActions, "Each actual menu selection must dispatch exactly one action")
+            XCTAssertTrue(control.window === mounted.window && mounted.window.contentView === mounted.host)
+        }
+        XCTAssertEqual(expectedActions, 4)
+        XCTAssertEqual(receipt.count, 4)
+        mounted.window.contentView = nil
+        mounted.window.close()
+        let remounted = mountPicker()
+        XCTAssertFalse(remounted.window === mounted.window)
+        try await wait { (try? DesktopAccessibilityDriver.element("desktop-appearance", in: remounted.host)) != nil }
+        let restored = try picker(in: remounted)
+        try await wait {
+            restored.0.titleOfSelectedItem == "Dark" &&
+                remounted.window.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        }
+        XCTAssertEqual(defaults.persistentDomain(forName: suite)?[DesktopAppearance.storageKey] as? String, "dark")
+        XCTAssertEqual(receipt.count, 4, "Remounting must not dispatch another observed menu action")
+    }
+
     @MainActor
     private final class ObservationResources {
         private var cleanups: [@MainActor () -> Void] = []
@@ -1008,6 +1114,7 @@ private final class DesktopOwnedPopupTracking {
     private var ended = false
     private var performedAction = false
     private var deadlineExpired = false
+    private var trackingDeadline: ContinuousClock.Instant?
     private var refusal: String?
     private var stage = "not-started"
     private var choices: [String] = []
@@ -1063,6 +1170,7 @@ private final class DesktopOwnedPopupTracking {
         }
         pressDispatch = namedPressSupported ? "named-public-press" : "public-press-selector"
         let deadline = ContinuousClock.now + .seconds(5)
+        trackingDeadline = deadline
         acceptingCallbacks = true
         let center = NotificationCenter.default
         let begin = center.addObserver(forName: NSMenu.didBeginTrackingNotification, object: menu, queue: .main) { [weak self] _ in
@@ -1102,7 +1210,7 @@ private final class DesktopOwnedPopupTracking {
             try await Task.sleep(for: .milliseconds(25))
         }
         try Task.checkCancellation()
-        guard began, performedAction, ended, !deadlineExpired, refusal == nil else {
+        guard ContinuousClock.now < deadline, began, performedAction, ended, !deadlineExpired, refusal == nil else {
             throw DesktopAccessibilityDriver.Failure("The real owned popup tracking did not complete its expected item action")
         }
         stage = "owned-tracking-completed"
@@ -1131,9 +1239,14 @@ private final class DesktopOwnedPopupTracking {
               item.action != nil, item.target != nil else { refuse("unique-enabled-real-action-missing")
             return
         }
-        performedAction = true
         stage = "sending-real-item-action"
         recordContextStage(.popupItemStarting)
+        guard let trackingDeadline, ContinuousClock.now < trackingDeadline else {
+            deadlineExpired = true
+            refuse("tracking-deadline")
+            return
+        }
+        performedAction = true
         menu.performActionForItem(at: index)
         recordContextStage(.popupItemReturned)
         stage = "real-item-action-returned"

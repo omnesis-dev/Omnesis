@@ -9,20 +9,20 @@ struct DesktopRestoreReviewView: View {
     let review: DesktopRestoreReview
     var body: some View {
         DisclosureGroup("Choices saved before restoring") {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.medium) {
                 Text(
                     "These are reference choices. Restoring does not turn them back on. Choose your models and how long information is kept in Settings."
                 )
-                .foregroundStyle(.secondary)
-                Text("Models used before restoring").font(.headline)
+                .foregroundStyle(DesktopTheme.secondary)
+                Text("Models used before restoring").font(DesktopDesignTokens.Typography.body.weight(.medium))
                 ForEach(review.modelAssignments.keys.sorted(), id: \.self) { role in
                     LabeledContent(
                         role.replacingOccurrences(of: "-", with: " ").capitalized,
                         value: review.modelAssignments[role].flatMap { $0 } ?? "Disabled"
                     )
                 }
-                if review.modelAssignments.isEmpty { Text("No previous model choices were saved.").foregroundStyle(.secondary) }
-                Text("Previous automatic deletion").font(.headline)
+                if review.modelAssignments.isEmpty { Text("No previous model choices were saved.").foregroundStyle(DesktopTheme.secondary) }
+                Text("Previous automatic deletion").font(DesktopDesignTokens.Typography.body.weight(.medium))
                 ForEach(Array(review.storageRetention.prefix(50).enumerated()), id: \.offset) { _, rule in
                     LabeledContent(sourceName(rule.sourceId), value: "After \(rule.maxAgeDays.formatted()) days")
                 }
@@ -30,12 +30,12 @@ struct DesktopRestoreReviewView: View {
                     Text(
                         "Showing the first 50 of \(review.storageRetention.count) saved source rules. All automatic source deletion remains paused."
                     )
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DesktopTheme.secondary)
                 } else if review.storageRetention.isEmpty {
-                    Text("No automatic source deletion rules were saved.").foregroundStyle(.secondary)
+                    Text("No automatic source deletion rules were saved.").foregroundStyle(DesktopTheme.secondary)
                 }
                 LabeledContent("Activity history", value: review.activityRetention.maxAge ?? "No automatic age limit saved")
-            }.padding(.top, 8)
+            }.padding(.top, DesktopDesignTokens.Space.small)
         }
     }
 

@@ -15,18 +15,18 @@ struct DesktopNearbyConnectionView: View {
     var body: some View {
         Section("Nearby connection") {
             Label(title, systemImage: status == .denied ? "network.slash" : "network")
-            Text(detail).font(.callout).foregroundStyle(DesktopTheme.secondary)
+            Text(detail).font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
             if status == .denied {
                 Button("Open Privacy & Security") { navigationUnavailable = navigate() == .unavailable }
                     .accessibilityIdentifier("nearby-privacy-settings")
                 if navigationUnavailable {
                     Text("Open System Settings → Privacy & Security → Local Network, then allow Omnesis.")
-                        .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                        .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                 }
             }
             if connected {
                 Text("Your secure library connection is available.")
-                    .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                    .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
             }
             Button("Check again", action: retry).disabled(busy).accessibilityIdentifier("nearby-recheck")
         }

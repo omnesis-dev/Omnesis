@@ -93,27 +93,30 @@ struct DesktopAutomaticStartupView: View {
     var primaryAction = true
     var openSettings: () -> Void = { SMAppService.openSystemSettingsLoginItems() }
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.medium) {
             Label("Automatic startup · Required", systemImage: flow.ready ? "checkmark.circle" : "power")
-                .font(.headline).foregroundStyle(flow.ready ? DesktopTheme.teal : DesktopTheme.ink)
+                .font(DesktopDesignTokens.Typography.body.weight(.medium))
+                .foregroundStyle(flow.ready ? DesktopTheme.success : DesktopTheme.ink)
             Text("Automatically start Omnesis after you sign in so collection can resume.")
-                .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
             switch flow.status {
-            case .enabled: Text("Enabled in macOS").font(.callout)
+            case .enabled: Text("Enabled in macOS").font(DesktopDesignTokens.Typography.secondary)
             case .approvalRequired:
-                Text("Waiting for your approval in System Settings. Setup is not complete yet.").font(.callout)
+                Text("Waiting for your approval in System Settings. Setup is not complete yet.")
+                    .font(DesktopDesignTokens.Typography.secondary)
                 Button("Approve in Login Items", action: openSettings).buttonStyle(DesktopButtonStyle(primary: primaryAction))
                     .accessibilityIdentifier("startup-approve")
             case .disabled:
-                Text("Automatic startup is off. Enable it to complete setup.").font(.callout)
+                Text("Automatic startup is off. Enable it to complete setup.").font(DesktopDesignTokens.Typography.secondary)
                 Button("Enable automatic startup") { Task { await flow.enable() } }.buttonStyle(DesktopButtonStyle(primary: primaryAction))
                     .accessibilityIdentifier("startup-enable")
-            case .needsCheck: Text("Checking automatic startup…").font(.callout)
+            case .needsCheck: Text("Checking automatic startup…").font(DesktopDesignTokens.Typography.secondary)
             case .unavailable:
-                Text("This copy could not verify automatic startup. Reopen the installed Omnesis app, then check again.").font(.callout)
+                Text("This copy could not verify automatic startup. Reopen the installed Omnesis app, then check again.")
+                    .font(DesktopDesignTokens.Typography.secondary)
             }
             if flow.working { ProgressView("Requesting automatic startup…").controlSize(.small) }
-            if let error = flow.error { Text(error).font(.callout).foregroundStyle(DesktopTheme.danger) }
+            if let error = flow.error { Text(error).font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.danger) }
             Button("Check again") { flow.refresh() }.buttonStyle(DesktopButtonStyle()).disabled(flow.working)
                 .accessibilityIdentifier("startup-check")
         }.disabled(flow.working).onAppear { flow.refresh() }
@@ -130,8 +133,8 @@ struct DesktopStartupRepairView: View {
     let retry: () -> Void
     var openSettings: () -> Void = { SMAppService.openSystemSettingsLoginItems() }
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("Finish background setup").font(.title2.weight(.semibold))
+        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.regular) {
+            Text("Finish background setup").font(DesktopDesignTokens.Typography.section).accessibilityAddTraits(.isHeader)
             Text(
                 "Automatic startup is required and has not been enabled or approved. Review it in macOS, then retry the background connection. These controls do not create or replace a library."
             )

@@ -9,11 +9,13 @@ inside a DMG. Mac App Store distribution additionally requires App Sandbox and a
 separate audit of every provider and embedded executable. This project does not
 claim Mac App Store eligibility.
 
-The native visual system lives in `Sources/OmnesisDesktop/DesktopTheme.swift`;
-the shared control states live in `DesktopControls.swift`. The white brand mark
-is the existing website vector, cropped to its own bounds, without an app-icon
-tile inside the window. Navy surfaces remain dark in both system appearances,
-including native window controls. The app does not require transparency effects.
+The native visual system uses adaptive neutral surfaces and a restrained blue
+accent. Appearance follows macOS by default; Settings → General offers System,
+Light and Dark, with changes applied to open windows. The existing brand vector
+uses light ink in dark appearance and dark ink in light appearance, without an
+app-icon tile inside the window. Semantic colors, typography and component usage
+are documented in [the desktop design system](../docs/desktop-design-system.md).
+The app does not require transparency effects.
 Modal content uses the same opaque canvas through a shared native sheet wrapper;
 the system continues to manage titlebar and toolbar materials.
 Automatic startup is a required setup step, with a separate pending-approval

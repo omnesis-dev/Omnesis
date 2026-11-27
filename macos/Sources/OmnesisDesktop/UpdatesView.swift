@@ -31,7 +31,7 @@ struct DesktopUpdatesView: View {
                     Text(update.message).textSelection(.enabled)
                     if let cleanup = update.codeCleanup {
                         if cleanup.valid {
-                            Text("Older application files").font(.headline)
+                            Text("Older application files").font(DesktopDesignTokens.Typography.body.weight(.medium))
                             if cleanup.phase == .preview {
                                 LabeledContent(
                                     "Eligible files",
@@ -40,7 +40,7 @@ struct DesktopUpdatesView: View {
                                 Text(
                                     "Copies that are still running or needed for recovery are kept. Your library, personal backups and data recovery copies are kept."
                                 )
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(DesktopTheme.secondary)
                                 action(
                                     "Remove eligible older app files…",
                                     command: "updateCleanup",
@@ -108,14 +108,14 @@ struct DesktopUpdatesView: View {
                     }
                 } else {
                     Text("Check whether an update is available or finish installing an update you already started.")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DesktopTheme.secondary)
                 }
                 Button("Check for updates") { store.command("updateCheck") }.disabled(store.busy)
                 if store.busy {
                     ProgressView("Working…")
                     if store.updateBytes > 0 {
                         Text("Downloaded \(ByteCountFormatter.string(fromByteCount: store.updateBytes, countStyle: .file))")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(DesktopDesignTokens.Typography.metadata).foregroundStyle(DesktopTheme.secondary)
                     }
                     Button("Cancel") { store.command("cancel") }
                 }
@@ -125,9 +125,11 @@ struct DesktopUpdatesView: View {
                 Text(
                     "Updates preserve your encrypted library. A retained app alone cannot undo database changes; returning to an earlier version requires the matching protected backup."
                 )
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DesktopTheme.secondary)
             }
         }.formStyle(.grouped)
+            .frame(maxWidth: DesktopDesignTokens.Layout.formWidth)
+            .frame(maxWidth: .infinity)
             .task { if loadStatus, !store.busy { store.command("updateStatus") } }
             .confirmationDialog(confirmation?.title ?? "Review update", isPresented: Binding(
                 get: { confirmation != nil }, set: { if !$0 { confirmation = nil } }

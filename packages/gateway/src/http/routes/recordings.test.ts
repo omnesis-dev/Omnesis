@@ -221,6 +221,45 @@ describe("recordings routes", () => {
     expect((await startRecording(randomUUID(), { origin: "always" })).status).toBe(400);
   });
 
+  test("an all-day session is written conversation by conversation while it goes on", async () => {
+    const id = randomUUID();
+    await startRecording(id, { origin: "ambient" });
+    await request("PUT", `/recordings/${id}/chunks/0`, chunkForm(0, "Coffee before the stand-up?"));
+    await request("PUT", `/recordings/${id}/chunks/1`, chunkForm(1, null));
+    await request("PUT", `/recordings/${id}/chunks/2`, chunkForm(2, null));
+
+    await vi.waitFor(() => {
+      expect(documentContent(id)).toContain("Coffee before the stand-up?");
+    });
+    const detail = await (await request("GET", `/recordings/${id}/chunks`)).json();
+    expect(detail.recording).toMatchObject({
+      state: "recording",
+      conversations: [
+        expect.objectContaining({ n: 1, titled: false, documentId: expect.any(String) }),
+      ],
+    });
+    expect(detail.recording.documentId).toBe(detail.recording.conversations[0].documentId);
+
+    const titled = await request("PUT", `/recordings/${id}/conversations/1/title`, {
+      title: "Coffee",
+    });
+    expect(titled.status).toBe(200);
+    expect((await titled.json()).conversations[0]).toMatchObject({ title: "Coffee", titled: true });
+    await vi.waitFor(() => {
+      expect(documentContent(id)).toContain("# Coffee");
+    });
+    expect(
+      (await request("PUT", `/recordings/${id}/conversations/9/title`, { title: "x" })).status,
+    ).toBe(404);
+    expect(
+      (await request("PUT", `/recordings/${id}/conversations/0/title`, { title: "x" })).status,
+    ).toBe(404);
+
+    expect((await request("GET", `/recordings/${id}/suggestions?conversation=1`)).status).toBe(200);
+    expect((await request("GET", `/recordings/${id}/suggestions?conversation=9`)).status).toBe(404);
+    expect((await request("GET", `/recordings/${id}/suggestions?conversation=x`)).status).toBe(400);
+  });
+
   test("a session's speakers are listed, named, and their names written into the document", async () => {
     const id = randomUUID();
     await startRecording(id);
@@ -252,6 +291,7 @@ describe("recordings routes", () => {
         expect.objectContaining({ speaker: 1, samples: ["Is the venue booked?"], personId: null }),
         expect.objectContaining({ speaker: 2, samples: ["Booked for Friday."], isSelf: false }),
       ],
+      participants: [],
     });
 
     const jamie = findOrCreatePerson(
@@ -294,6 +334,109 @@ describe("recordings routes", () => {
       (await request("PUT", `/recordings/${id}/speakers/1`, { self: true, name: "x" })).status,
     ).toBe(400);
     expect((await request("GET", `/recordings/${randomUUID()}/speakers`)).status).toBe(404);
+  });
+
+  test("people present without a turn are added, written into the document and removed", async () => {
+    const id = randomUUID();
+    await startRecording(id);
+    await request("PUT", `/recordings/${id}/chunks/0`, chunkForm(0, "We open on Monday."));
+    await request("POST", `/recordings/${id}/finish`, {
+      chunkCount: 1,
+      endedAt: "2026-03-02T09:01:00.000Z",
+    });
+    await vi.waitFor(async () => {
+      expect(await (await request("GET", `/recordings/${id}`)).json()).toMatchObject({
+        state: "done",
+      });
+    });
+    const david = findOrCreatePerson(
+      db,
+      { role: "sender", name: "David Lin", emails: ["david@example.com"] },
+      "gmail:test",
+      "2026-01-01",
+    )!;
+
+    const added = await request("POST", `/recordings/${id}/participants`, { personId: david });
+    expect(added.status).toBe(200);
+    expect(await added.json()).toEqual({
+      participants: [{ key: `person:${david}`, personId: david, name: "David Lin" }],
+    });
+    expect(
+      (await request("POST", `/recordings/${id}/participants`, { name: " Sarah Mendez " })).status,
+    ).toBe(200);
+    await vi.waitFor(() => {
+      expect(documentContent(id)).toContain("Also present: David Lin, Sarah Mendez");
+    });
+    while (backfillOnePerson(db) !== null) {
+      /* next document */
+    }
+    const linked = () =>
+      db
+        .prepare(
+          `SELECT dp.role FROM document_people dp JOIN documents d ON d.id = dp.document_id
+            WHERE d.external_id = ? AND dp.person_id = ?`,
+        )
+        .all(id, david);
+    expect(linked()).toEqual([{ role: "participant" }]);
+    expect(await (await request("GET", `/recordings/${id}/speakers`)).json()).toMatchObject({
+      participants: [
+        { key: `person:${david}` },
+        { key: "name:sarah mendez", personId: null, name: "Sarah Mendez" },
+      ],
+    });
+
+    const removed = await request(
+      "DELETE",
+      `/recordings/${id}/participants/${encodeURIComponent(`person:${david}`)}`,
+    );
+    expect(removed.status).toBe(200);
+    expect(await removed.json()).toEqual({
+      participants: [{ key: "name:sarah mendez", personId: null, name: "Sarah Mendez" }],
+    });
+    await vi.waitFor(() => {
+      expect(documentContent(id)).toContain("Also present: Sarah Mendez");
+    });
+    while (backfillOnePerson(db) !== null) {
+      /* next document */
+    }
+    expect(linked()).toEqual([]);
+
+    // A key carries the name as given, slashes and all.
+    expect(
+      (await request("POST", `/recordings/${id}/participants`, { name: "Ops/Infra team" })).status,
+    ).toBe(200);
+    const slashed = await request(
+      "DELETE",
+      `/recordings/${id}/participants/${encodeURIComponent("name:ops/infra team")}`,
+    );
+    expect(slashed.status).toBe(200);
+    expect(await slashed.json()).toEqual({
+      participants: [{ key: "name:sarah mendez", personId: null, name: "Sarah Mendez" }],
+    });
+
+    // Refusals.
+    expect(
+      (await request("POST", `/recordings/${id}/participants`, { personId: "nobody" })).status,
+    ).toBe(400);
+    expect(
+      (await request("POST", `/recordings/${id}/participants`, { personId: david, name: "x" }))
+        .status,
+    ).toBe(400);
+    expect((await request("POST", `/recordings/${id}/participants`, { name: "  " })).status).toBe(
+      400,
+    );
+    expect(
+      (await request("POST", `/recordings/${randomUUID()}/participants`, { name: "Maya" })).status,
+    ).toBe(404);
+    expect(
+      (await request("DELETE", `/recordings/${id}/participants/${encodeURIComponent("person:x")}`))
+        .status,
+    ).toBe(404);
+    expect((await request("DELETE", `/recordings/${id}/participants/other`)).status).toBe(404);
+    const readOnly = mintToken([SCOPE_READ]);
+    expect(
+      (await request("POST", `/recordings/${id}/participants`, { name: "Maya" }, readOnly)).status,
+    ).toBe(403);
   });
 
   test("a session's chunks are listed, and audio kept by the operator is served as audio only", async () => {
@@ -415,15 +558,6 @@ describe("recordings routes", () => {
           documentId: "doc-sync",
         },
         {
-          key: "mention:2:alex",
-          kind: "person",
-          source: "mention",
-          speaker: 2,
-          personId: null,
-          name: "Alex",
-          evidence: "Thanks, Alex.",
-        },
-        {
           key: `person:${priya}`,
           kind: "person",
           source: "calendar",
@@ -438,11 +572,10 @@ describe("recordings routes", () => {
     // Accept the title, dismiss the rest: nothing is left to offer.
     const titled = await request("PUT", `/recordings/${id}/title`, { title: "Weekly sync" });
     expect(await titled.json()).toMatchObject({ id, title: "Weekly sync" });
-    for (const key of ["mention:2:alex", `person:${priya}`]) {
-      expect((await request("POST", `/recordings/${id}/suggestions/dismiss`, { key })).status).toBe(
-        204,
-      );
-    }
+    expect(
+      (await request("POST", `/recordings/${id}/suggestions/dismiss`, { key: `person:${priya}` }))
+        .status,
+    ).toBe(204);
     expect(await (await request("GET", `/recordings/${id}/suggestions`)).json()).toEqual({
       suggestions: [],
     });

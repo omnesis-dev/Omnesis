@@ -8,16 +8,17 @@ struct SourceCredentialsView: View {
     @Environment(DesktopStore.self) private var store
     var body: some View {
         if let spec = flow.descriptor.credentials {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Account access").font(.title2)
+            VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.regular) {
+                Text("Account access").font(DesktopDesignTokens.Typography.section).accessibilityAddTraits(.isHeader)
                 if let wizard = spec.wizard {
                     Text(wizard.intro)
-                    Text(wizard.why).font(.callout).foregroundStyle(DesktopTheme.secondary)
-                    Text("About \(wizard.estMinutes) minutes").font(.caption).foregroundStyle(DesktopTheme.secondary)
+                    Text(wizard.why).font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
+                    Text("About \(wizard.estMinutes) minutes").font(DesktopDesignTokens.Typography.metadata)
+                        .foregroundStyle(DesktopTheme.secondary)
                     if flow.credentialsStep < wizard.steps.count {
                         let step = wizard.steps[flow.credentialsStep]
-                        Text("Step \(flow.credentialsStep + 1) of \(wizard.steps.count)").font(.caption)
-                        Text(step.title).font(.headline)
+                        Text("Step \(flow.credentialsStep + 1) of \(wizard.steps.count)").font(DesktopDesignTokens.Typography.metadata)
+                        Text(step.title).font(DesktopDesignTokens.Typography.body.weight(.medium))
                         Text(.init(flow.expand(step.body))).textSelection(.enabled)
                         if step.kind == "open-url", let url = step.url {
                             Button("Open in browser") { store.openBrowser(url) }
@@ -34,7 +35,7 @@ struct SourceCredentialsView: View {
 
     @ViewBuilder private func fields(_ spec: DesktopDescriptor.Credentials) -> some View {
         Text("Paste the values from your provider. Omnesis sends them securely to the selected device.")
-            .font(.callout).foregroundStyle(DesktopTheme.secondary)
+            .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
         ForEach(spec.fields) { field in
             VStack(alignment: .leading, spacing: 6) {
                 Text(field.label + (field.required == false ? " (optional)" : ""))
@@ -47,7 +48,8 @@ struct SourceCredentialsView: View {
                         .accessibilityLabel(field.label)
                         .accessibilityHint(field.required == false ? "Optional" : "Required")
                 }
-                if let hint = field.patternHint { Text(hint).font(.caption).foregroundStyle(DesktopTheme.secondary) }
+                if let hint = field
+                    .patternHint { Text(hint).font(DesktopDesignTokens.Typography.metadata).foregroundStyle(DesktopTheme.secondary) }
             }.textFieldStyle(.roundedBorder)
         }
         HStack {
@@ -81,7 +83,7 @@ struct SourceChallengeField: View {
             case "string", "path", "number": TextField(field.placeholder ?? field.label, text: $value).accessibilityLabel(field.label)
             default: Text("Update Omnesis to complete this sign-in step.").foregroundStyle(DesktopTheme.danger)
             }
-            if let help = field.help { Text(help).font(.caption).foregroundStyle(DesktopTheme.secondary) }
+            if let help = field.help { Text(help).font(DesktopDesignTokens.Typography.metadata).foregroundStyle(DesktopTheme.secondary) }
         }.textFieldStyle(.roundedBorder)
     }
 }

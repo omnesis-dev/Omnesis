@@ -14,30 +14,36 @@ struct DesktopAssistantsView: View {
     @Environment(\.scenePhase) private var scenePhase
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                Text("Connect an assistant").font(.largeTitle.bold())
+            VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.section) {
+                Text("Connect an assistant").font(DesktopDesignTokens.Typography.pageTitle).accessibilityAddTraits(.isHeader)
                 Text(
                     "Use ChatGPT or another assistant to ask about your information. You choose which sources it can use and whether it receives reviewed answers or reads source material directly."
                 )
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DesktopTheme.secondary)
                 DesktopAssistantStatusView(model: assistantStatus)
                 Button("Check assistant connections") { context?.run { scope in await assistantStatus.refresh(context: scope) } }
                 if let mcp = connections.mcpURL {
                     DesktopChatGPTInstructions(mcpURL: mcp)
                     GroupBox {
-                        VStack(alignment: .leading, spacing: 14) {
-                            Text("2. Confirm the connection").font(.headline)
+                        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.medium) {
+                            Text("2. Confirm the connection").font(DesktopDesignTokens.Typography.body.weight(.medium))
                             Text(
                                 "Start connecting in your assistant. When its sign-in window shows a short confirmation code, enter that code here. Only approve a connection you started yourself."
                             )
-                            HStack {
-                                TextField("Confirmation code", text: $authorization.code).textFieldStyle(.roundedBorder)
-                                    .accessibilityIdentifier("assistant-comparison-code")
-                                Button("Find request") {
-                                    if let context, let overview = connections.overview {
-                                        authorization.requestLookup(context: context, overview: overview, expectedResource: mcp)
+                            VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.xSmall) {
+                                Text("Confirmation code").font(DesktopDesignTokens.Typography.secondary.weight(.medium))
+                                    .accessibilityIdentifier("assistant-comparison-code-label")
+                                HStack {
+                                    TextField("Confirmation code", text: $authorization.code).textFieldStyle(.roundedBorder)
+                                        .accessibilityIdentifier("assistant-comparison-code")
+                                    Button("Find request") {
+                                        if let context, let overview = connections.overview {
+                                            authorization.requestLookup(context: context, overview: overview, expectedResource: mcp)
+                                        }
                                     }
-                                }.disabled(authorization.code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || authorization.busy)
+                                    .disabled(authorization.code.trimmingCharacters(in: .whitespacesAndNewlines)
+                                        .isEmpty || authorization.busy)
+                                }
                             }
                         }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -53,7 +59,8 @@ struct DesktopAssistantsView: View {
                     Button("Check my account connection") { context?.run { scope in await connections.load(context: scope) } }
                 }
                 if connections.loading || authorization.busy { ProgressView("Checking your connection…") }
-            }.padding(32).frame(maxWidth: 780, alignment: .leading).frame(maxWidth: .infinity)
+            }.padding(DesktopDesignTokens.Layout.wideMargin).frame(maxWidth: DesktopDesignTokens.Layout.readingWidth, alignment: .leading)
+                .frame(maxWidth: .infinity)
         }.navigationTitle("Assistants")
             .task(id: context?.id) { if let context { await connections.load(context: context) } }
             .task(id: context?.id) { await assistantStatus.observe(context) }
@@ -64,12 +71,13 @@ struct DesktopAssistantsView: View {
 
     private func authorizationForm(_ envelope: AccessAuthorizationLookupEnvelope, requestID: UUID, overview: AccessOverview) -> some View {
         GroupBox {
-            VStack(alignment: .leading, spacing: 18) {
-                Text("3. Choose what to share").font(.headline)
+            VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.regular) {
+                Text("3. Choose what to share").font(DesktopDesignTokens.Typography.body.weight(.medium))
                 LabeledContent("Assistant", value: envelope.request.clientName)
                 LabeledContent("Returns to", value: envelope.request.redirectOrigin)
-                Text("The app name is supplied by the connecting app. Check it matches the connection you started.").font(.callout)
-                    .foregroundStyle(.secondary)
+                Text("The app name is supplied by the connecting app. Check it matches the connection you started.")
+                    .font(DesktopDesignTokens.Typography.secondary)
+                    .foregroundStyle(DesktopTheme.secondary)
                 Toggle("I started this connection myself", isOn: $authorization.personallyStarted)
                 Divider()
                 Toggle("Let this assistant ask Omnesis questions", isOn: $authorization.allowAnswers)
@@ -85,7 +93,7 @@ struct DesktopAssistantsView: View {
                         Text(
                             "Answers can leave Omnesis without a privacy review. The selected sources below still limit what the assistant can ask about."
                         )
-                        .font(.callout).foregroundStyle(.orange)
+                        .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.warning)
                     }
                 }
                 Toggle("Let this assistant read original source material", isOn: $authorization.allowDirect)
@@ -93,9 +101,9 @@ struct DesktopAssistantsView: View {
                     Text(
                         "The assistant can receive source text directly, without Omnesis reviewing each answer. Share only sources you want this assistant to read."
                     )
-                    .font(.callout).foregroundStyle(.orange)
+                    .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.warning)
                 }
-                Text("Sources to share").font(.headline)
+                Text("Sources to share").font(DesktopDesignTokens.Typography.body.weight(.medium))
                 ForEach(overview.sources.filter(\.available)) { source in
                     Toggle(source.name, isOn: Binding(get: { authorization.allowedSources.contains(source.id) }, set: { enabled in
                         if enabled { authorization.allowedSources.insert(source.id) }
@@ -132,10 +140,10 @@ struct DesktopPhonePairingView: View {
     @State private var pairing = DesktopPhonePairing()
     var context: DesktopAPIContext?
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Text("Connect your phone").font(.title.bold())
+        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.large) {
+            Text("Connect your phone").font(DesktopDesignTokens.Typography.pageTitle).accessibilityAddTraits(.isHeader)
             Text("Install Omnesis on your phone and sign in with the same account. You can also scan a one-time code below.")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DesktopTheme.secondary)
             Picker("Phone", selection: $pairing.kind) {
                 Text("iPhone").tag("ios")
                 Text("Android").tag("android")
@@ -152,15 +160,17 @@ struct DesktopPhonePairingView: View {
                     Spacer()
                 }
                 Text("In the Omnesis phone app, choose Scan a code and point the camera here.")
-                Text("The code includes your secure Omnesis address. It works at home and away.").font(.callout).foregroundStyle(.secondary)
+                Text("The code includes your secure Omnesis address. It works at home and away.")
+                    .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                 Text("Expires \(Date(timeIntervalSince1970: Double(pending.expiresAt) / 1000).formatted(date: .omitted, time: .shortened))")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(DesktopDesignTokens.Typography.metadata).foregroundStyle(DesktopTheme.secondary)
                 Text("After scanning, finish connecting in the phone app. This window cannot confirm which phone used this code.")
                     .foregroundStyle(DesktopTheme.secondary)
             }
             if !pairing.observedPhones.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Phones currently connected to your library").font(.headline).accessibilityAddTraits(.isHeader)
+                VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.small) {
+                    Text("Phones currently connected to your library").font(DesktopDesignTokens.Typography.body.weight(.medium))
+                        .accessibilityAddTraits(.isHeader)
                     ForEach(pairing.observedPhones) { phone in
                         Label(phone.name, systemImage: "iphone")
                     }
@@ -192,7 +202,7 @@ struct DesktopPhonePairingView: View {
                     }.buttonStyle(DesktopButtonStyle(primary: true)).disabled(pairing.working || connections.loading)
                 }
             }
-        }.padding(30).frame(width: 500)
+        }.padding(DesktopDesignTokens.Space.section).frame(width: 500)
             .task(id: context?.id) { if let context { await connections.load(context: context) } }
             .onDisappear { Task { await pairing.cancel() } }
             .onChange(of: pairing.observedPhones.map(\.id)) { Task { await store.refresh() } }
@@ -202,7 +212,7 @@ struct DesktopPhonePairingView: View {
 struct DesktopAssistantDecisionView: View {
     let decision: DesktopAgentAuthorization.Decision
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.medium) {
             Label(
                 decision == .approved ? "Permission saved. Return to your assistant’s sign-in window to finish." :
                     "Connection denied. No access was granted.",

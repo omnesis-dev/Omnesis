@@ -34,7 +34,7 @@ struct DesktopBackupsView: View {
                 Text(
                     "A backup preserves library stores for restoration. An export provides the saved information in JSON or CSV form. Keep a separate recovery file and code for encrypted backups."
                 )
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DesktopTheme.secondary)
                 Picker("Create", selection: $kind) {
                     Text("Library backup").tag("backup")
                     Text("Data export").tag("export")
@@ -55,15 +55,16 @@ struct DesktopBackupsView: View {
             }
             Section("Save a completed backup or export") {
                 Text("These files are on your library server. Save downloads a copy to a location you choose on this Mac.")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                 ForEach(artifacts) { artifact in
                     VStack(alignment: .leading, spacing: 6) {
                         Text(
                             "\(artifact.kind == "backup" ? "Backup" : "Export") · \(artifact.createdDate?.formatted(date: .abbreviated, time: .shortened) ?? "Date unavailable")"
                         )
-                        .font(.headline)
+                        .font(DesktopDesignTokens.Typography.body.weight(.medium))
                         Text(ByteCountFormatter.string(fromByteCount: artifact.bytes, countStyle: .file) + " of stored contents")
-                        Text(artifact.protectionLabel).font(.callout).foregroundStyle(.secondary)
+                        Text(artifact.protectionLabel).font(DesktopDesignTokens.Typography.secondary)
+                            .foregroundStyle(DesktopTheme.secondary)
                         Button("Save a copy…") {
                             saveReadableExport = false
                             if artifact.requiresReadableContentConsent { readableConsent = artifact }
@@ -77,11 +78,11 @@ struct DesktopBackupsView: View {
                             Text(
                                 "Readable exports contain JSON Lines or CSV files inside a TAR archive. Anyone with the saved file can read its contents."
                             )
-                            .font(.callout).foregroundStyle(.secondary)
+                            .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                         }
                     }
                 }
-                if artifacts.isEmpty { Text("No completed backups or exports are available.").foregroundStyle(.secondary) }
+                if artifacts.isEmpty { Text("No completed backups or exports are available.").foregroundStyle(DesktopTheme.secondary) }
                 Button("Refresh list") { context?.run { _ in await refresh() } }.disabled(loading || saving != nil)
             }
             DesktopRecoveryCopiesSection(context: context)
@@ -97,6 +98,8 @@ struct DesktopBackupsView: View {
             }
             if let error { Text(error).foregroundStyle(DesktopTheme.danger) }
         }.formStyle(.grouped)
+            .frame(maxWidth: DesktopDesignTokens.Layout.formWidth)
+            .frame(maxWidth: .infinity)
             .task(id: context?.id) { await refresh() }
             .task(id: backupStatus?.running == true || exportStatus?.running == true) {
                 while backupStatus?.running == true || exportStatus?.running == true {

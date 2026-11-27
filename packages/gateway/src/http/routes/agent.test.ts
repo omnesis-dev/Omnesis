@@ -49,6 +49,7 @@ import { mountAgentRoutes, withCallerResolver } from "./agent.js";
 import type { Db } from "../../data/types.js";
 import type { AppEnv } from "./types.js";
 import type { DeviceAnswerScope } from "../../access/device-answer-scope.js";
+import type { ConversationSearch } from "../../agent/conversation-search.js";
 import type { AccessGrantCapability } from "../../access/types.js";
 
 const stubSearch: SearchPort = {
@@ -156,6 +157,7 @@ function buildApp(
     harnessOf?: (deviceId: string) => string | null;
     conversationReadState?: ConversationReadStatePort;
     deviceAnswerScope?: (deviceId: string, tokenId: string) => DeviceAnswerScope;
+    conversationSearch?: ConversationSearch;
   },
 ): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
@@ -195,6 +197,7 @@ function buildDisabledApp(
     disabledCode?: "remote_inference_disabled";
   },
   conversationReader?: ConversationReader,
+  conversationSearch?: ConversationSearch,
 ): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
   app.onError((err, c) => {
@@ -214,6 +217,7 @@ function buildDisabledApp(
   mountAgentRoutes(strictRoute(app), {
     agentService: undefined,
     conversationReader,
+    conversationSearch,
     disabledReason: reason,
     disabledCode: agentConfig?.disabledCode,
     agentConfig,
@@ -1389,6 +1393,136 @@ describe("GET /agent/conversations", () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("GET /agent/conversations?q=", () => {
+  async function startConversation(text: string): Promise<string> {
+    const created = await service.createSession("token:tokenA");
+    service.sendMessage("token:tokenA", created.sessionId, text);
+    await settle();
+    return created.sessionId;
+  }
+
+  test("ranks the search index's hits first, each once, with the passage that matched", async () => {
+    const budget = await startConversation("Q4 budget review");
+    const marathon = await startConversation("Marathon entry form");
+    const unrelated = await startConversation("Heart-rate trend");
+    const queries: string[] = [];
+    const searchApp = buildApp(service, {
+      conversationSearch: async (query) => {
+        queries.push(query);
+        return [
+          { conversationId: marathon, text: "Did I send the\n\nbudget for the race?" },
+          { conversationId: "no-such-conversation", text: "budget" },
+          { conversationId: budget, text: "budget figures" },
+          { conversationId: marathon, text: "budget again" },
+        ];
+      },
+    });
+
+    const res = await searchApp.request("/agent/conversations?q=%20budget%20");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(queries).toEqual(["budget"]);
+    expect(body.nextCursor).toBeNull();
+    expect(body.conversations.map((c: { id: string }) => c.id)).toEqual([marathon, budget]);
+    expect(body.conversations[0]).toMatchObject({
+      match: { snippet: "Did I send the budget for the race?" },
+      unread: false,
+    });
+    expect(body.conversations.map((c: { id: string }) => c.id)).not.toContain(unrelated);
+  });
+
+  test("matches a title the index has not reached, ignoring case and accents", async () => {
+    const cafe = await startConversation("Café opening hours");
+    await startConversation("northstar invoice");
+    const searchApp = buildApp(service, { conversationSearch: async () => [] });
+
+    const body = await (await searchApp.request("/agent/conversations?q=CAFE%20hours")).json();
+    expect(body.conversations.map((c: { id: string }) => c.id)).toEqual([cafe]);
+    expect(body.conversations[0].match).toBeUndefined();
+  });
+
+  test("matches titles alone on a gateway without a search index", async () => {
+    const invoice = await startConversation("northstar invoice");
+    await startConversation("Café opening hours");
+
+    const body = await (await app.request("/agent/conversations?q=northstar")).json();
+    expect(body.conversations.map((c: { id: string }) => c.id)).toEqual([invoice]);
+  });
+
+  test("searches stored history while inference is unavailable; a deleted one stops matching", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "omnesis-search-conversations-"));
+    try {
+      const store = new FsConversationStore(join(dir, "conversations"));
+      for (const id of ["lease-kept", "lease-deleted"]) {
+        await store.save({
+          id,
+          callerId: "token:tokenA",
+          model: "fictional-model",
+          backend: "http",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:01:00.000Z",
+          title: "riverside lease",
+          pinned: false,
+          messages: [
+            { role: "user", parts: [{ kind: "text", text: "riverside lease" }] },
+            { role: "assistant", parts: [{ kind: "text", text: "The lease runs a year." }] },
+          ],
+        });
+      }
+      const disabledApp = buildDisabledApp(
+        "Backend probe failed.",
+        { backend: "replay", enabled: false, disabledReason: "Backend probe failed." },
+        new StoredConversationReader(store),
+        async () => [
+          { conversationId: "lease-deleted", text: "lease terms" },
+          { conversationId: "lease-kept", text: "lease terms" },
+        ],
+      );
+      await store.delete("lease-deleted");
+
+      const res = await disabledApp.request("/agent/conversations?q=lease");
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.conversations.map((c: { id: string }) => c.id)).toEqual(["lease-kept"]);
+      expect(body.conversations[0].match).toEqual({ snippet: "lease terms" });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("applies the page limit, and a blank query lists as usual", async () => {
+    for (const text of ["Budget one", "Budget two", "Budget three"]) await startConversation(text);
+    const searchApp = buildApp(service, { conversationSearch: async () => [] });
+
+    const limited = await (await searchApp.request("/agent/conversations?q=budget&limit=2")).json();
+    expect(limited.conversations).toHaveLength(2);
+    expect(limited.nextCursor).toBeNull();
+
+    const blank = await (await searchApp.request("/agent/conversations?q=%20&limit=2")).json();
+    expect(blank.conversations).toHaveLength(2);
+    expect(blank.nextCursor).toEqual(expect.any(String));
+  });
+
+  test("a failing search still answers with title matches", async () => {
+    const invoice = await startConversation("northstar invoice");
+    const searchApp = buildApp(service, {
+      conversationSearch: async () => {
+        throw new Error("index unavailable");
+      },
+    });
+
+    const res = await searchApp.request("/agent/conversations?q=invoice");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.conversations.map((c: { id: string }) => c.id)).toEqual([invoice]);
+  });
+
+  test("refuses a query longer than the bound", async () => {
+    const res = await app.request(`/agent/conversations?q=${"a".repeat(201)}`);
+    expect(res.status).toBe(400);
   });
 });
 

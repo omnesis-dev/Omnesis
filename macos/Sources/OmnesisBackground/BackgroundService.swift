@@ -266,7 +266,7 @@ final class BackgroundService {
         }
         // Registration happens before a coordinated re-resolution and exact object/epoch check.
         // The presenter has a private serial queue; the UI actor never synchronously waits on it.
-        _ = try await Task.detached(priority: .utility) { try candidate.verify(record) }.value
+        _ = try await candidate.verify(record)
         guard !closing, generation == originGeneration, pendingPresenter === candidate,
               candidate.isVerified else { throw CancellationError() }
         let previous = presenter
@@ -297,7 +297,7 @@ final class BackgroundService {
             return
         }
         let matches = await (try? Task.detached {
-            let resolved = try selected.verify(record)
+            let resolved = try await selected.verify(record)
             return try resolved.path == (DesktopCanonicalPath.resolve(location.path))
         }.value) == true
         guard presenter === selected, originGeneration == event, selected.isCurrent(event: eventGeneration) else { return }
@@ -345,7 +345,7 @@ final class BackgroundService {
               let profile, let runtime else { return nil }
         let generation = originGeneration
         do {
-            _ = try await Task.detached(priority: .utility) { try selected.verify(record) }.value
+            _ = try await selected.verify(record)
             guard !closing, generation == originGeneration, presenter === selected, selected.isVerified else { return nil }
             try profile.validateIdentity()
             guard try profile.configured() else { return nil }

@@ -55,6 +55,9 @@ let failingIngest: Set<string>;
 let calls: { mimeType: string; opts?: TranscribeOptions }[];
 let docs: Map<string, DocumentInput>;
 let held: Promise<void> | null;
+let beforeIngest: (() => Promise<void>) | undefined;
+let beforeAssignVoices: (() => Promise<void>) | undefined;
+let beforeCloseConversations: (() => Promise<void>) | undefined;
 let separator: VoiceSeparator | null;
 let release: () => void;
 /** The operator's `inference.recordings.keepAudioDays`. */
@@ -62,6 +65,8 @@ let keepDays: number;
 let review: boolean | undefined;
 let voiceSelections: number;
 let voiceSource: VoiceSeparatorSource | undefined;
+/** The operator's `inference.recordings.conversationGapSeconds`, in ms; 0 never splits. */
+let gapMs: number;
 /** What the owner's calendar holds for any window; a function to see the window asked for. */
 let calendar: (from: string, to: string) => CalendarEventCandidate[];
 
@@ -127,14 +132,29 @@ beforeEach(() => {
   docs = new Map();
   failingIngest = new Set();
   held = null;
+  beforeIngest = undefined;
+  beforeAssignVoices = undefined;
+  beforeCloseConversations = undefined;
   separator = null;
   keepDays = 0;
   review = false;
   voiceSelections = 0;
   voiceSource = undefined;
+  gapMs = 0;
   calendar = () => [];
+  const gate = directWriteGate(db);
+  const assignVoices = gate.assignRecordingVoices;
+  gate.assignRecordingVoices = async (id, chunks) => {
+    if (beforeAssignVoices) await beforeAssignVoices();
+    await assignVoices(id, chunks);
+  };
+  const closeConversations = gate.closeRecordingConversations;
+  gate.closeRecordingConversations = async (id, spans, closedAt) => {
+    if (beforeCloseConversations) await beforeCloseConversations();
+    return closeConversations(id, spans, closedAt);
+  };
   service = new RecordingTranscriptionService({
-    writeGate: directWriteGate(db),
+    writeGate: gate,
     readDb: db,
     transcribe: async (_audio, mimeType, opts) => {
       calls.push({ mimeType, opts });
@@ -147,6 +167,7 @@ beforeEach(() => {
     },
     readiness: async () => readiness,
     ingest: async (input) => {
+      if (beforeIngest) await beforeIngest();
       for (const doc of input) {
         if (failingIngest.has(doc.externalId)) throw new Error("disk full");
         docs.set(doc.externalId, doc);
@@ -167,6 +188,7 @@ beforeEach(() => {
       if (review === undefined) throw new Error("Unavailable review metadata");
       return review;
     },
+    conversationGapMs: () => gapMs,
     calendarEvents: async (from, to) => calendar(from, to),
     now: () => now,
   });
@@ -653,6 +675,7 @@ describe("RecordingTranscriptionService kept audio", () => {
         speakers: 0,
         namedSpeakers: 0,
         documentId: null,
+        conversations: [],
       },
     ]);
   });
@@ -745,7 +768,7 @@ describe("RecordingTranscriptionService speakers", () => {
     ]);
   });
 
-  test("suggests the overlapping event's title and attendees, and who was addressed", async () => {
+  test("suggests the overlapping event's title and attendees, never a name heard in the transcript", async () => {
     separator = new ReplayVoiceSeparator();
     const jamie = findOrCreatePerson(
       db,
@@ -803,15 +826,6 @@ describe("RecordingTranscriptionService speakers", () => {
         documentId: "doc-sync",
       },
       {
-        key: `mention:2:${jamie}`,
-        kind: "person",
-        source: "mention",
-        speaker: 2,
-        personId: jamie,
-        name: "Jamie R.",
-        evidence: "Thanks, Jamie.",
-      },
-      {
         key: "person:p-priya",
         kind: "person",
         source: "calendar",
@@ -838,7 +852,7 @@ describe("RecordingTranscriptionService speakers", () => {
     ]);
   });
 
-  test("a calendar that cannot be read leaves the mentions; an unknown recording has none", async () => {
+  test("a calendar that cannot be read leaves nothing to suggest; an unknown recording has none", async () => {
     separator = new ReplayVoiceSeparator();
     calendar = () => {
       throw new Error("analytics offline");
@@ -852,9 +866,7 @@ describe("RecordingTranscriptionService speakers", () => {
     );
     await service.finish(id, 1, at(60_000));
     await service.idle();
-    expect((await service.suggestions(id))?.suggestions).toMatchObject([
-      { key: "mention:2:alex", speaker: 2, personId: null, name: "Alex" },
-    ]);
+    expect((await service.suggestions(id))?.suggestions).toEqual([]);
     expect(await service.suggestions(randomUUID())).toBeNull();
     expect(await service.dismissSuggestion(randomUUID(), "x")).toBe(false);
     expect(await service.setTitle(randomUUID(), "x")).toBe(false);
@@ -906,7 +918,7 @@ describe("RecordingTranscriptionService speakers", () => {
 
 test("restored review holds all recording work and preserves pending/completed history and audio", async () => {
   review = true;
-  const id = await start();
+  const id = await start(undefined, undefined, "ambient");
   await service.addChunk(chunk(id, 0));
   db.prepare(
     "INSERT INTO recording_chunks(session_id,seq,started_at,duration_ms,audio,status,text,voice_vectors,next_attempt_at,received_at,settled_at) VALUES(?,1,?,1000,?,'transcribed','Invented saved transcript',?,?,?,?)",
@@ -928,7 +940,7 @@ test("restored review holds all recording work and preserves pending/completed h
   db.prepare(
     "INSERT INTO recording_suggestion_dismissals(session_id,key,dismissed_at) VALUES(?,'invented-choice',?)",
   ).run(id, START);
-  const completed = await start();
+  const completed = await start(undefined, undefined, "ambient");
   db.prepare("UPDATE recording_sessions SET finished_at=?,chunk_count=1,revision=2 WHERE id=?").run(
     START,
     completed,
@@ -944,11 +956,23 @@ test("restored review holds all recording work and preserves pending/completed h
     START,
     START,
   );
+  db.prepare(
+    "INSERT INTO recording_participants(session_id,key,name,added_at) VALUES(?,'name:invented observer','Invented observer',?)",
+  ).run(id, START);
+  db.prepare(
+    "INSERT INTO recording_conversations(session_id,n,first_seq,last_seq,started_at,ended_at,title,content_hash,closed_at) VALUES(?,1,0,1,?,?,'Invented reviewed title','saved-content-hash',?)",
+  ).run(id, START, at(120_000), START);
+  db.prepare(
+    "INSERT INTO recording_conversations(session_id,n,first_seq,last_seq,started_at,ended_at,closed_at) VALUES(?,1,0,0,?,?,?)",
+  ).run(completed, START, at(1000), START);
+  gapMs = 90_000;
   const tables = [
     "recording_sessions",
     "recording_chunks",
     "recording_marks",
     "recording_speakers",
+    "recording_participants",
+    "recording_conversations",
     "recording_suggestion_dismissals",
   ];
   const before = tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all());
@@ -1134,3 +1158,772 @@ test("choice change at preparation completion is fenced before reading a separat
     db.prepare("SELECT voice_vectors FROM recording_chunks WHERE session_id=?").pluck().get(id),
   ).not.toBeNull();
 });
+
+describe("RecordingTranscriptionService conversations of an all-day session", () => {
+  type Line = { startMs: number; endMs: number; text: string; voice: string };
+  function spoken(sessionId: string, seq: number, lines: Line[]) {
+    transcripts.push({
+      text: lines.map((l) => l.text).join(" "),
+      segments: lines.map(({ startMs, endMs, text }) => ({ startMs, endMs, text })),
+    });
+    const script = { segments: lines };
+    return chunk(sessionId, seq, { audio: new TextEncoder().encode(JSON.stringify(script)) });
+  }
+  const silence = (sessionId: string, seq: number) =>
+    chunk(sessionId, seq, { silent: true, audio: null, mimeType: null });
+  const vectorsOf = (id: string) =>
+    db
+      .prepare<[string], { seq: number }>(
+        "SELECT seq FROM recording_chunks WHERE session_id = ? AND voice_vectors IS NOT NULL ORDER BY seq",
+      )
+      .all(id)
+      .map((r) => r.seq);
+
+  /**
+   * Two minutes of talk, two minutes of silence, then more talk, all in
+   * minute-long chunks; the session is left open.
+   */
+  async function morning(origin: "explicit" | "ambient" = "ambient"): Promise<string> {
+    const id = await start(undefined, undefined, origin);
+    await service.addChunk(
+      spoken(id, 0, [
+        { startMs: 0, endMs: 3_000, text: "Shall we look at the budget?", voice: "maya" },
+        { startMs: 4_000, endMs: 7_000, text: "Yes, travel first.", voice: "owner" },
+      ]),
+    );
+    await service.addChunk(silence(id, 1));
+    await service.addChunk(silence(id, 2));
+    await service.addChunk(
+      spoken(id, 3, [
+        { startMs: 10_000, endMs: 14_000, text: "Is the projector free?", voice: "jamie" },
+      ]),
+    );
+    await service.idle();
+    return id;
+  }
+
+  beforeEach(() => {
+    separator = new ReplayVoiceSeparator();
+    gapMs = 90_000;
+  });
+
+  test("a conversation a long silence ended is written, with its speakers, while the session goes on", async () => {
+    const id = await morning();
+
+    expect(service.status(id)!.state).toBe("recording");
+    const doc = docs.get(id)!;
+    expect(doc.title).toBe("Conversation, 2026-03-02 10:00");
+    expect(doc.content.split("\n").slice(4)).toEqual([
+      "[00:00:00] Speaker 1: Shall we look at the budget?",
+      "[00:00:04] Speaker 2: Yes, travel first.",
+    ]);
+    expect(doc.metadata.extra).toMatchObject({ recordingOrigin: "ambient", conversation: 1 });
+    expect(docs.size).toBe(1);
+    expect(service.speakers(id)!.map((s) => [s.speaker, s.conversation])).toEqual([
+      [1, 1],
+      [2, 1],
+    ]);
+    // Only the closed conversation's vectors are gone; the talk still going on keeps its own.
+    expect(vectorsOf(id)).toEqual([3]);
+    expect(service.summary(id)!.conversations).toEqual([
+      expect.objectContaining({ n: 1, title: "Conversation, 2026-03-02 10:00", titled: false }),
+    ]);
+    // The session itself reads as the day's recording.
+    expect(service.summary(id)!.title).toBe("All-day recording, 2026-03-02 10:00");
+  });
+
+  test("finishing the session writes its last conversation, timed from its own start", async () => {
+    const id = await morning();
+    await service.finish(id, 4, at(4 * 60_000));
+    await service.idle();
+
+    const second = docs.get(`${id}:2`)!;
+    expect(second.title).toBe("Conversation, 2026-03-02 10:03");
+    // Speakers are numbered on across the session: voices of one conversation
+    // are never compared with another's.
+    expect(second.content.split("\n").slice(4)).toEqual([
+      "[00:00:10] Speaker 3: Is the projector free?",
+    ]);
+    expect(docs.get(id)!.content).not.toContain("projector");
+    expect(vectorsOf(id)).toEqual([]);
+    expect(service.status(id)!.state).toBe("done");
+  });
+
+  test("a recording the owner started stays one document, however long its silences", async () => {
+    const id = await morning("explicit");
+    expect(docs.size).toBe(0);
+    await service.finish(id, 4, at(4 * 60_000));
+    await service.idle();
+
+    expect([...docs.keys()]).toEqual([id]);
+    expect(docs.get(id)!.content).toContain("projector");
+    expect(service.summary(id)!.conversations).toEqual([]);
+  });
+
+  test("with no gap set, an all-day session is one document as before", async () => {
+    gapMs = 0;
+    const id = await morning();
+    expect(docs.size).toBe(0);
+    await service.finish(id, 4, at(4 * 60_000));
+    await service.idle();
+
+    expect([...docs.keys()]).toEqual([id]);
+  });
+
+  test("an all-day session that was one conversation stays one document under its own id", async () => {
+    const id = await start(undefined, undefined, "ambient");
+    await service.addChunk(
+      spoken(id, 0, [{ startMs: 0, endMs: 3_000, text: "Morning, all.", voice: "maya" }]),
+    );
+    await service.finish(id, 1, at(60_000));
+    await service.idle();
+
+    expect([...docs.keys()]).toEqual([id]);
+    expect(service.summary(id)!.conversations).toEqual([]);
+  });
+
+  test("naming a speaker writes again only the conversation they spoke in", async () => {
+    const id = await morning();
+    await service.finish(id, 4, at(4 * 60_000));
+    await service.idle();
+    const second = docs.get(`${id}:2`);
+
+    expect(await service.setSpeaker(id, 2, { kind: "self" })).toBe("set");
+    await service.idle();
+
+    expect(docs.get(id)!.content).toContain("[00:00:04] You: Yes, travel first.");
+    expect(docs.get(`${id}:2`)).toBe(second);
+  });
+
+  const someone = (name: string, email: string) =>
+    findOrCreatePerson(db, { role: "sender", name, emails: [email] }, "gmail:test", "2026-01-01")!;
+  const linked = (externalId: string) =>
+    docs.get(externalId)!.metadata.people!.flatMap((p) => (p.personId ? [p.personId] : []));
+
+  test("each conversation links only the people who spoke in it", async () => {
+    const maya = someone("Maya", "maya@example.com");
+    const jamie = someone("Jamie", "jamie@example.com");
+    const id = await morning();
+    await service.finish(id, 4, at(4 * 60_000));
+    await service.idle();
+
+    expect(await service.setSpeaker(id, 1, { kind: "person", personId: maya })).toBe("set");
+    expect(await service.setSpeaker(id, 3, { kind: "person", personId: jamie })).toBe("set");
+    await service.idle();
+
+    expect(linked(id)).toEqual([maya]);
+    expect(linked(`${id}:2`)).toEqual([jamie]);
+  });
+
+  test("someone present without a turn is a participant of every conversation", async () => {
+    const david = someone("David", "david@example.com");
+    const id = await morning();
+    await service.finish(id, 4, at(4 * 60_000));
+    await service.idle();
+
+    expect(await service.addParticipant(id, { personId: david })).toBe("added");
+    await service.idle();
+
+    expect(linked(id)).toEqual([david]);
+    expect(linked(`${id}:2`)).toEqual([david]);
+  });
+
+  test("a speaker remapped to someone else of the same name moves the conversation's link", async () => {
+    const first = someone("Maya", "maya@example.com");
+    const second = someone("Maya", "maya@example.org");
+    expect(second).not.toBe(first);
+    const id = await morning();
+    await service.finish(id, 4, at(4 * 60_000));
+    await service.idle();
+
+    await service.setSpeaker(id, 1, { kind: "person", personId: first });
+    await service.idle();
+    const content = docs.get(id)!.content;
+    expect(linked(id)).toEqual([first]);
+
+    await service.setSpeaker(id, 1, { kind: "person", personId: second });
+    await service.idle();
+    // Not a word of the text changed, but the link did.
+    expect(docs.get(id)!.content).toBe(content);
+    expect(linked(id)).toEqual([second]);
+  });
+
+  test("someone mapped in one conversation is still suggested for the next they attend", async () => {
+    const maya = someone("Maya", "maya@example.com");
+    calendar = () => [
+      {
+        documentId: "doc-facilities",
+        title: "Facilities sync",
+        start: at(3 * 60_000),
+        end: at(4 * 60_000),
+        attendees: [{ personId: maya, name: "Maya" }],
+      },
+    ];
+    const id = await morning();
+    await service.finish(id, 4, at(4 * 60_000));
+    await service.idle();
+    await service.setSpeaker(id, 1, { kind: "person", personId: maya });
+    await service.idle();
+
+    expect((await service.suggestions(id, 2))!.suggestions).toContainEqual(
+      expect.objectContaining({ kind: "person", personId: maya, key: `c2:person:${maya}` }),
+    );
+  });
+
+  test("a conversation takes the owner's title", async () => {
+    const id = await morning();
+    expect(await service.setConversationTitle(id, 1, " Budget chat ")).toBe(true);
+    expect(await service.setConversationTitle(id, 7, "Nope")).toBe(false);
+    await service.idle();
+
+    expect(docs.get(id)!.title).toBe("Budget chat");
+    expect(service.summary(id)!.conversations[0]).toMatchObject({
+      title: "Budget chat",
+      titled: true,
+    });
+  });
+
+  test("a marked moment goes to its conversation, and waits while its conversation goes on", async () => {
+    const id = await morning();
+    await service.mark(id, "note-1", at(5_000));
+    await service.mark(id, "note-2", at(3 * 60_000 + 12_000));
+    await service.idle();
+
+    expect(docs.get(id)!.content).toContain("★ Marked moment");
+    expect(docs.get(id)!.content.match(/★/g)).toHaveLength(1);
+
+    await service.finish(id, 4, at(4 * 60_000));
+    await service.idle();
+    expect(docs.get(`${id}:2`)!.content).toContain("[00:00:12] ★ Marked moment");
+  });
+
+  test("deleting the session deletes every conversation's document", async () => {
+    const id = await morning();
+    await service.finish(id, 4, at(4 * 60_000));
+    await service.idle();
+    expect(docs.size).toBe(2);
+
+    expect(await service.delete(id)).toBe(true);
+    expect(docs.size).toBe(0);
+  });
+
+  test("suggestions are made per conversation, and dismissed per conversation", async () => {
+    calendar = () => [
+      {
+        documentId: "doc-standup",
+        title: "Facilities sync",
+        start: at(3 * 60_000),
+        end: at(4 * 60_000),
+        attendees: [],
+      },
+    ];
+    const id = await morning();
+    await service.finish(id, 4, at(4 * 60_000));
+    await service.idle();
+
+    expect((await service.suggestions(id, 1))!.suggestions).toEqual([]);
+    const [title] = (await service.suggestions(id, 2))!.suggestions;
+    expect(title).toMatchObject({
+      kind: "title",
+      title: "Facilities sync",
+      key: "c2:title:doc-standup",
+    });
+    expect(await service.suggestions(id, 9)).toBeNull();
+
+    await service.dismissSuggestion(id, title!.key);
+    expect((await service.suggestions(id, 2))!.suggestions).toEqual([]);
+  });
+});
+
+describe("RecordingTranscriptionService participants without a turn", () => {
+  async function finishedSession(): Promise<string> {
+    const id = await start(undefined, "Q4 budget review");
+    transcripts.push({ text: "Let's start with the travel budget." });
+    await service.addChunk(chunk(id, 0));
+    await service.finish(id, 1, at(60_000));
+    await service.idle();
+    return id;
+  }
+
+  function person(name: string, email: string): string {
+    return findOrCreatePerson(
+      db,
+      { role: "sender", name, emails: [email] },
+      "gmail:test",
+      "2026-01-01",
+    )!;
+  }
+
+  test("a person added as present becomes a participant and is named under the header", async () => {
+    const david = person("David Lin", "david@example.com");
+    const id = await finishedSession();
+
+    expect(await service.addParticipant(id, { personId: david })).toBe("added");
+    expect(await service.addParticipant(id, { name: "Sarah Mendez" })).toBe("added");
+    await service.idle();
+
+    const doc = docs.get(id)!;
+    expect(doc.content.split("\n").slice(0, 4)).toEqual([
+      "# Q4 budget review",
+      "",
+      "Recorded conversation · 2026-03-02 10:00 · 1 min",
+      "Also present: David Lin, Sarah Mendez",
+    ]);
+    // A name without a person is text only, as for a speaker.
+    expect(doc.metadata.people).toEqual([
+      { name: "You", role: "participant", isSelf: true },
+      { role: "participant", personId: david, name: "David Lin" },
+    ]);
+    expect(service.participants(id)).toEqual([
+      { key: `person:${david}`, personId: david, name: "David Lin" },
+      { key: "name:sarah mendez", personId: null, name: "Sarah Mendez" },
+    ]);
+  });
+
+  test("adding someone twice changes nothing, and removing them writes the document again", async () => {
+    const david = person("David Lin", "david@example.com");
+    const id = await finishedSession();
+    await service.addParticipant(id, { personId: david });
+    await service.idle();
+    const revision = () =>
+      db
+        .prepare<[string], { revision: number }>(
+          "SELECT revision FROM recording_sessions WHERE id = ?",
+        )
+        .get(id)!.revision;
+    const before = revision();
+
+    expect(await service.addParticipant(id, { personId: david })).toBe("added");
+    expect(revision()).toBe(before);
+    expect(service.participants(id)).toHaveLength(1);
+
+    expect(await service.removeParticipant(id, `person:${david}`)).toBe(true);
+    await service.idle();
+    expect(docs.get(id)!.content).not.toContain("Also present");
+    expect(docs.get(id)!.metadata.people).toEqual([
+      { name: "You", role: "participant", isSelf: true },
+    ]);
+    expect(await service.removeParticipant(id, `person:${david}`)).toBe(false);
+  });
+
+  test("refuses an unknown person and an unknown recording", async () => {
+    const id = await finishedSession();
+    expect(await service.addParticipant(id, { personId: "nobody" })).toBe("no-such-person");
+    expect(await service.addParticipant("missing", { name: "Maya Reeves" })).toBe("missing");
+    expect(service.participants("missing")).toBeNull();
+  });
+
+  test("someone who is also a speaker is linked once and not named again", async () => {
+    separator = new ReplayVoiceSeparator();
+    const maya = person("Maya Reeves", "maya@example.com");
+    const id = await start();
+    const lines = [
+      { startMs: 0, endMs: 3_000, text: "Shall we look at the budget?", voice: "maya" },
+    ];
+    transcripts.push({
+      text: lines[0]!.text,
+      segments: [{ startMs: 0, endMs: 3_000, text: lines[0]!.text }],
+    });
+    await service.addChunk(
+      chunk(id, 0, { audio: new TextEncoder().encode(JSON.stringify({ segments: lines })) }),
+    );
+    await service.finish(id, 1, at(60_000));
+    await service.idle();
+
+    await service.setSpeaker(id, 1, { kind: "person", personId: maya });
+    await service.addParticipant(id, { personId: maya });
+    await service.idle();
+
+    const doc = docs.get(id)!;
+    expect(doc.content).not.toContain("Also present");
+    expect(doc.metadata.people).toEqual([
+      { name: "You", role: "participant", isSelf: true },
+      { role: "participant", personId: maya, name: "Maya Reeves" },
+    ]);
+  });
+
+  test("a calendar attendee already present is not suggested again", async () => {
+    const jamie = person("Jamie Lopez", "jamie@example.com");
+    const id = await finishedSession();
+    calendar = () => [
+      {
+        documentId: "doc-sync",
+        title: "Q4 budget review",
+        start: at(-5 * 60_000),
+        end: at(55 * 60_000),
+        attendees: [{ personId: jamie, name: "Jamie Lopez" }],
+      },
+    ];
+    expect((await service.suggestions(id))!.suggestions).toEqual([
+      expect.objectContaining({
+        kind: "person",
+        source: "calendar",
+        personId: jamie,
+        speaker: null,
+      }),
+    ]);
+
+    await service.addParticipant(id, { personId: jamie });
+    expect((await service.suggestions(id))!.suggestions).toEqual([]);
+  });
+
+  test("deleting the recording deletes its participants", async () => {
+    const id = await finishedSession();
+    await service.addParticipant(id, { name: "Sarah Mendez" });
+    await service.delete(id);
+    const left = db
+      .prepare<[string], { n: number }>(
+        "SELECT COUNT(*) AS n FROM recording_participants WHERE session_id = ?",
+      )
+      .get(id)!.n;
+    expect(left).toBe(0);
+  });
+});
+
+/** Settled restored chunks with two genuine closed ranges; no transcriber/model runs. */
+async function savedSplitVoiceHistory(): Promise<string> {
+  const id = await start(undefined, undefined, "ambient");
+  keepDays = 365;
+  gapMs = 90_000;
+  db.prepare("UPDATE recording_sessions SET finished_at=?,chunk_count=3,revision=3 WHERE id=?").run(
+    at(180_000),
+    id,
+  );
+  for (const seq of [0, 2]) {
+    db.prepare(
+      "INSERT INTO recording_chunks(session_id,seq,started_at,duration_ms,audio,status,text,voices,voice_vectors,next_attempt_at,received_at,settled_at) VALUES(?,?,?,60000,?,'transcribed','Invented restored conversation',?,?,?,?,?)",
+    ).run(
+      id,
+      seq,
+      at(seq * 60_000),
+      Buffer.from("invented retained audio"),
+      JSON.stringify([{ startMs: 0, endMs: 1000 }]),
+      Buffer.from(new Float32Array(seq === 0 ? [1, 0] : [0, 1]).buffer),
+      START,
+      START,
+      START,
+    );
+  }
+  db.prepare(
+    "INSERT INTO recording_chunks(session_id,seq,started_at,duration_ms,silent,status,next_attempt_at,received_at,settled_at) VALUES(?,1,?,60000,1,'silent',?,?,?)",
+  ).run(id, at(60_000), START, START, START);
+  await directWriteGate(db).closeRecordingConversations(
+    id,
+    [
+      { n: 1, firstSeq: 0, lastSeq: 1, startedAt: START, endedAt: at(120_000) },
+      { n: 2, firstSeq: 2, lastSeq: 2, startedAt: at(120_000), endedAt: at(180_000) },
+    ],
+    START,
+  );
+  return id;
+}
+
+function savedVectors(id: string): unknown[] {
+  return db
+    .prepare("SELECT seq, voice_vectors FROM recording_chunks WHERE session_id=? ORDER BY seq")
+    .all(id);
+}
+
+function savedConversationHashes(id: string): unknown[] {
+  return db
+    .prepare("SELECT n, content_hash FROM recording_conversations WHERE session_id=? ORDER BY n")
+    .all(id);
+}
+
+test("restored split ranges stay dirty with their vectors while local preparation is unavailable", async () => {
+  review = true;
+  const create = vi.fn(() => {
+    throw new Error("Unexpected separator construction");
+  });
+  voiceSource = createVoiceSeparatorSource({
+    modelsDir: dbPath + ".models",
+    policy: () => ({ mode: "local", reviewRequired: review !== false }),
+    available: async () => false,
+    download: async () => {
+      throw new Error("Unexpected model download");
+    },
+    create,
+  });
+  const id = await savedSplitVoiceHistory();
+  const vectors = savedVectors(id);
+  const hashes = savedConversationHashes(id);
+  review = false;
+  await pass();
+  expect(savedVectors(id)).toEqual(vectors);
+  expect(savedConversationHashes(id)).toEqual(hashes);
+  expect(docs.size).toBe(0);
+  expect(service.status(id)?.projected).toBe(false);
+  expect(create).not.toHaveBeenCalled();
+});
+
+test.each(["review", "mode"] as const)(
+  "split grouping stops without vector consumption when %s changes while labels are held",
+  async (change) => {
+    review = true;
+    let mode: "local" | "off" = "local";
+    let releaseGroup!: (value: number[]) => void;
+    const labels = new Promise<number[]>((resolve) => {
+      releaseGroup = resolve;
+    });
+    const group = vi.fn(() => labels);
+    voiceSource = createVoiceSeparatorSource({
+      modelsDir: dbPath + ".models",
+      policy: () => ({ mode, reviewRequired: review !== false }),
+      available: async () => true,
+      download: async () => {},
+      create: () => ({
+        name: "invented",
+        separate: async () => ({ windows: [], vectors: [] }),
+        group,
+        dispose: async () => {},
+      }),
+    });
+    const id = await savedSplitVoiceHistory();
+    const vectors = savedVectors(id);
+    review = false;
+    const running = pass();
+    try {
+      await vi.waitFor(() => expect(group).toHaveBeenCalledOnce());
+      if (change === "review") review = true;
+      else {
+        mode = "off";
+        voiceSource.refresh();
+      }
+    } finally {
+      releaseGroup([0]);
+      await running;
+    }
+    expect(savedVectors(id)).toEqual(vectors);
+    expect(docs.size).toBe(0);
+    expect(service.status(id)?.projected).toBe(false);
+    expect(savedConversationHashes(id)).toEqual([
+      { n: 1, content_hash: null },
+      { n: 2, content_hash: null },
+    ]);
+  },
+);
+
+test.each(["review", "mode"] as const)(
+  "%s raised while an admitted range assignment finishes prevents the next range and projection",
+  async (change) => {
+    review = true;
+    let mode: "local" | "off" = "off";
+    voiceSource = createVoiceSeparatorSource({
+      modelsDir: dbPath + ".models",
+      policy: () => ({ mode, reviewRequired: review !== false }),
+      available: async () => false,
+      download: async () => {
+        throw new Error("Unexpected model download");
+      },
+    });
+    const id = await savedSplitVoiceHistory();
+    let releaseAssignment!: () => void;
+    const assignment = new Promise<void>((resolve) => {
+      releaseAssignment = resolve;
+    });
+    beforeAssignVoices = vi.fn(() => assignment);
+    review = false;
+    const running = pass();
+    try {
+      await vi.waitFor(() => expect(beforeAssignVoices).toHaveBeenCalledOnce());
+      if (change === "review") review = true;
+      else {
+        mode = "local";
+        voiceSource.refresh();
+      }
+    } finally {
+      releaseAssignment();
+      await running;
+    }
+    expect(getRecordingChunk(db, id, 0)?.voices).not.toBeNull();
+    expect(
+      db
+        .prepare("SELECT voice_vectors FROM recording_chunks WHERE session_id=? AND seq=0")
+        .pluck()
+        .get(id),
+    ).toBeNull();
+    expect(
+      db
+        .prepare("SELECT voice_vectors FROM recording_chunks WHERE session_id=? AND seq=2")
+        .pluck()
+        .get(id),
+    ).not.toBeNull();
+    expect(beforeAssignVoices).toHaveBeenCalledOnce();
+    expect(docs.size).toBe(0);
+    expect(service.status(id)?.projected).toBe(false);
+  },
+);
+
+test("review raised during the first admitted conversation ingest leaves hashes dirty and resumes after acknowledgement", async () => {
+  review = true;
+  const id = await savedSplitVoiceHistory();
+  let releaseIngest!: () => void;
+  const ingest = new Promise<void>((resolve) => {
+    releaseIngest = resolve;
+  });
+  beforeIngest = vi.fn(() => ingest);
+  review = false;
+  const running = pass();
+  try {
+    await vi.waitFor(() => expect(beforeIngest).toHaveBeenCalledOnce());
+    review = true;
+  } finally {
+    releaseIngest();
+    await running;
+  }
+  expect([...docs.keys()]).toEqual([id]); // The admitted first write may finish.
+  expect(beforeIngest).toHaveBeenCalledOnce();
+  expect(savedConversationHashes(id)).toEqual([
+    { n: 1, content_hash: null },
+    { n: 2, content_hash: null },
+  ]);
+  expect(service.status(id)?.projected).toBe(false);
+  review = false;
+  beforeIngest = undefined;
+  await pass();
+  expect([...docs.keys()]).toEqual([id, `${id}:2`]);
+  expect(service.status(id)?.projected).toBe(true);
+});
+
+test.each([false, true])(
+  "explicit delete still removes an admitted late document when review rises (split=%s)",
+  async (split) => {
+    review = true;
+    const id = split ? await savedSplitVoiceHistory() : await savedVoiceHistory();
+    let releaseIngest!: () => void;
+    const ingest = new Promise<void>((resolve) => {
+      releaseIngest = resolve;
+    });
+    beforeIngest = vi.fn(() => ingest);
+    review = false;
+    const running = pass();
+    try {
+      await vi.waitFor(() => expect(beforeIngest).toHaveBeenCalledOnce());
+      expect(await service.delete(id)).toBe(true);
+      review = true;
+    } finally {
+      releaseIngest();
+      await running;
+    }
+    expect(docs.size).toBe(0);
+    expect(service.status(id)).toBeNull();
+    expect(savedConversationHashes(id)).toEqual([]);
+  },
+);
+
+test("review raised while split history awaits real loader readiness prevents grouping and projection", async () => {
+  review = true;
+  let releaseModels!: () => void;
+  const models = new Promise<void>((resolve) => {
+    releaseModels = resolve;
+  });
+  const available = vi.fn(async () => {
+    await models;
+    return true;
+  });
+  const group = vi.fn(async () => [0]);
+  const create = vi.fn(() => ({
+    name: "invented",
+    separate: async () => ({ windows: [], vectors: [] }),
+    group,
+    dispose: async () => {},
+  }));
+  voiceSource = createVoiceSeparatorSource({
+    modelsDir: dbPath + ".models",
+    policy: () => ({ mode: "local", reviewRequired: review !== false }),
+    available,
+    download: async () => {},
+    create,
+  });
+  const id = await savedSplitVoiceHistory();
+  const vectors = savedVectors(id);
+  review = false;
+  const running = pass();
+  try {
+    await vi.waitFor(() => expect(available).toHaveBeenCalledOnce());
+    expect(savedVectors(id)).toEqual(vectors);
+    expect(docs.size).toBe(0);
+    review = true;
+  } finally {
+    releaseModels();
+    await running;
+  }
+  expect(create).not.toHaveBeenCalled();
+  expect(group).not.toHaveBeenCalled();
+  expect(savedVectors(id)).toEqual(vectors);
+  expect(docs.size).toBe(0);
+  expect(service.status(id)?.projected).toBe(false);
+});
+
+async function closableAmbientHistory(finished: boolean): Promise<string> {
+  const id = await start(undefined, undefined, "ambient");
+  keepDays = 365;
+  gapMs = 90_000;
+  for (const seq of [0, 1, 2, 3]) {
+    const silent = seq === 1 || seq === 2;
+    db.prepare(
+      "INSERT INTO recording_chunks(session_id,seq,started_at,duration_ms,silent,audio,status,text,voices,voice_vectors,next_attempt_at,received_at,settled_at) VALUES(?,?,?,60000,?,?,?,?,?,?,?,?,?)",
+    ).run(
+      id,
+      seq,
+      at(seq * 60_000),
+      silent ? 1 : 0,
+      silent ? null : Buffer.from("invented retained audio"),
+      silent ? "silent" : "transcribed",
+      silent ? null : "Invented closable speech",
+      silent ? null : JSON.stringify([{ startMs: 0, endMs: 1000 }]),
+      silent ? null : Buffer.from(new Float32Array([1, 0]).buffer),
+      START,
+      START,
+      START,
+    );
+  }
+  if (finished) {
+    db.prepare(
+      "UPDATE recording_sessions SET finished_at=?,ended_at=?,chunk_count=4,revision=4 WHERE id=?",
+    ).run(at(240_000), at(240_000), id);
+  }
+  return id;
+}
+
+test.each([false, true])(
+  "review after an admitted conversation close prevents later closure/grouping/projection (finished=%s)",
+  async (finished) => {
+    review = true;
+    const first = await closableAmbientHistory(finished);
+    const second = await closableAmbientHistory(finished);
+    const vectors = [savedVectors(first), savedVectors(second)];
+    let releaseClose!: () => void;
+    const closing = new Promise<void>((resolve) => {
+      releaseClose = resolve;
+    });
+    beforeCloseConversations = vi.fn(() => closing);
+    review = false;
+    const running = pass();
+    try {
+      await vi.waitFor(() => expect(beforeCloseConversations).toHaveBeenCalledOnce());
+      review = true;
+    } finally {
+      releaseClose();
+      await running;
+    }
+    expect(beforeCloseConversations).toHaveBeenCalledOnce();
+    const counts = [first, second].map((id) =>
+      Number(
+        db
+          .prepare("SELECT count(*) FROM recording_conversations WHERE session_id=?")
+          .pluck()
+          .get(id),
+      ),
+    );
+    expect(counts.filter((count) => count > 0)).toHaveLength(1); // One admitted close may finish; no next submission.
+    expect(counts.filter((count) => count === 0)).toHaveLength(1);
+    expect([savedVectors(first), savedVectors(second)]).toEqual(vectors);
+    expect(docs.size).toBe(0);
+    expect(voiceSelections).toBe(0);
+    expect([service.status(first)?.projected, service.status(second)?.projected]).toEqual([
+      false,
+      false,
+    ]);
+  },
+);

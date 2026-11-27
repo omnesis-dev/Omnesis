@@ -35,6 +35,13 @@ import { DevAnnotationButton } from "./components/dev-annotation-button.js";
 import { DevAnnotationComposer } from "./components/dev-annotation-composer.js";
 import { LoadMore } from "./components/load-more.js";
 import { useCursorPage } from "./lib/use-cursor-page.js";
+import {
+  CONVERSATION_SEARCH_DEBOUNCE_MS,
+  MAX_CONVERSATION_QUERY_LENGTH,
+  conversationListPath,
+  normalizeConversationQuery,
+  orderSidebarConversations,
+} from "./lib/conversation-search.js";
 import { useVisiblePoll } from "./lib/use-visible-poll.js";
 import { canDeleteConversation, deleteSidebarConversation } from "./lib/sidebar-conversations.js";
 import { releaseUpdateFromStatus } from "./lib/release-update.js";
@@ -243,14 +250,6 @@ const ICONS = {
 // Pin/Unpin menu item.
 const PIN_ICON = html`<svg aria-hidden="true" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>`;
 
-// Stable pinned-first ordering. The gateway already returns conversations
-// pinned-first, but re-partitioning client-side keeps an optimistic pin
-// toggle at the top until the canonical refetch lands. A stable sort
-// preserves the server's newest-first order within each pin group.
-function orderConversations(conversations) {
-  return [...conversations].sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
-}
-
 function App() {
   const [route, setRoute] = useState(parseRoute());
   const [, setSourceMetaReady] = useState(false);
@@ -276,13 +275,27 @@ function App() {
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [mobileNavigationOpen]);
   const [sessionExpired, setSessionExpired] = useState(false);
+  // What the operator typed in the sidebar's search field, and the query the
+  // list shows, which follows the input once typing pauses.
+  const [conversationSearchInput, setConversationSearchInput] = useState("");
+  const [conversationQuery, setConversationQuery] = useState("");
+  useEffect(() => {
+    const next = normalizeConversationQuery(conversationSearchInput);
+    if (next === conversationQuery) return undefined;
+    // Clearing the field returns to the plain list at once.
+    if (!next) {
+      setConversationQuery("");
+      return undefined;
+    }
+    const timer = setTimeout(() => setConversationQuery(next), CONVERSATION_SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [conversationSearchInput, conversationQuery]);
   const conversationPage = useCursorPage({
-    resetKey: "sidebar-conversations",
+    resetKey: `sidebar-conversations:${conversationQuery}`,
     pageSize: CONVERSATION_PAGE_SIZE,
     loadPage: async ({ limit, cursor }) => {
-      const params = new URLSearchParams({ limit: String(limit) });
-      if (cursor) params.set("cursor", cursor);
-      const res = await apiFetch(`/agent/conversations?${params}`, { cache: "no-store" });
+      const path = conversationListPath({ limit, cursor, query: conversationQuery });
+      const res = await apiFetch(path, { cache: "no-store" });
       if (!res.ok) throw new Error("Conversations are unavailable.");
       const body = await res.json();
       return {
@@ -700,12 +713,29 @@ function App() {
         ${demo === false && html`<${FleetHostUpdate} releaseUpdate=${releaseUpdate} />`}
 
         <div class="sidebar-convos" ref=${menuRootRef}>
+          <input
+            class="sidebar-convos-search"
+            type="search"
+            placeholder="Search conversations"
+            aria-label="Search conversations"
+            maxlength=${MAX_CONVERSATION_QUERY_LENGTH}
+            value=${conversationSearchInput}
+            onInput=${(e) => setConversationSearchInput(e.currentTarget.value)}
+            onKeyDown=${(e) => {
+              if (e.key === "Escape" && conversationSearchInput) {
+                e.stopPropagation();
+                setConversationSearchInput("");
+              }
+            }}
+          />
           <div class="sidebar-convos-list">
             ${conversations.length === 0 && !conversationPage.error
               ? html`<div class="sidebar-convos-empty">
-                  ${conversationPage.loading ? "Loading conversations…" : "No conversations yet."}
+                  ${conversationPage.loading
+                    ? conversationQuery ? "Searching…" : "Loading conversations…"
+                    : conversationQuery ? "No conversations match." : "No conversations yet."}
                 </div>`
-              : orderConversations(conversations).map((c) => {
+              : orderSidebarConversations(conversations, conversationQuery).map((c) => {
                 const isActive = activeConvoId === c.id;
                 const isMenuOpen = menuOpenId === c.id;
                 // The conversation on screen has been read by definition, so
@@ -715,7 +745,7 @@ function App() {
                 return html`
                   <div
                     key=${c.id}
-                    class=${`sidebar-convo-row${isActive ? " active" : ""}${isMenuOpen ? " menu-open" : ""}${c.pinned ? " pinned" : ""}`}
+                    class=${`sidebar-convo-row${isActive ? " active" : ""}${isMenuOpen ? " menu-open" : ""}${c.pinned ? " pinned" : ""}${c.match?.snippet ? " has-snippet" : ""}`}
                   >
                     <a
                       class="sidebar-convo-item"
@@ -731,6 +761,9 @@ function App() {
                         ? html`<span class="sidebar-convo-pin" aria-label="Pinned" title="Pinned">${PIN_ICON}</span>`
                         : null}
                       <span class=${`sidebar-convo-title${isUnread ? " unread" : ""}`}>${c.title || "(untitled)"}</span>
+                      ${c.match?.snippet
+                        ? html`<span class="sidebar-convo-snippet">${c.match.snippet}</span>`
+                        : null}
                     </a>
                     <button
                       class="sidebar-convo-actions"

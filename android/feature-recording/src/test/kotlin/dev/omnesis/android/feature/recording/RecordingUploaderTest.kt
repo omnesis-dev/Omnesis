@@ -4,6 +4,7 @@
 package dev.omnesis.android.feature.recording
 
 import dev.omnesis.android.transport.GatewayException
+import dev.omnesis.android.transport.dto.NewParticipant
 import dev.omnesis.android.transport.dto.SpeakerMapping
 import java.io.File
 import java.io.IOException
@@ -47,6 +48,9 @@ class RecordingUploaderTest {
         override suspend fun speakers(sessionId: String) = error("not used by the uploader")
         override suspend fun setSpeaker(sessionId: String, speaker: Int, mapping: SpeakerMapping) =
             error("not used by the uploader")
+        override suspend fun addParticipant(sessionId: String, participant: NewParticipant) =
+            error("not used by the uploader")
+        override suspend fun removeParticipant(sessionId: String, key: String) = error("not used by the uploader")
         override suspend fun searchPeople(query: String, limit: Int) = error("not used by the uploader")
     }
 

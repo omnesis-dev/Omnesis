@@ -435,8 +435,20 @@ final class DesktopRenderTests: XCTestCase {
                 XCTAssertTrue(content.contains(frame), "The empty conversation and composer must remain inside the content")
             }
             XCTAssertGreaterThan(input.width, 400, "The actual composer must use the available reading width")
-            XCTAssertLessThan(input.minY - content.minY, 120, "The composer must remain near the bottom of the window")
-            XCTAssertGreaterThan(title.minY - input.maxY, 250, "Ask must fill the window instead of collapsing at the bottom")
+            let introductionToInput = title.minY - input.maxY
+            XCTAssertGreaterThan(introductionToInput, 0, "The introduction must remain above its associated composer")
+            XCTAssertLessThan(
+                introductionToInput,
+                200,
+                "An empty conversation groups its introduction and composer rather than separating them across the window"
+            )
+            let compositionCenter = (title.maxY + input.minY) / 2
+            XCTAssertGreaterThan(compositionCenter, content.minY + content.height * 0.3)
+            XCTAssertLessThan(
+                compositionCenter,
+                content.minY + content.height * 0.7,
+                "The empty composition must use the central reading region"
+            )
         }
     }
 

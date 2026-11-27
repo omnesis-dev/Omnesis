@@ -5,6 +5,7 @@ package dev.omnesis.android.transport.client
 
 import dev.omnesis.android.transport.GatewayException
 import dev.omnesis.android.transport.dto.FinishRecordingBody
+import dev.omnesis.android.transport.dto.NewParticipant
 import dev.omnesis.android.transport.dto.OmnesisJson
 import dev.omnesis.android.transport.dto.RecordingChunkMetadata
 import dev.omnesis.android.transport.dto.SpeakerMapping
@@ -143,7 +144,10 @@ class RecordingsClientTest {
                 |]}""".trimMargin(),
             ),
         )
-        val speakers = client.speakers("3f1c2a9e-0000-4000-8000-000000000001")
+        val answer = client.speakers("3f1c2a9e-0000-4000-8000-000000000001")
+        // A gateway that cannot add people present without a turn sends none.
+        assertTrue(answer.participants.isEmpty())
+        val speakers = answer.speakers
         assertEquals(3, speakers.size)
         assertTrue(speakers[0].isSelf && speakers[0].mapped)
         assertEquals("p-1", speakers[1].personId)
@@ -151,6 +155,48 @@ class RecordingsClientTest {
         assertEquals(listOf("Sounds good.", "Next item."), speakers[1].samples)
         assertFalse(speakers[2].mapped)
         assertEquals("/recordings/3f1c2a9e-0000-4000-8000-000000000001/speakers", server.takeRequest().path)
+    }
+
+    @Test fun speakersCarryWhoWasPresentWithoutATurn() = runTest {
+        server.enqueue(
+            MockResponse().setBody(
+                """{"speakers":[],"participants":[
+                |{"key":"person:p-1","personId":"p-1","name":"Maya"},
+                |{"key":"name:sarah mendez","personId":null,"name":"Sarah Mendez"}
+                |]}""".trimMargin(),
+            ),
+        )
+        val participants = client.speakers("3f1c2a9e-0000-4000-8000-000000000001").participants
+        assertEquals(listOf("person:p-1", "name:sarah mendez"), participants.map { it.key })
+        assertEquals("p-1", participants[0].personId)
+        assertEquals(null, participants[1].personId)
+    }
+
+    @Test fun addParticipantSendsExactlyOneKey() = runTest {
+        val reply = """{"participants":[{"key":"person:p-7","personId":"p-7","name":"Jamie"}]}"""
+        val cases = listOf(
+            NewParticipant.Person("p-7") to """{"personId":"p-7"}""",
+            NewParticipant.Name("Jamie") to """{"name":"Jamie"}""",
+        )
+        for ((participant, body) in cases) {
+            server.enqueue(MockResponse().setBody(reply))
+            val participants = client.addParticipant("3f1c2a9e-0000-4000-8000-000000000001", participant)
+            assertEquals("Jamie", participants.single().name)
+            val request = server.takeRequest()
+            assertEquals("POST", request.method)
+            assertEquals("/recordings/3f1c2a9e-0000-4000-8000-000000000001/participants", request.path)
+            assertEquals(body, request.body.readUtf8())
+        }
+        assertEquals("name:sarah mendez", NewParticipant.Name(" Sarah Mendez ").key)
+    }
+
+    @Test fun removeParticipantEncodesTheKeyOnce() = runTest {
+        server.enqueue(MockResponse().setBody("""{"participants":[]}"""))
+        val left = client.removeParticipant("3f1c2a9e-0000-4000-8000-000000000001", "name:sarah mendez")
+        assertTrue(left.isEmpty())
+        val request = server.takeRequest()
+        assertEquals("DELETE", request.method)
+        assertEquals("/recordings/3f1c2a9e-0000-4000-8000-000000000001/participants/name:sarah%20mendez", request.path)
     }
 
     @Test fun speakersOfAnUnknownRecordingIsNotFound() = runTest {

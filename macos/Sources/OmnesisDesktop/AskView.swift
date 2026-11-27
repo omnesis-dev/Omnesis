@@ -51,7 +51,8 @@ struct DesktopAskView: View {
                 if layout.showsHistory {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 4) {
-                            Text("Conversations").font(.callout.weight(.semibold)).accessibilityAddTraits(.isHeader)
+                            Text("Conversations").font(DesktopDesignTokens.Typography.secondary.weight(.semibold))
+                                .accessibilityAddTraits(.isHeader)
                             Spacer(minLength: 4)
                             Button("New conversation", systemImage: "square.and.pencil") { startConversation() }
                                 .labelStyle(.iconOnly).buttonStyle(.borderless).frame(width: 28, height: 28)
@@ -63,36 +64,37 @@ struct DesktopAskView: View {
                                 .accessibilityIdentifier("chat-history-refresh").help("Refresh history")
                         }.padding(.horizontal, 12).padding(.top, 12)
                         if let failure = store.conversationHistoryFailure {
-                            Text(failure).font(.callout).foregroundStyle(DesktopTheme.secondary).padding(.horizontal, 12)
+                            Text(failure).font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary).padding(
+                                .horizontal,
+                                12
+                            )
                         }
                         List(selection: $chosenConversation) {
                             ForEach(store.conversations) { conversation in
                                 Text(conversation.title.isEmpty ? "Conversation" : conversation.title)
-                                    .font(.callout).foregroundStyle(DesktopTheme.ink).lineLimit(2).tag(conversation.sessionId)
+                                    .font(DesktopDesignTokens.Typography.navigation)
+                                    .foregroundStyle(chosenConversation == conversation.sessionId ? DesktopTheme.ink : DesktopTheme
+                                        .secondary)
+                                    .lineLimit(2).tag(conversation.sessionId)
                                     .listRowSeparator(.hidden)
-                                    .listRowBackground(chosenConversation == conversation.sessionId ? DesktopTheme.selected : Color.clear)
-                                    .overlay(alignment: .leading) {
-                                        if chosenConversation == conversation.sessionId {
-                                            Capsule().fill(DesktopTheme.primary)
-                                                .frame(width: contrast == .increased ? 4 : 3, height: contrast == .increased ? 22 : 16)
-                                                .offset(x: -10)
-                                        }
-                                    }
+                                    .listRowBackground(RoundedRectangle(cornerRadius: DesktopDesignTokens.Radius.medium)
+                                        .fill(chosenConversation == conversation.sessionId ? DesktopTheme.selected : .clear))
                             }
                         }.listStyle(.sidebar).scrollContentBackground(.hidden)
                     }.background(DesktopTheme.panel).frame(width: DesktopChatLayout.historyWidth).frame(maxHeight: .infinity)
                     Rectangle().fill(DesktopTheme.border).frame(width: DesktopChatLayout.separatorWidth)
                 }
                 VStack(spacing: 0) {
+                    if chat.rows.isEmpty { Spacer(minLength: DesktopDesignTokens.Space.regular) }
                     if chat.rows.isEmpty {
-                        VStack(spacing: 18) {
-                            DesktopBrandMark(size: 52)
+                        VStack(spacing: DesktopDesignTokens.Space.regular) {
+                            DesktopBrandMark(size: 40)
                             Text(chat
                                 .needsModel ?
                                 (chat.model?.configured == true ? "Your model needs attention" : "Choose how Omnesis answers") :
                                 "Ask about your information")
-                                .font(.system(size: 28, weight: .semibold))
-                                .accessibilityIdentifier("chat-empty-title")
+                                .font(DesktopDesignTokens.Typography.emptyTitle).multilineTextAlignment(.center)
+                                .accessibilityIdentifier("chat-empty-title").accessibilityAddTraits(.isHeader)
                             Text(chat.needsModel
                                 ?
                                 (chat.model?
@@ -100,7 +102,7 @@ struct DesktopAskView: View {
                                     "Your selected model is unavailable. Check its connection or choose another model in Settings." :
                                     "Connect an AI provider in Settings to ask questions. You can search your library without one.")
                                 : emptyDescription)
-                                .font(.system(size: 14)).lineSpacing(4)
+                                .font(DesktopDesignTokens.Typography.body).lineSpacing(4)
                                 .foregroundStyle(DesktopTheme.secondary).multilineTextAlignment(.center).frame(maxWidth: 360)
                             if chat.needsModel {
                                 Button("Set up answers") { store.settingsTab = "ai"
@@ -114,7 +116,8 @@ struct DesktopAskView: View {
                             if !chat.needsModel, store.sourcesLoaded, store.sources.isEmpty {
                                 Button("Add a source") { store.destination = .sources }.buttonStyle(DesktopButtonStyle(primary: true))
                             }
-                        }.padding(32).frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }.padding(.horizontal, DesktopDesignTokens.Layout.pageMargin)
+                            .padding(.bottom, DesktopDesignTokens.Space.section).frame(maxWidth: .infinity)
                     } else {
                         VStack(spacing: 0) {
                             ScrollView {
@@ -164,12 +167,16 @@ struct DesktopAskView: View {
                         }
                     }
                     if chat.lastAnswerStopped { Label("Response stopped · this answer is incomplete", systemImage: "stop.circle")
-                        .font(.callout).foregroundStyle(DesktopTheme.secondary).padding(.horizontal, 24).padding(.bottom, 12)
+                        .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary).padding(.horizontal, 24)
+                        .padding(
+                            .bottom,
+                            12
+                        )
                     }
                     if chat.opening { ProgressView("Opening conversation…").controlSize(.small).padding(.horizontal, 24) }
                     if let failure = chat.failure, chat.modelCheckFailure == nil {
                         HStack {
-                            Text(failure).font(.callout).foregroundStyle(DesktopTheme.secondary)
+                            Text(failure).font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                             if let id = chat.conversationId ?? chat.sessionId {
                                 Button("Reopen conversation") { chat.requestOpen(id, in: context) }.buttonStyle(DesktopButtonStyle())
                             } else {
@@ -179,13 +186,13 @@ struct DesktopAskView: View {
                     }
                     if let failure = chat.modelCheckFailure {
                         HStack {
-                            Text(failure).font(.callout).foregroundStyle(DesktopTheme.secondary)
+                            Text(failure).font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                             Button("Check again") { chat.requestModelCheck(in: context) }
                         }.padding(.horizontal, 24).padding(.bottom, 12)
                     }
                     if chat.needsModel, !chat.rows.isEmpty {
                         HStack {
-                            Text("Choose an available model before asking another question.").font(.callout)
+                            Text("Choose an available model before asking another question.").font(DesktopDesignTokens.Typography.secondary)
                                 .foregroundStyle(DesktopTheme.secondary)
                             Button("Set up answers") { store.settingsTab = "ai"
                                 openSettings()
@@ -197,41 +204,45 @@ struct DesktopAskView: View {
                     }
                     if let failure = chat.terminalFailure {
                         HStack {
-                            Text(failure).font(.callout).foregroundStyle(DesktopTheme.secondary)
+                            Text(failure).font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                             Button("Start a new conversation") { startConversation() }
                         }.padding(.horizontal, 24).padding(.bottom, 12)
                     }
                     HStack(alignment: .bottom, spacing: 12) {
                         TextField("Ask Omnesis…", text: $chat.input, axis: .vertical).lineLimit(1 ... 6)
-                            .textFieldStyle(.plain).onSubmit { chat.requestSend(in: context) }
+                            .textFieldStyle(.plain).font(DesktopDesignTokens.Typography.body).onSubmit { chat.requestSend(in: context) }
                             .focused($composerFocused)
                             .accessibilityLabel("Message to Omnesis")
                             .frame(minHeight: 36, alignment: .center)
                             .accessibilityIdentifier("chat-input")
                         if chat.busy {
-                            Button { chat.requestCancel(in: context) } label: { Image(systemName: "stop.fill").font(.system(
-                                size: 13,
-                                weight: .semibold
-                            )) }
+                            Button { chat.requestCancel(in: context) } label: {
+                                Image(systemName: "stop.fill").font(DesktopDesignTokens.Typography.button.weight(.semibold))
+                            }
                             .buttonStyle(DesktopButtonStyle(iconOnly: true)).accessibilityLabel("Stop response").disabled(chat.opening)
-                            .accessibilityIdentifier("chat-stop")
+                            .accessibilityIdentifier("chat-stop").help("Stop response")
                         } else {
                             Button { chat.requestSend(in: context) } label: { Image(systemName: "arrow.up").font(.system(
-                                size: 16,
+                                size: DesktopDesignTokens.Icon.standard,
                                 weight: .semibold
                             )) }
                             .buttonStyle(DesktopButtonStyle(primary: true, iconOnly: true)).accessibilityLabel("Send message")
                             .disabled(chat.needsModel || chat.checkingModel || chat.opening || chat.terminalFailure != nil || chat
                                 .modelCheckFailure != nil || chat.input
                                 .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                            .accessibilityIdentifier("chat-send")
+                            .accessibilityIdentifier("chat-send").help("Send message")
                         }
-                    }.padding(16).background(DesktopTheme.panel, in: RoundedRectangle(cornerRadius: 12))
-                        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(
-                            composerFocused ? DesktopTheme.primary : contrast == .increased ? DesktopTheme.secondary : DesktopTheme.border,
+                    }.padding(DesktopDesignTokens.Space.regular)
+                        .background(DesktopTheme.elevated, in: RoundedRectangle(cornerRadius: DesktopDesignTokens.Radius.composer))
+                        .overlay(RoundedRectangle(cornerRadius: DesktopDesignTokens.Radius.composer).strokeBorder(
+                            composerFocused ? DesktopTheme.focusRing : contrast == .increased ? DesktopTheme.strongBorder : DesktopTheme
+                                .border,
                             lineWidth: composerFocused || contrast == .increased ? 2 : 1
                         ))
-                        .frame(maxWidth: 720).padding(.horizontal, 24).padding(.bottom, 24)
+                        .frame(maxWidth: DesktopDesignTokens.Layout.readingWidth)
+                        .padding(.horizontal, DesktopDesignTokens.Layout.pageMargin)
+                        .padding(.bottom, chat.rows.isEmpty ? 0 : DesktopDesignTokens.Space.section)
+                    if chat.rows.isEmpty { Spacer(minLength: DesktopDesignTokens.Space.wide) }
                 }.frame(width: layout.readingWidth).frame(maxHeight: .infinity)
                     .clipped().opacity(layout.showsReading ? 1 : 0)
                     .accessibilityHidden(!layout.showsReading).allowsHitTesting(layout.showsReading).disabled(!layout.showsReading)
@@ -343,7 +354,7 @@ struct DesktopAskView: View {
         if row.role == "user" {
             HStack {
                 Spacer(minLength: 40)
-                Text(row.text).font(.system(size: 15)).lineSpacing(4).textSelection(.enabled)
+                Text(row.text).font(DesktopDesignTokens.Typography.body).lineSpacing(4).textSelection(.enabled)
                     .padding(.horizontal, 14).padding(.vertical, 12)
                     .background(DesktopTheme.selected, in: RoundedRectangle(cornerRadius: 12))
                     .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(
@@ -355,7 +366,7 @@ struct DesktopAskView: View {
         } else {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(spacing: 8) { DesktopBrandMark(size: 18)
-                    Text("Omnesis").font(.system(size: 12, weight: .medium))
+                    Text("Omnesis").font(DesktopDesignTokens.Typography.metadata.weight(.medium))
                 }
                 .foregroundStyle(DesktopTheme.secondary)
                 DesktopAnswerText(text: row.text.isEmpty ? "Thinking…" : row.text)
@@ -394,4 +405,14 @@ struct DesktopChatScrollObservation: Sendable {
     var decision: Decision?
     var displayScale: CGFloat?
     var followsLatest: Bool?
+}
+
+#Preview("Ask empty · Light") {
+    DesktopAskView().environment(DesktopStore.preview()).environment(\.desktopAppearanceOverride, .light)
+        .frame(width: 860, height: 600)
+}
+
+#Preview("Ask empty · Dark") {
+    DesktopAskView().environment(DesktopStore.preview()).environment(\.desktopAppearanceOverride, .dark)
+        .frame(width: 1080, height: 740)
 }

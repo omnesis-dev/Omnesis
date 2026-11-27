@@ -84,10 +84,39 @@ final class DesktopStartupTests: XCTestCase {
             var failures = 0, replies = 0
             bridge.onFailure = { _ in failures += 1 }
             bridge.onEnvelope = { _ in replies += 1 }
+            stage(.malformedStarting)
+            try await bridge.start()
+            stage(.malformedWaitingForFailure)
+            try await waitUntil { failures == 1 }
+            stage(.malformedFailureObserved)
+            try await fixture.waitFor("drained-output")
+            stage(.malformedOutputDrained)
+            await assertStartRefused(bridge)
+            XCTAssertEqual(count.value, 1)
+            XCTAssertEqual(replies, 0)
+            fixture.release()
+            try await bridge.disconnectAndJoin()
+            XCTAssertEqual(failures, 1)
+        }
+    }
+
+    func testRevokedShutdownOutputDrainsWhileTheMainActorIsHeld() async throws {
+        try await withRuntime(invalidOutput: true, holdDrainOutput: true) { fixture, bridge, count in
+            var failures = 0, replies = 0
+            bridge.onFailure = { _ in failures += 1 }
+            bridge.onEnvelope = { _ in replies += 1 }
             try await bridge.start()
             try await waitUntil { failures == 1 }
-            try await fixture.waitFor("drained-output")
+            try await fixture.waitFor("eof")
             await assertStartRefused(bridge)
+            let observation = try fixture.drainObservation()
+            let observing = Task.detached { await observation.observe() }
+            // The observer opens the real child's burst gate only after this actor is held.
+            // Its completion never needs MainActor; join it before any fixture resource closes.
+            let progressedWhileHeld = observation.holdMainActor()
+            let observed = await observing.value
+            XCTAssertTrue(progressedWhileHeld, "Revoked stdout must drain independently of MainActor")
+            XCTAssertTrue(observed, "The exact owned child must publish its drained-output marker")
             XCTAssertEqual(count.value, 1)
             XCTAssertEqual(replies, 0)
             fixture.release()
@@ -388,6 +417,17 @@ final class DesktopStartupTests: XCTestCase {
         XCTAssertEqual(store.state.phase, .waiting)
     }
 
+    private enum Stage: String {
+        case malformedStarting = "malformed-starting"
+        case malformedWaitingForFailure = "malformed-waiting-for-failure"
+        case malformedFailureObserved = "malformed-failure-observed"
+        case malformedOutputDrained = "malformed-output-drained"
+    }
+
+    private func stage(_ stage: Stage) {
+        FileHandle.standardError.write(Data("owned-startup-fixture \(stage.rawValue)\n".utf8))
+    }
+
     private func assertStartRefused(_ bridge: RuntimeBridge, file: StaticString = #filePath, line: UInt = #line) async {
         do { try await bridge.start()
             XCTFail("A retained drain must refuse a replacement", file: file, line: line)
@@ -408,7 +448,7 @@ final class DesktopStartupTests: XCTestCase {
 
     private func withRuntime(
         closeOutput: Bool = false, closeInput: Bool = false, exitCode: Int = 0, beforeReading: StartupGate? = nil,
-        exitBeforeEOF: Bool = false, invalidOutput: Bool = false,
+        exitBeforeEOF: Bool = false, invalidOutput: Bool = false, holdDrainOutput: Bool = false,
         inputClosure: @escaping RuntimeBridge.InputClosure = { try $0.close() },
         expectCloseUncertainty: Bool = false,
         body: @MainActor (StartupFixture, RuntimeBridge, StartupCount) async throws -> Void
@@ -418,7 +458,8 @@ final class DesktopStartupTests: XCTestCase {
             closeInput: closeInput,
             exitCode: exitCode,
             exitBeforeEOF: exitBeforeEOF,
-            invalidOutput: invalidOutput
+            invalidOutput: invalidOutput,
+            holdDrainOutput: holdDrainOutput
         )
         let count = StartupCount()
         let runtime = fixture.runtime
@@ -497,7 +538,7 @@ private final class StartupFixture {
     let script: URL
     private var control: FileHandle?
 
-    init(closeOutput: Bool, closeInput: Bool, exitCode: Int, exitBeforeEOF: Bool, invalidOutput: Bool) throws {
+    init(closeOutput: Bool, closeInput: Bool, exitCode: Int, exitBeforeEOF: Bool, invalidOutput: Bool, holdDrainOutput: Bool) throws {
         let selected = FileManager.default.temporaryDirectory.appendingPathComponent("omnesis-bridge-drain-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: selected, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         base = try URL(fileURLWithPath: DesktopCanonicalPath.resolve(selected.path), isDirectory: true)
@@ -524,6 +565,7 @@ private final class StartupFixture {
         let drainOutput = invalidOutput ?
             "i=0; while [ \"$i\" -lt 4096 ]; do printf '%s\\n' 'Fictional shutdown output remains unpublished while the exact control channel drains.'; i=$((i+1)); done; : > \"$2.drained-output\"" :
             ":"
+        let drainGate = holdDrainOutput ? "IFS= read -r begin < \"$2.control\"; [ \"$begin\" = drain ] || exit 1\n" : ""
         let helper = """
         #!/bin/sh
         : > "$2.started"
@@ -531,7 +573,7 @@ private final class StartupFixture {
         \(invalid)
         \(input)
         : > "$2.eof"
-        \(drainOutput)
+        \(drainGate)\(drainOutput)
         IFS= read -r release < "$2.control"
         \(lateReply)
         : > "$2.exiting"
@@ -555,6 +597,11 @@ private final class StartupFixture {
         (try? String(contentsOf: script.appendingPathExtension("requests"), encoding: .utf8).split(separator: "\n").count) ?? 0
     }
 
+    func drainObservation() throws -> StartupDrainObservation {
+        guard let control else { throw Failure.control }
+        return StartupDrainObservation(control: control, marker: script.appendingPathExtension("drained-output"))
+    }
+
     func release() {
         try? control?.write(contentsOf: Data("release\n".utf8))
     }
@@ -567,5 +614,67 @@ private final class StartupFixture {
     func removeAfterJoined() throws {
         closeControl()
         try FileManager.default.removeItem(at: base)
+    }
+}
+
+/// The test's bounded hold observes a real pipe writer while MainActor cannot service reader work.
+private final class StartupDrainObservation: @unchecked Sendable {
+    private let condition = NSCondition()
+    private let control: FileHandle
+    private let marker: URL
+    private var actorHeld = false
+    private var finished = false
+    private var observed = false
+
+    init(control: FileHandle, marker: URL) {
+        self.control = control
+        self.marker = marker
+    }
+
+    @MainActor
+    func holdMainActor() -> Bool {
+        XCTAssertTrue(Thread.isMainThread)
+        condition.lock()
+        defer { condition.unlock() }
+        actorHeld = true
+        condition.broadcast()
+        let deadline = Date().addingTimeInterval(5)
+        while !finished {
+            if !condition.wait(until: deadline) { return false }
+        }
+        return observed && Date() < deadline
+    }
+
+    private func waitForActorHold() -> Bool {
+        condition.lock()
+        defer { condition.unlock() }
+        let deadline = Date().addingTimeInterval(5)
+        while !actorHeld {
+            if !condition.wait(until: deadline) { return false }
+        }
+        return Date() < deadline
+    }
+
+    private func finish(_ value: Bool) {
+        condition.lock()
+        observed = value
+        finished = true
+        condition.broadcast()
+        condition.unlock()
+    }
+
+    func observe() async -> Bool {
+        var observed = false
+        defer { finish(observed) }
+        guard waitForActorHold() else { return false }
+        do { try control.write(contentsOf: Data("drain\n".utf8)) }
+        catch { return false }
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !FileManager.default.fileExists(atPath: marker.path), ContinuousClock.now < deadline {
+            do { try await Task.sleep(for: .milliseconds(10)) }
+            catch { return false }
+        }
+        observed = FileManager.default.fileExists(atPath: marker.path) && ContinuousClock.now < deadline
+        return observed
     }
 }

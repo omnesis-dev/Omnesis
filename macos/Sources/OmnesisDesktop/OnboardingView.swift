@@ -18,12 +18,13 @@ struct DesktopOnboardingView: View {
         VStack(spacing: 0) {
             GeometryReader { geometry in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
+                    VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.section) {
                         DesktopBrandMark(size: 48)
-                        Text(store.state.statusLabel).font(.system(size: 32, weight: .semibold))
+                        Text(store.state.statusLabel).font(DesktopDesignTokens.Typography.display).accessibilityAddTraits(.isHeader)
+                            .accessibilityIdentifier("onboarding-page-title")
                         if store.backgroundStartupBlock == .ownerMismatch || store.backgroundStartupBlock == .originRequired {
-                            VStack(alignment: .leading, spacing: 16) {
-                                Text("Review app recovery").font(.title2.weight(.semibold))
+                            VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.regular) {
+                                Text("Review app recovery").font(DesktopDesignTokens.Typography.section).accessibilityAddTraits(.isHeader)
                                 Text(
                                     "Omnesis is finishing an app or library change. Review recovery before starting collection from this copy. Your existing library is kept."
                                 )
@@ -45,8 +46,8 @@ struct DesktopOnboardingView: View {
                                 .foregroundStyle(DesktopTheme.secondary)
                                 Text(
                                     "When you connect to another computer, macOS may ask for Local Network access so Omnesis can find your library nearby. You can review this access later in Settings."
-                                ).font(.callout).foregroundStyle(DesktopTheme.secondary)
-                                HStack(spacing: 12) {
+                                ).font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
+                                HStack(spacing: DesktopDesignTokens.Space.medium) {
                                     Button("Find my library") {
                                         accountIntent = .existing
                                         store.command("connect", params: accountIntent.parameters(invite: "", termsAccepted: false))
@@ -61,8 +62,9 @@ struct DesktopOnboardingView: View {
                                 }
                                 if store.state.phase == .chooseHome || showNewLibrary {
                                     GroupBox {
-                                        VStack(alignment: .leading, spacing: 14) {
-                                            Label("Keep your library on this Mac?", systemImage: "desktopcomputer").font(.headline)
+                                        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.medium) {
+                                            Label("Keep your library on this Mac?", systemImage: "desktopcomputer")
+                                                .font(DesktopDesignTokens.Typography.body.weight(.medium))
                                             Text(
                                                 "A desktop Mac you leave powered on, such as a Mac mini, is a good home for your library. This Mac must stay awake and start Omnesis when you sign in. Setup will guide and verify those required settings. Your other devices use this Mac to search and ask questions. Moving your library to another computer is not available yet."
                                             )
@@ -70,13 +72,14 @@ struct DesktopOnboardingView: View {
                                             .accessibilityIdentifier("home-location-warning")
                                             DesktopMacServerTip(compact: true)
                                             if let free = availableStorage {
-                                                Text("\(free) available on this Mac").font(.callout).foregroundStyle(DesktopTheme.secondary)
+                                                Text("\(free) available on this Mac").font(DesktopDesignTokens.Typography.secondary)
+                                                    .foregroundStyle(DesktopTheme.secondary)
                                             }
                                             if showNewLibrary {
                                                 Text(
                                                     "Already have an Omnesis library? Choose Find my library above to connect to it instead."
                                                 )
-                                                .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                                                .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                                                 Toggle("This is my first Omnesis library", isOn: $firstLibraryConfirmed)
                                                     .accessibilityIdentifier("confirm-first-library")
                                             }
@@ -88,7 +91,7 @@ struct DesktopOnboardingView: View {
                                                         "name": .string(Host.current().localizedName ?? "My Mac"),
                                                     ]
                                                 )
-                                            }.buttonStyle(DesktopButtonStyle(primary: true)).controlSize(.large)
+                                            }.buttonStyle(DesktopButtonStyle()).controlSize(.large)
                                                 .disabled(showNewLibrary && !firstLibraryConfirmed)
                                                 .accessibilityIdentifier("use-this-mac")
                                             Button("I’ll set up another computer first") { store.command(
@@ -101,23 +104,27 @@ struct DesktopOnboardingView: View {
                                 }
                             case .accountRequired:
                                 Text(
-                                    "An Omnesis account connects your devices securely, at home and away. Your private library stays on your Mac."
+                                    "An Omnesis account connects your devices securely, at home and away. Your private library stays on the computer where you keep it."
                                 )
                                 Picker("Omnesis account", selection: $accountIntent) {
                                     Text("I have an account").tag(DesktopAccountIntent.existing)
                                     Text("Create an account").tag(DesktopAccountIntent.create)
                                 }.pickerStyle(.segmented)
                                 if accountIntent == .create, store.state.signup?.policy != "open" {
-                                    TextField("Invitation code (if required)", text: $invitation)
-                                        .textFieldStyle(.roundedBorder)
-                                        .accessibilityIdentifier("invitation-code")
+                                    VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.xSmall) {
+                                        Text("Invitation code (if required)").font(DesktopDesignTokens.Typography.secondary.weight(.medium))
+                                            .accessibilityIdentifier("invitation-code-label")
+                                        TextField("Invitation code (if required)", text: $invitation)
+                                            .textFieldStyle(.roundedBorder)
+                                            .accessibilityIdentifier("invitation-code")
+                                    }
                                     Text("New accounts may need an invitation. You can paste either the invitation link or its code.")
-                                        .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                                        .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                                 }
                                 Text(
                                     "A certificate authority issues the certificate for your private address, so your devices can verify this Mac when they connect."
                                 )
-                                .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                                .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                                 Toggle("I accept the certificate authority’s terms for my secure address", isOn: $termsAccepted)
                                     .disabled(store.state.signup?.readableTermsURL == nil)
                                     .accessibilityIdentifier("account-terms")
@@ -126,17 +133,22 @@ struct DesktopOnboardingView: View {
                                         Link("Certificate authority terms", destination: terms)
                                     }
                                     Link("Privacy policy", destination: URL(string: "https://omnesis.dev/privacy")!)
-                                }.font(.callout)
+                                }.font(DesktopDesignTokens.Typography.secondary)
                                 if store.state.signup?.readableTermsURL == nil {
-                                    VStack(alignment: .leading, spacing: 10) {
+                                    VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.small) {
                                         Label("Read the terms before continuing", systemImage: "exclamationmark.triangle")
-                                            .font(.headline).foregroundStyle(.orange)
+                                            .font(DesktopDesignTokens.Typography.body.weight(.medium)).foregroundStyle(DesktopTheme.warning)
                                         Text(
                                             "The certificate authority’s terms could not be loaded. Check your internet connection and try again. Sign-in stays paused until you can read them."
                                         )
-                                        .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                                        .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                        .accessibilityIdentifier("account-terms-unavailable-explanation")
                                         Button("Load terms again") { store.command("status") }
-                                    }.padding(14).background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
+                                    }.padding(DesktopDesignTokens.Space.medium).background(
+                                        DesktopTheme.surface,
+                                        in: RoundedRectangle(cornerRadius: DesktopDesignTokens.Radius.large)
+                                    )
                                 }
                                 Button(accountIntent == .create ? "Create my Omnesis account" : "Sign in to my Omnesis account") {
                                     store.command(
@@ -147,7 +159,7 @@ struct DesktopOnboardingView: View {
                                     .disabled(!termsAccepted || store.state.signup?.readableTermsURL == nil)
                                     .accessibilityIdentifier("connect-account")
                                 Text("Complete sign-in in your browser, then return to Omnesis. Your connection is encrypted end to end.")
-                                    .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                                    .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                             case .preparing:
                                 if let model = store.state.searchModel, let downloaded = model.downloadedBytes,
                                    let total = model.totalBytes,
@@ -156,19 +168,26 @@ struct DesktopOnboardingView: View {
                                     Text(
                                         "Downloaded \(ByteCountFormatter.string(fromByteCount: downloaded, countStyle: .file)) of \(ByteCountFormatter.string(fromByteCount: total, countStyle: .file))"
                                     )
-                                    .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                                    .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                                 } else { ProgressView().controlSize(.large) }
                                 Text(
                                     "Omnesis is protecting your library and preparing local search. This may take a few minutes. You can keep this window open to follow its progress."
                                 )
                             case .waiting:
                                 if store.state.retired == true {
-                                    ContentUnavailableView(
-                                        "Omnesis is stopped on this Mac",
-                                        systemImage: "app.badge.checkmark",
-                                        description: Text(store.state
+                                    ContentUnavailableView {
+                                        Label {
+                                            Text("Omnesis is stopped on this Mac")
+                                                .font(DesktopDesignTokens.Typography.body.weight(.medium))
+                                                .accessibilityIdentifier("waiting-retired-summary")
+                                        } icon: {
+                                            Image(systemName: "app.badge.checkmark")
+                                                .font(.system(size: DesktopDesignTokens.Icon.prominent))
+                                        }
+                                    } description: {
+                                        Text(store.state
                                             .message ?? "Your removal choice is kept. Omnesis will not start in the background.")
-                                    )
+                                    }
                                     Button("Review removal") {
                                         store.removalPlan = nil
                                         store.removalOutcome = nil
@@ -187,13 +206,20 @@ struct DesktopOnboardingView: View {
                                     Button("Check this Mac’s library") { store.command("connect") }
                                         .buttonStyle(DesktopButtonStyle(primary: true))
                                 } else {
-                                    ContentUnavailableView(
-                                        "Your library is not connected yet",
-                                        systemImage: "laptopcomputer",
-                                        description: Text(
+                                    ContentUnavailableView {
+                                        Label {
+                                            Text("Your library is not connected yet")
+                                                .font(DesktopDesignTokens.Typography.body.weight(.medium))
+                                                .accessibilityIdentifier("waiting-disconnected-summary")
+                                        } icon: {
+                                            Image(systemName: "laptopcomputer")
+                                                .font(.system(size: DesktopDesignTokens.Icon.prominent))
+                                        }
+                                    } description: {
+                                        Text(
                                             "Start Omnesis on the computer that keeps your library. If it has not been set up yet, start there first."
                                         )
-                                    )
+                                    }
                                     Button("Look again") { store.command("connect") }.buttonStyle(DesktopButtonStyle(primary: true))
                                     if store.state.canChangeUnpreparedChoice {
                                         Button("Change setup choice") { store.command("status") }
@@ -218,14 +244,15 @@ struct DesktopOnboardingView: View {
                         if store.busy, store.state.phase != .preparing {
                             ProgressView(store.launchingRuntime ? "Preparing the Omnesis app…" : "Working…")
                         }
-                    }.frame(maxWidth: 600, alignment: .leading).padding(48).frame(maxWidth: .infinity)
+                    }.frame(maxWidth: DesktopDesignTokens.Layout.formWidth, alignment: .leading)
+                        .padding(DesktopDesignTokens.Layout.wideMargin).frame(maxWidth: .infinity)
                         .frame(minHeight: geometry.size.height)
                 }.disabled(store.busy || store.startupCancelled)
             }
             if store.launchingRuntime {
                 Button(store.cancellingStartup ? "Cancelling preparation…" : "Cancel preparation") {
                     Task { await store.cancelStartup() }
-                }.disabled(store.cancellingStartup).padding(.bottom, 24)
+                }.disabled(store.cancellingStartup).padding(.bottom, DesktopDesignTokens.Space.section)
             }
         }.onChange(of: store.state.signup?.readableTermsURL) { termsAccepted = false }
             .omnesisTheme()
@@ -243,8 +270,8 @@ struct RuntimeInteractionView: View {
     @Environment(DesktopStore.self) private var store
     let interaction: RuntimeInteraction
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Text(title).font(.title2.bold())
+        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.large) {
+            Text(title).font(DesktopDesignTokens.Typography.pageTitle).accessibilityAddTraits(.isHeader)
             if let message = interaction.message { Text(message) }
             if let code = interaction
                 .code { Text(code).font(.largeTitle.monospaced()).textSelection(.enabled).accessibilityIdentifier("comparison-code") }
@@ -268,7 +295,7 @@ struct RuntimeInteractionView: View {
                     Button("I’ve finished in the browser") { store.respond("continue") }
                 }
             }
-        }.padding(30).frame(width: 480)
+        }.padding(DesktopDesignTokens.Space.section).frame(width: 480)
     }
 
     private var title: String {
@@ -291,39 +318,41 @@ struct DesktopSetupChecklist: View {
     var loadStatus = true
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Set up Omnesis").font(.system(size: 30, weight: .bold))
+            VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.section) {
+                VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.small) {
+                    Text("Set up Omnesis").font(DesktopDesignTokens.Typography.pageTitle).accessibilityAddTraits(.isHeader)
                     Text("Complete the required checks, then choose the information you want to find. Optional connections can wait.")
                         .foregroundStyle(DesktopTheme.secondary)
                 }
                 if !store.requiredSetupReady {
-                    HStack(spacing: 12) {
+                    HStack(spacing: DesktopDesignTokens.Space.medium) {
                         Image(systemName: store.state.canOpenLibrary ? "checkmark.shield.fill" : "clock")
-                            .foregroundStyle(DesktopTheme.teal)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(store.state.canOpenLibrary ? "Your library is connected" : "Checking your library").font(.headline)
+                            .foregroundStyle(store.state.canOpenLibrary ? DesktopTheme.success : DesktopTheme.secondary)
+                        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.xSmall) {
+                            Text(store.state.canOpenLibrary ? "Your library is connected" : "Checking your library")
+                                .font(DesktopDesignTokens.Typography.body.weight(.medium))
                             Text(store.state.encrypted == true
                                 ?
                                 (store.state
                                     .mode == "joined" ? "This Mac and your library use encrypted storage" : "Encrypted storage on this Mac")
                                 : "Checking your library’s protection")
-                                .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                                .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                         }
                     }
                 }
                 DesktopSetupReadinessView()
                 GroupBox {
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text("Your information").font(.title3.weight(.semibold))
+                    VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.regular) {
+                        Text("Your information").font(DesktopDesignTokens.Typography.section).accessibilityAddTraits(.isHeader)
                         Text(sourceSummary).foregroundStyle(DesktopTheme.secondary)
                         Button(store.sources.isEmpty ? "Add your first source" : "Review your sources") { store.destination = .sources }
                             .buttonStyle(DesktopButtonStyle(primary: !store.requiredSetupNeedsAction))
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }
                 GroupBox {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Label("Access on this Mac", systemImage: "lock.shield").font(.title3.weight(.semibold))
+                    VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.medium) {
+                        Label("Access on this Mac", systemImage: "lock.shield").font(DesktopDesignTokens.Typography.section)
+                            .accessibilityAddTraits(.isHeader)
                         Text(
                             "Choose the information this Mac may collect. Omnesis checks only the access needed for those sources; search and answers from a library elsewhere do not require broad local permissions."
                         )
@@ -334,8 +363,8 @@ struct DesktopSetupChecklist: View {
                         .buttonStyle(DesktopButtonStyle()).accessibilityIdentifier("setup-collection-access")
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }
-                VStack(alignment: .leading, spacing: 20) {
-                    Text("More ways to use your library").font(.title3.weight(.semibold))
+                VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.large) {
+                    Text("More ways to use your library").font(DesktopDesignTokens.Typography.section).accessibilityAddTraits(.isHeader)
                     optionalStep("Answers in this app", detail: modelSummary, symbol: "sparkles", action: "Set up answers") {
                         store.settingsTab = "ai"
                         if let presentSettings { presentSettings() } else { openSettings() }
@@ -352,7 +381,8 @@ struct DesktopSetupChecklist: View {
                         action: "Open assistants"
                     ) { store.destination = .assistants }
                 }
-            }.padding(32).frame(maxWidth: 760, alignment: .leading).frame(maxWidth: .infinity)
+            }.padding(DesktopDesignTokens.Layout.wideMargin).frame(maxWidth: DesktopDesignTokens.Layout.readingWidth, alignment: .leading)
+                .frame(maxWidth: .infinity)
         }.navigationTitle("Setup").omnesisTheme()
             .task(id: store.apiContext?.id) { if loadStatus { await assistantStatus.observe(store.apiContext) } }
             .onChange(of: scenePhase) { if scenePhase == .active { store.apiContext?.run { scope in
@@ -421,13 +451,14 @@ struct DesktopSetupChecklist: View {
     }
 
     private func optionalStep(_ title: String, detail: String, symbol: String, action: String, perform: @escaping () -> Void) -> some View {
-        HStack(alignment: .top, spacing: 16) {
-            Image(systemName: symbol).font(.system(size: 20)).foregroundStyle(DesktopTheme.accent).frame(width: 28)
-            VStack(alignment: .leading, spacing: 7) {
-                HStack { Text(title).font(.headline)
-                    Text("Optional").font(.caption).foregroundStyle(DesktopTheme.secondary)
+        HStack(alignment: .top, spacing: DesktopDesignTokens.Space.regular) {
+            Image(systemName: symbol).font(.system(size: DesktopDesignTokens.Icon.prominent)).foregroundStyle(DesktopTheme.secondary)
+                .frame(width: 28)
+            VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.small) {
+                HStack { Text(title).font(DesktopDesignTokens.Typography.body.weight(.medium))
+                    Text("Optional").font(DesktopDesignTokens.Typography.metadata).foregroundStyle(DesktopTheme.secondary)
                 }
-                Text(detail).font(.callout).foregroundStyle(DesktopTheme.secondary)
+                Text(detail).font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                 Button(action, action: perform).accessibilityIdentifier(title == "Answers in this app" ? "setup-models" : "setup-" + symbol)
             }
             Spacer(minLength: 0)

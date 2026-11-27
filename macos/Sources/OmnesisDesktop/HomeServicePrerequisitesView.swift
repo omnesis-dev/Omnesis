@@ -21,11 +21,11 @@ struct DesktopHomeServicePrerequisites: View {
                 case .checking:
                     checking("Checking space for collection…")
                 case .blocked, .unavailable:
-                    VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.small) {
                         Text(store.homeServices.storage == .blocked ? "Collection needs more storage" : "Storage needs checking")
-                            .font(.headline).accessibilityAddTraits(.isHeader)
+                            .font(DesktopDesignTokens.Typography.body.weight(.medium)).accessibilityAddTraits(.isHeader)
                         Text("Review storage before collecting more information. Your existing library remains available to read.")
-                            .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                            .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                         HStack {
                             Button("Review storage") { store.settingsTab = "storage"
                                 openSettings()
@@ -42,11 +42,12 @@ struct DesktopHomeServicePrerequisites: View {
                 case .checking:
                     checking("Checking your library’s remote connection…")
                 case .blocked, .unavailable:
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Your library’s remote connection needs checking").font(.headline).accessibilityAddTraits(.isHeader)
+                    VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.small) {
+                        Text("Your library’s remote connection needs checking").font(DesktopDesignTokens.Typography.body.weight(.medium))
+                            .accessibilityAddTraits(.isHeader)
                         Text(
                             "Omnesis could not confirm the connection used by your other devices. Keep this Mac online and review its connection. You can still read information already available here."
-                        ).font(.callout).foregroundStyle(DesktopTheme.secondary)
+                        ).font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                         HStack {
                             Button("Review connection") {
                                 showConnection = true
@@ -69,10 +70,10 @@ struct DesktopHomeServicePrerequisites: View {
     }
 
     private func passed(_ title: String) -> some View {
-        Label(title, systemImage: "checkmark.circle").font(.callout).foregroundStyle(DesktopTheme.teal)
+        Label(title, systemImage: "checkmark.circle").font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.success)
     }
 
     private func checking(_ title: String) -> some View {
-        Label(title, systemImage: "clock").font(.callout).foregroundStyle(DesktopTheme.secondary)
+        Label(title, systemImage: "clock").font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
     }
 }

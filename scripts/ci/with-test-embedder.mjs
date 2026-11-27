@@ -211,7 +211,23 @@ export async function main(args = process.argv.slice(2)) {
   const require = createRequire(new URL("../../packages/gateway/package.json", import.meta.url));
   const { getLlama } = await import(pathToFileURL(require.resolve("node-llama-cpp")).href);
   const llama = await getLlama({ gpu: false, maxThreads: 2 });
-  return runWithEmbeddingRuntime(args, { modelPath, port, llama });
+  return runWithEmbeddingRuntime(args, { modelPath, port, llama, disposeModel: false });
+}
+
+/**
+ * End this process without freeing the native model. On a Windows host whose CPU has
+ * AMX, llama.cpp keeps the model weights in a buffer it allocates with
+ * `_aligned_malloc` and frees with `free`, so freeing the model aborts the process with
+ * STATUS_HEAP_CORRUPTION (0xC0000374) after the check has already passed. The process
+ * is ending, so the operating system reclaims the model instead. `process.exit` also
+ * skips node-llama-cpp's own `beforeExit` disposal, which would free it the same way.
+ */
+export async function exitWithoutModelTeardown(
+  code,
+  { exit = (status) => process.exit(status), streams = [process.stdout, process.stderr] } = {},
+) {
+  await Promise.all(streams.map((stream) => new Promise((resolve) => stream.write("", resolve))));
+  exit(code);
 }
 
 /** Keep embedding resources alive until the owned check has confirmed its cleanup. */
@@ -223,6 +239,8 @@ export async function runWithEmbeddingRuntime(
     llama,
     retainUnconfirmed = retainRuntime,
     writeStderr = (text) => process.stderr.write(text),
+    // The process entry leaves the model to process exit; see exitWithoutModelTeardown.
+    disposeModel = true,
   },
   run = runCheckCommand,
 ) {
@@ -284,8 +302,7 @@ export async function runWithEmbeddingRuntime(
           }
         },
         () => context?.dispose(),
-        () => model?.dispose(),
-        () => llama.dispose(),
+        ...(disposeModel ? [() => model?.dispose(), () => llama.dispose()] : []),
       ]) {
         try {
           await cleanup();
@@ -323,4 +340,6 @@ if (import.meta.main) {
     process.stderr.write(`${checkFailureMessage(error)}\n`);
     process.exitCode = 1;
   }
+  // Retained resources deliberately keep the process alive for review.
+  if (retainedRuntimes.size === 0) await exitWithoutModelTeardown(process.exitCode);
 }

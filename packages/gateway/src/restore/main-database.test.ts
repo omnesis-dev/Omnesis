@@ -36,6 +36,7 @@ import { createToken } from "../data/repositories/TokenRepository.js";
 import { createServer } from "../server.js";
 import { enqueueNewNotes, claimDueNote } from "../brain/note-agent/storage.js";
 import { directWriteGate } from "../write-gate.js";
+import { assignRecordingVoices, listUngroupedRecordingVoices } from "../recordings/storage.js";
 import {
   retireDeviceSources,
   sourceArchivedDevices,
@@ -694,5 +695,115 @@ test("completed and unfinished recording blobs and metadata survive reconstructi
     expect(tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all())).toEqual(expected);
   } finally {
     db.close();
+  }
+});
+
+test("restores split-conversation content and packed voices without changing input authority or losing FK ownership", () => {
+  const recording = "invented-split-history";
+  const stamp = "2026-02-01T09:00:00.000Z";
+  source
+    .prepare(
+      "INSERT INTO recording_sessions(id,origin,started_at,last_activity_at,revision,created_at) VALUES(?,'ambient',?,?,4,?)",
+    )
+    .run(recording, stamp, stamp, stamp);
+  for (const seq of [0, 2]) {
+    source
+      .prepare(
+        "INSERT INTO recording_chunks(session_id,seq,started_at,duration_ms,audio,status,text,voices,voice_vectors,next_attempt_at,received_at) VALUES(?,?,?,1000,?,'transcribed','Invented saved conversation',?,?,?,?)",
+      )
+      .run(
+        recording,
+        seq,
+        stamp,
+        Buffer.from("invented preserved audio"),
+        JSON.stringify([{ startMs: 0, endMs: 1000 }]),
+        Buffer.from(new Float32Array(seq === 0 ? [1, 0] : [0, 1]).buffer),
+        stamp,
+        stamp,
+      );
+  }
+  source
+    .prepare(
+      "INSERT INTO recording_participants(session_id,key,name,added_at) VALUES(?,'name:invented guest','Invented guest',?)",
+    )
+    .run(recording, stamp);
+  for (const n of [1, 2]) {
+    source
+      .prepare(
+        "INSERT INTO recording_conversations(session_id,n,first_seq,last_seq,started_at,ended_at,title,content_hash,closed_at) VALUES(?,?,?,?,?,?,?,?,?)",
+      )
+      .run(
+        recording,
+        n,
+        n === 1 ? 0 : 2,
+        n === 1 ? 0 : 2,
+        stamp,
+        stamp,
+        `Invented conversation ${n}`,
+        n === 1 ? "saved-hash" : null,
+        stamp,
+      );
+  }
+  const tables = [
+    "recording_sessions",
+    "recording_chunks",
+    "recording_participants",
+    "recording_conversations",
+  ];
+  const expected = tables.map((table) => source.prepare(`SELECT * FROM ${table}`).all());
+  source.close();
+  target.close();
+  const sourceBefore = readFileSync(join(dir, "source.db"));
+  const targetBefore = readFileSync(join(dir, "target.db"));
+  expect(
+    reconcileRestoredMainDatabase({
+      sourcePath: join(dir, "source.db"),
+      targetPath: join(dir, "target.db"),
+      destinationPath: join(dir, "destination.db"),
+      sourceKey,
+      targetKey,
+      destinationKey,
+    }).recordings,
+  ).toBe(1);
+  expect(readFileSync(join(dir, "source.db"))).toEqual(sourceBefore);
+  expect(readFileSync(join(dir, "target.db"))).toEqual(targetBefore);
+  expect(sqliteFileLooksPlaintext(join(dir, "destination.db"))).toBe(false);
+  const restored = result();
+  try {
+    expect(tables.map((table) => restored.prepare(`SELECT * FROM ${table}`).all())).toEqual(
+      expected,
+    );
+    expect(restored.pragma("foreign_key_check")).toEqual([]);
+    const range = listUngroupedRecordingVoices(restored as unknown as Db, recording, {
+      fromSeq: 2,
+      toSeq: 2,
+    });
+    expect(range.map((chunk) => chunk.seq)).toEqual([2]);
+    expect(range[0]?.vectors[0]).toEqual(new Float32Array([0, 1]));
+    assignRecordingVoices(restored as unknown as Db, recording, [
+      { seq: 2, windows: [{ startMs: 0, endMs: 1000, speaker: 1 }] },
+    ]);
+    expect(
+      restored
+        .prepare("SELECT voice_vectors FROM recording_chunks WHERE session_id=? AND seq=0")
+        .pluck()
+        .get(recording),
+    ).not.toBeNull();
+    expect(
+      restored
+        .prepare("SELECT voice_vectors FROM recording_chunks WHERE session_id=? AND seq=2")
+        .pluck()
+        .get(recording),
+    ).toBeNull();
+    restored.pragma("foreign_keys = ON");
+    restored.prepare("DELETE FROM recording_sessions WHERE id=?").run(recording);
+    for (const table of ["recording_participants", "recording_conversations"]) {
+      expect(
+        restored.prepare(`SELECT count(*) FROM ${table} WHERE session_id=?`).pluck().get(recording),
+      ).toBe(0);
+    }
+    expect(restored.pragma("foreign_key_check")).toEqual([]);
+  } finally {
+    restored.close();
   }
 });

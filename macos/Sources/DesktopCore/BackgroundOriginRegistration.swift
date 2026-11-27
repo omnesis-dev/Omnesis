@@ -3,7 +3,7 @@
 
 import Foundation
 
-/// One attachment has one immutable callback identity. Verification runs off the UI/presenter queue.
+/// One attachment has one immutable callback identity. Coordination runs on its presenter queue.
 public final class DesktopBackgroundOriginRegistration: NSObject, NSFilePresenter, @unchecked Sendable {
     public let id = UUID()
     private let lock = NSLock()
@@ -48,11 +48,45 @@ public final class DesktopBackgroundOriginRegistration: NSObject, NSFilePresente
         return registered && generation == event
     }
 
-    public func verify(_ record: DesktopBackgroundApplicationOrigin.Record) throws -> URL {
-        try verify(record, archiveRoot: DesktopApplicationArchive.defaultRoot, validate: DesktopRuntimeBootstrap.validateApplication)
+    public func verify(_ record: DesktopBackgroundApplicationOrigin.Record) async throws -> URL {
+        try await verify(record, archiveRoot: DesktopApplicationArchive.defaultRoot, validate: DesktopRuntimeBootstrap.validateApplication)
     }
 
-    func verify(_ record: DesktopBackgroundApplicationOrigin.Record, archiveRoot: URL, validate: (URL) throws -> Void) throws -> URL {
+    func verify(
+        _ record: DesktopBackgroundApplicationOrigin.Record,
+        archiveRoot: URL,
+        validate: @escaping @Sendable (URL) throws -> Void
+    ) async throws
+        -> URL {
+        let cancellation = VerificationCancellation()
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            let verified = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
+                // Do not cancel the operation: every queued verification must settle its continuation.
+                queue.addOperation { [self] in
+                    do {
+                        try cancellation.check()
+                        try continuation.resume(returning: verifyOnQueue(
+                            record,
+                            archiveRoot: archiveRoot,
+                            validate: validate,
+                            cancellation: cancellation
+                        ))
+                    } catch { continuation.resume(throwing: error) }
+                }
+            }
+            try Task.checkCancellation()
+            return verified
+        } onCancel: { cancellation.cancel() }
+    }
+
+    private func verifyOnQueue(
+        _ record: DesktopBackgroundApplicationOrigin.Record,
+        archiveRoot: URL,
+        validate: (URL) throws -> Void,
+        cancellation: VerificationCancellation
+    ) throws
+        -> URL {
         lock.lock()
         let expected = location, attempt = generation, active = registered
         lock.unlock()
@@ -73,6 +107,7 @@ public final class DesktopBackgroundOriginRegistration: NSObject, NSFilePresente
                 let resolved = try DesktopBackgroundApplicationOrigin.resolve(record, archiveRoot: archiveRoot, validate: validate)
                 guard try DesktopCanonicalPath.resolve(coordinated.path) == expectedCanonical,
                       resolved.path == expectedCanonical else { throw DesktopBackgroundApplicationOrigin.Failure.changedObject }
+                try cancellation.check()
                 self.lock.lock()
                 let matches = self.registered && self.generation == attempt && self.location.path == expected.path
                 if matches { self.verifiedGeneration = attempt }
@@ -124,6 +159,23 @@ public final class DesktopBackgroundOriginRegistration: NSObject, NSFilePresente
         verifiedGeneration = nil
         lock.unlock()
         NSFileCoordinator.removeFilePresenter(self)
+    }
+
+    private final class VerificationCancellation: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cancelled = false
+        func cancel() {
+            lock.lock()
+            cancelled = true
+            lock.unlock()
+        }
+
+        func check() throws {
+            lock.lock()
+            let value = cancelled
+            lock.unlock()
+            if value { throw CancellationError() }
+        }
     }
 
     deinit { stop() }

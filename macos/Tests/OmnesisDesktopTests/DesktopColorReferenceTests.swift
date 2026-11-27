@@ -24,11 +24,25 @@ final class DesktopColorReferenceTests: XCTestCase {
     }
 
     private static var explicit: NSColor {
-        NSColor(srgbRed: 11.0 / 255, green: 21.0 / 255, blue: 36.0 / 255, alpha: 1)
+        DesktopNativeColorReference.canvas
     }
 
-    private static var literal: Color {
-        Color(.sRGB, red: 11.0 / 255, green: 21.0 / 255, blue: 36.0 / 255, opacity: 1)
+    private static func literal(for appearance: NSAppearance) -> Color {
+        let expected = DesktopNativeColorReference.expectedCanvas(appearance)
+        return Color(
+            .sRGB,
+            red: Double(expected.redComponent),
+            green: Double(expected.greenComponent),
+            blue: Double(expected.blueComponent),
+            opacity: 1
+        )
+    }
+
+    private struct LiteralPatch: View {
+        @Environment(\.colorScheme) private var scheme
+        var body: some View {
+            DesktopColorReferenceTests.literal(for: NSAppearance(named: scheme == .light ? .aqua : .darkAqua)!)
+        }
     }
 
     func testActualNativeAndSwiftUIColorReferencesShareOpaqueCanvasRendering() async throws {
@@ -36,13 +50,21 @@ final class DesktopColorReferenceTests: XCTestCase {
         let size = CGSize(width: 600, height: 240)
         let name = "native-color-reference"
         let appearances: [NSAppearance.Name] = [.aqua, .darkAqua]
-        for color in [Self.explicit, NSColor(Self.literal), NSColor(Color(nsColor: Self.explicit)), NSColor(DesktopTheme.canvas)] {
-            try DesktopNativeColorReference.validateLogicalCanvas(color)
+        for name in appearances {
+            let appearance = try XCTUnwrap(NSAppearance(named: name))
+            for color in [
+                Self.explicit,
+                NSColor(Self.literal(for: appearance)),
+                NSColor(Color(nsColor: Self.explicit)),
+                NSColor(DesktopTheme.canvas),
+            ] {
+                try DesktopNativeColorReference.validateLogicalCanvas(color, appearance: appearance)
+            }
         }
         let width = size.width / CGFloat(Patch.allCases.count)
         let view = HStack(spacing: 0) {
             DesktopNativeColorReference.Brush(color: Self.explicit).frame(width: width, height: 240)
-            Self.literal.frame(width: width, height: 240)
+            LiteralPatch().frame(width: width, height: 240)
             Color(nsColor: Self.explicit).frame(width: width, height: 240)
             DesktopTheme.canvas.frame(width: width, height: 240)
             DesktopNativeColorReference.Brush(color: .black).frame(width: width, height: 240)
@@ -64,7 +86,7 @@ final class DesktopColorReferenceTests: XCTestCase {
             }
             let logical: [NSColor] = [
                 Self.explicit,
-                NSColor(Self.literal),
+                NSColor(Self.literal(for: window.effectiveAppearance)),
                 NSColor(Color(nsColor: Self.explicit)),
                 NSColor(DesktopTheme.canvas),
                 .black, .white, DesktopNativeColorReference.ink,
@@ -73,7 +95,11 @@ final class DesktopColorReferenceTests: XCTestCase {
                 "format": 1,
                 "cachePNGHash": Self.digest(cachePNG),
                 "patchOrder": Patch.allCases.map(\.rawValue),
-                "logicalColors": logical.map { try Self.colorFacts($0) },
+                "logicalColors": logical.map { color in
+                    var resolved: NSColor?
+                    window.effectiveAppearance.performAsCurrentDrawingAppearance { resolved = color.usingColorSpace(.sRGB) }
+                    return try Self.colorFacts(XCTUnwrap(resolved))
+                },
                 "displayColorSpace": Self.spaceFacts(window.screen?.colorSpace),
                 "backingScale": window.backingScaleFactor,
                 "contentWidth": hosting.bounds.width, "contentHeight": hosting.bounds.height,
@@ -131,8 +157,8 @@ final class DesktopColorReferenceTests: XCTestCase {
         XCTAssertThrowsError(try DesktopNativeColorReference.validateControls(paint(Array(repeating: black, count: 4))))
         XCTAssertThrowsError(try DesktopNativeColorReference.validateControls(paint(Array(repeating: canvas, count: 4))))
         XCTAssertThrowsError(try DesktopNativeColorReference.validateControls(paint([canvas, black, white, [233, 239, 247, 0]])))
-        XCTAssertThrowsError(try DesktopNativeColorReference.validateLogicalCanvas(.red))
-        try DesktopNativeColorReference.validateLogicalCanvas(Self.explicit)
+        XCTAssertThrowsError(try DesktopNativeColorReference.validateLogicalCanvas(.red, appearance: XCTUnwrap(NSAppearance(named: .aqua))))
+        try DesktopNativeColorReference.validateLogicalCanvas(Self.explicit, appearance: XCTUnwrap(NSAppearance(named: .darkAqua)))
         let expectedInk = DesktopNativeColorReference.Pixel(channels: ink.map { Double($0) / 255 })
         let background = try paint(Array(repeating: canvas, count: 4))
         XCTAssertFalse(background.contains { $0.matches(expectedInk) })
@@ -233,12 +259,31 @@ final class DesktopColorReferenceTests: XCTestCase {
 @MainActor
 enum DesktopNativeColorReference {
     static let accuracy = 0.01
+    /// Independent specified palette values: never derive expected pixels from DesktopTheme.
+    nonisolated static func expectedCanvas(_ appearance: NSAppearance) -> NSColor {
+        expected(appearance, light: 0xFAFAFB, dark: 0x13161B)
+    }
+
+    nonisolated static func expectedInk(_ appearance: NSAppearance) -> NSColor {
+        expected(appearance, light: 0x20242B, dark: 0xF0F2F5)
+    }
+
+    private nonisolated static func expected(_ appearance: NSAppearance, light: UInt32, dark: UInt32) -> NSColor {
+        let value = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
+        return NSColor(
+            srgbRed: CGFloat((value >> 16) & 255) / 255,
+            green: CGFloat((value >> 8) & 255) / 255,
+            blue: CGFloat(value & 255) / 255,
+            alpha: 1
+        )
+    }
+
     static var canvas: NSColor {
-        NSColor(srgbRed: 11.0 / 255, green: 21.0 / 255, blue: 36.0 / 255, alpha: 1)
+        NSColor(name: nil) { expectedCanvas($0) }
     }
 
     static var ink: NSColor {
-        NSColor(srgbRed: 233.0 / 255, green: 239.0 / 255, blue: 247.0 / 255, alpha: 1)
+        NSColor(name: nil) { expectedInk($0) }
     }
 
     @MainActor struct Pixel {
@@ -262,15 +307,23 @@ enum DesktopNativeColorReference {
 
     enum Failure: Error { case bitmap, logicalCanvas, controls, mapping, pipeline, emptyContent }
 
-    static func validateLogicalCanvas(_ color: NSColor) throws {
-        guard let actual = color.usingColorSpace(.sRGB),
+    static func validateLogicalCanvas(_ color: NSColor, appearance: NSAppearance) throws {
+        var resolved: NSColor?
+        appearance.performAsCurrentDrawingAppearance { resolved = color.usingColorSpace(.sRGB) }
+        let expected = expectedCanvas(appearance)
+        guard let actual = resolved,
               Pixel(channels: [
                   Double(actual.redComponent),
                   Double(actual.greenComponent),
                   Double(actual.blueComponent),
                   Double(actual.alphaComponent),
               ])
-              .matches(Pixel(channels: [11.0 / 255, 21.0 / 255, 36.0 / 255, 1])) else { throw Failure.logicalCanvas }
+              .matches(Pixel(channels: [
+                  Double(expected.redComponent),
+                  Double(expected.greenComponent),
+                  Double(expected.blueComponent),
+                  1,
+              ])) else { throw Failure.logicalCanvas }
     }
 
     static func pixel(_ bitmap: NSBitmapImageRep, x: Int, y: Int) throws -> Pixel {
@@ -292,13 +345,13 @@ enum DesktopNativeColorReference {
     }
 
     static func capture(for target: NSWindow, output: URL) async throws -> Reference {
-        try validateLogicalCanvas(NSColor(DesktopTheme.canvas))
-        try validateLogicalCanvas(canvas)
+        let appearance = try XCTUnwrap(target.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]))
+        try validateLogicalCanvas(NSColor(DesktopTheme.canvas), appearance: target.effectiveAppearance)
+        try validateLogicalCanvas(canvas, appearance: target.effectiveAppearance)
         let screen = try XCTUnwrap(target.screen)
         let screenProfile = try profile(screen.colorSpace)
-        let appearance = try XCTUnwrap(target.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]))
         let view = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 160))
-        let colors: [NSColor] = [canvas, .black, .white, ink]
+        let colors: [NSColor] = [expectedCanvas(target.effectiveAppearance), .black, .white, expectedInk(target.effectiveAppearance)]
         for (index, color) in colors.enumerated() {
             let patch = PaintedView(color: color)
             patch.frame = NSRect(x: CGFloat(index) * 100, y: 0, width: 100, height: 160)
@@ -325,9 +378,9 @@ enum DesktopNativeColorReference {
         DesktopSnapshotRenderer.assertOwnedWindowChrome(window)
         let name = "search-document-native-reference"
         try await DesktopSnapshotRenderer.captureOwnedWindow(
-            window, output: output, name: name, appearance: .darkAqua, requireActive: true
+            window, output: output, name: name, appearance: appearance, requireActive: true
         )
-        let data = try Data(contentsOf: output.appendingPathComponent("\(name)-window-NSAppearanceNameDarkAqua.png"))
+        let data = try Data(contentsOf: output.appendingPathComponent("\(name)-window-\(appearance.rawValue).png"))
         let bitmap = try XCTUnwrap(NSBitmapImageRep(data: data))
         let centers = (0 ..< 4).map { view.convert(NSPoint(x: CGFloat($0) * 100 + 50, y: 80), to: nil) }
         let samples = try centers.map { point in

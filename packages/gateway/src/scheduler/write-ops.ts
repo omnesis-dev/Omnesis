@@ -659,9 +659,15 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "recordings.markProjected", priority: "background" },
   // Bounded by one session's chunks: a four-hour recording has 240.
   { name: "recordings.assignVoices", priority: "background" },
+  // A few rows per all-day session as its conversations close.
+  { name: "recordings.closeConversations", priority: "background" },
+  { name: "recordings.markConversationProjected", priority: "background" },
+  { name: "recordings.setConversationTitle", priority: "user" },
   { name: "recordings.setSpeaker", priority: "user" },
   { name: "recordings.setTitle", priority: "user" },
   { name: "recordings.dismissSuggestion", priority: "user" },
+  { name: "recordings.addParticipant", priority: "user" },
+  { name: "recordings.removeParticipant", priority: "user" },
 
   // Pushed agent-conversation turns (experimental). Small single-row writes;
   // a plugin's live push must not sit behind a bulk backfill.

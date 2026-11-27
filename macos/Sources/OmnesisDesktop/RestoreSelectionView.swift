@@ -17,14 +17,14 @@ struct DesktopRestoreSelectionView: View {
     @State private var generation = UUID()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Choose a saved Omnesis backup").font(.headline)
+        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.medium) {
+            Text("Choose a saved Omnesis backup").font(DesktopDesignTokens.Typography.body.weight(.medium))
             Text("Your selected archive is read without changing the original. Omnesis keeps temporary imported contents encrypted.")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DesktopTheme.secondary)
             if let selected {
                 Text(URL(fileURLWithPath: selected.path).lastPathComponent).privacySensitive()
                 Text(ByteCountFormatter.string(fromByteCount: selected.bytes, countStyle: .file))
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
             }
             Button(selected == nil ? "Choose backup archive…" : "Choose another backup…") { chooseArchive() }
                 .disabled(reading)
@@ -88,15 +88,22 @@ struct DesktopRestoreRecoveryInput: View {
     @State private var generation = UUID()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Unlock this backup").font(.headline)
+        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.medium) {
+            Text("Unlock this backup").font(DesktopDesignTokens.Typography.body.weight(.medium))
             Text("Use the recovery code saved for this backup. This does not replace the key already protecting this Mac’s library.")
-                .foregroundStyle(.secondary)
-            SecureField("Backup recovery code", text: $code).privacySensitive()
-            if code.count > 512 { Text("This recovery code is too long. Check the code saved with this backup.").foregroundStyle(DesktopTheme.danger) }
+                .foregroundStyle(DesktopTheme.secondary)
+            VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.xSmall) {
+                Text("Backup recovery code").font(DesktopDesignTokens.Typography.secondary.weight(.medium))
+                    .accessibilityIdentifier("restore-backup-code-label")
+                SecureField("Backup recovery code", text: $code).privacySensitive()
+                    .accessibilityIdentifier("restore-backup-code")
+            }
+            if code
+                .count >
+                512 { Text("This recovery code is too long. Check the code saved with this backup.").foregroundStyle(DesktopTheme.danger) }
             Button("Choose a separate recovery file…") { chooseRecoveryFile() }.disabled(reading)
             Text("A separate file is needed only if the backup does not contain its recovery file.")
-                .font(.callout).foregroundStyle(.secondary)
+                .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
             if let filename { Text(filename).privacySensitive() }
             if reading { ProgressView("Reading recovery file…") }
             if let error { Text(error).foregroundStyle(DesktopTheme.danger) }

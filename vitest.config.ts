@@ -32,6 +32,7 @@ export default defineConfig({
     include: [
       "evals/briefs/src/**/*.test.ts",
       "evals/search/src/**/*.test.ts",
+      "evals/speakers/src/**/*.test.ts",
       "evals/universes/**/_build/*.test.mjs",
       "extension/src/**/*.test.ts",
       "extension/scripts/**/*.test.mjs",

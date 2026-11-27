@@ -107,9 +107,10 @@ struct SourceCompanionGuideView: View {
     let openPortal: () -> Void
     var body: some View {
         if let guide = SourceCompanionGuide.read(descriptor) {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.regular) {
                 Label { Text(verbatim: guide.title) } icon: { Image(systemName: "arrow.up.forward.app") }
-                    .font(.title2).accessibilityIdentifier("source-guide-title")
+                    .font(DesktopDesignTokens.Typography.section).accessibilityIdentifier("source-guide-title")
+                    .accessibilityAddTraits(.isHeader)
                 ForEach(Array(guide.paragraphs.enumerated()), id: \.offset) { _, paragraph in Text(verbatim: paragraph) }
                 ForEach(Array(guide.links.enumerated()), id: \.offset) { index, link in
                     Button {
@@ -118,14 +119,16 @@ struct SourceCompanionGuideView: View {
                         .buttonStyle(DesktopButtonStyle(primary: index == 0))
                         .accessibilityIdentifier("source-guide-link-\(index)")
                 }
-                if let note = guide.note { Text(verbatim: note).font(.callout).foregroundStyle(DesktopTheme.secondary) }
+                if let note = guide
+                    .note { Text(verbatim: note).font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary) }
                 // This native action opens the portal home; it does not promise a pairing deep link.
                 Button("Open web setup", action: openPortal).buttonStyle(DesktopButtonStyle())
                     .accessibilityIdentifier("source-guide-portal")
             }
         } else {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Companion setup").font(.title2).accessibilityIdentifier("source-guide-unavailable")
+            VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.regular) {
+                Text("Companion setup").font(DesktopDesignTokens.Typography.section).accessibilityIdentifier("source-guide-unavailable")
+                    .accessibilityAddTraits(.isHeader)
                 Text("This gateway does not provide a supported setup guide. Open web setup to continue.")
                     .foregroundStyle(DesktopTheme.secondary)
                 Button("Open web setup", action: openPortal).buttonStyle(DesktopButtonStyle(primary: true))

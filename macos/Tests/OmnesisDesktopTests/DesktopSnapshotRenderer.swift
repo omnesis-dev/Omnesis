@@ -30,9 +30,13 @@ enum DesktopSnapshotRenderer {
             window.close()
         } }
         for appearance in [NSAppearance.Name.aqua, .darkAqua] {
-            let scheme: ColorScheme = appearance == .aqua ? .light : .dark
+            let suite = "dev.omnesis.render-tests." + UUID().uuidString
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+            defer { defaults.removePersistentDomain(forName: suite) }
             let content = view.frame(width: size.width, height: size.height)
-                .omnesisTheme().environment(\.colorScheme, scheme)
+                .omnesisTheme()
+                .defaultAppStorage(defaults)
+                .environment(\.desktopAppearanceOverride, appearance == .aqua ? .light : .dark)
                 .background(DesktopTheme.canvas)
             let hosting = NSHostingView(rootView: content)
             hosting.sizingOptions = []
@@ -59,6 +63,11 @@ enum DesktopSnapshotRenderer {
             try await Task.sleep(for: .milliseconds(150))
             hosting.layoutSubtreeIfNeeded()
             hosting.displayIfNeeded()
+            XCTAssertEqual(
+                window.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]),
+                appearance,
+                "The appearance-labelled raster must use that actual native appearance"
+            )
             XCTAssertEqual(hosting.bounds.size, size, "The capture must use the complete window content bounds")
             let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
             hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
@@ -115,7 +124,12 @@ enum DesktopSnapshotRenderer {
         let output = URL(fileURLWithPath: "/tmp/omnesis-macos-snapshots", isDirectory: true)
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         for appearance in [NSAppearance.Name.aqua, .darkAqua] {
-            let hosting = NSHostingView(rootView: view.omnesisTheme())
+            let suite = "dev.omnesis.visible-render-tests." + UUID().uuidString
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let hosting = NSHostingView(rootView: view.omnesisTheme()
+                .defaultAppStorage(defaults)
+                .environment(\.desktopAppearanceOverride, appearance == .aqua ? .light : .dark))
             hosting.sizingOptions = []
             hosting.autoresizingMask = [.width, .height]
             hosting.frame = NSRect(origin: .zero, size: size)
@@ -140,6 +154,11 @@ enum DesktopSnapshotRenderer {
             hosting.layoutSubtreeIfNeeded()
             window.displayIfNeeded()
             let screen = try XCTUnwrap(window.screen)
+            XCTAssertEqual(
+                window.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]),
+                appearance,
+                "The appearance-labelled window must use that actual native appearance"
+            )
             XCTAssertTrue(
                 screen.visibleFrame.insetBy(dx: -1, dy: -1).contains(window.frame),
                 "Minimum-window coverage requires the entire native window to fit the visible screen"
@@ -205,7 +224,15 @@ enum DesktopSnapshotRenderer {
         }
         var state: [String: Any] = [
             "captureScope": componentOnly ? "component-window-not-visible-screen-qualification" : "ordinary-owned-window",
-            "applicationActive": NSApp.isActive, "windowKey": window.isKeyWindow, "windowMain": window.isMainWindow,
+            "applicationActive": NSApp.isActive, "applicationHidden": NSApp.isHidden,
+            "applicationFinishedLaunching": NSRunningApplication.current.isFinishedLaunching,
+            "ownedVisibilityObservation": "before-capture",
+            "windowKey": window.isKeyWindow, "windowMain": window.isMainWindow,
+            "windowVisible": window.isVisible, "windowOnActiveSpace": window.isOnActiveSpace,
+            "windowOcclusionVisible": window.occlusionState.contains(.visible),
+            "captureStage": CaptureStage.ownedWindowReady.rawValue,
+            "selectedWindowOnScreen": NSNull(), "selectedWindowIDMatches": NSNull(), "selectedWindowPIDMatches": NSNull(),
+            "configuredCapturesAudio": NSNull(),
             "frontmostIsOwnProcess": frontmostIsOwnProcess, "activationRequested": activationRequested,
             "activationPolicy": policy, "canBecomeKey": window.canBecomeKey, "canBecomeMain": window.canBecomeMain,
             "firstResponderIsTextInput": window.firstResponder is NSTextView,
@@ -219,36 +246,91 @@ enum DesktopSnapshotRenderer {
             "safeAreaTop": window.contentView?.safeAreaInsets.top ?? 0,
         ]
         state.merge(ownedLayoutFacts(window)) { _, observation in observation }
-        try JSONSerialization.data(withJSONObject: state, options: [.sortedKeys])
-            .write(to: output.appendingPathComponent("\(name)-state-\(appearance.rawValue).txt"))
-        // This API exposes current-process content without requesting Screen Recording permission.
-        // Never replace it with general window enumeration or a permission request.
-        let identifier = try XCTUnwrap(CGWindowID(exactly: window.windowNumber), "The test window needs a valid WindowServer identity")
-        let content = try await SCShareableContent.currentProcess
-        let owned = try XCTUnwrap(content.windows.first {
-            $0.windowID == identifier && $0.owningApplication?.processID == ProcessInfo.processInfo.processIdentifier
-        }, "Only the exact test-owned window may be captured")
-        let filter = SCContentFilter(desktopIndependentWindow: owned)
-        let configuration = SCStreamConfiguration()
-        configuration.width = Int(filter.contentRect.width * CGFloat(filter.pointPixelScale))
-        configuration.height = Int(filter.contentRect.height * CGFloat(filter.pointPixelScale))
-        configuration.colorSpaceName = CGColorSpace.sRGB
-        configuration.showsCursor = false
-        configuration.ignoreShadowsSingleWindow = true
-        configuration.includeChildWindows = false
-        let image = try await SCScreenshotManager.captureImage(
-            contentFilter: filter,
-            configuration: configuration
-        )
-        let bitmap = NSBitmapImageRep(cgImage: image)
-        let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-        try data.write(to: output.appendingPathComponent("\(name)-window-\(appearance.rawValue).png"))
+        let stateURL = output.appendingPathComponent("\(name)-state-\(appearance.rawValue).txt")
+        func writeState() throws {
+            try JSONSerialization.data(withJSONObject: state, options: [.sortedKeys]).write(to: stateURL)
+        }
+        func observe(_ stage: CaptureStage) {
+            state["captureStage"] = stage.rawValue
+            // Additional diagnostic writes cannot replace the capture's original outcome.
+            try? writeState()
+        }
+        try writeState()
+        do {
+            // This API exposes current-process content without requesting Screen Recording permission.
+            // Never replace it with general window enumeration or a permission request.
+            let identifier = try XCTUnwrap(CGWindowID(exactly: window.windowNumber), "The test window needs a valid WindowServer identity")
+            observe(.currentProcessContent)
+            let content = try await SCShareableContent.currentProcess
+            observe(.currentProcessReturned)
+            let owned = try XCTUnwrap(content.windows.first {
+                $0.windowID == identifier && $0.owningApplication?.processID == ProcessInfo.processInfo.processIdentifier
+            }, "Only the exact test-owned window may be captured")
+            state["selectedWindowOnScreen"] = owned.isOnScreen
+            state["selectedWindowIDMatches"] = owned.windowID == identifier
+            state["selectedWindowPIDMatches"] = owned.owningApplication?.processID == ProcessInfo.processInfo.processIdentifier
+            observe(.exactWindowMatched)
+            let filter = SCContentFilter(desktopIndependentWindow: owned)
+            let configuration = SCStreamConfiguration()
+            configuration.width = Int(filter.contentRect.width * CGFloat(filter.pointPixelScale))
+            configuration.height = Int(filter.contentRect.height * CGFloat(filter.pointPixelScale))
+            configuration.colorSpaceName = CGColorSpace.sRGB
+            configuration.showsCursor = false
+            configuration.ignoreShadowsSingleWindow = true
+            configuration.includeChildWindows = false
+            state["configuredCapturesAudio"] = configuration.capturesAudio
+            observe(.captureImage)
+            let image = try await SCScreenshotManager.captureImage(
+                contentFilter: filter,
+                configuration: configuration
+            )
+            observe(.imageReturned)
+            let bitmap = NSBitmapImageRep(cgImage: image)
+            let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            observe(.imageWrite)
+            try data.write(to: output.appendingPathComponent("\(name)-window-\(appearance.rawValue).png"))
+            observe(.imageWritten)
+        } catch {
+            state["applicationHidden"] = NSApp.isHidden
+            state["applicationFinishedLaunching"] = NSRunningApplication.current.isFinishedLaunching
+            state["windowVisible"] = window.isVisible
+            state["windowOnActiveSpace"] = window.isOnActiveSpace
+            state["windowOcclusionVisible"] = window.occlusionState.contains(.visible)
+            state["ownedVisibilityObservation"] = "after-capture-error"
+            let stage = (state["captureStage"] as? String).flatMap(CaptureStage.init(rawValue:)) ?? .ownedWindowReady
+            state.merge(captureFailureFacts(error, stage: stage)) { _, observed in observed }
+            try? writeState()
+            throw error
+        }
         if name == "hosted-chat-ready-to-send" || requireActive {
             XCTAssertTrue(
                 active,
                 "Primary-control qualification requires this exact app and window to be active; see the owned state artifact"
             )
         }
+    }
+
+    enum CaptureStage: String {
+        case ownedWindowReady = "owned-window-ready"
+        case currentProcessContent = "current-process-content"
+        case currentProcessReturned = "current-process-returned"
+        case exactWindowMatched = "exact-window-matched"
+        case captureImage = "capture-image"
+        case imageReturned = "image-returned"
+        case imageWrite = "image-write"
+        case imageWritten = "image-written"
+    }
+
+    /// Public error identity only; never serialize localized text, userInfo, URLs or raw domains.
+    static func captureFailureFacts(_ error: Error, stage: CaptureStage) -> [String: Any] {
+        let failure = error as NSError
+        let code = max(Int(Int32.min), min(Int(Int32.max), failure.code))
+        return [
+            "captureStage": stage.rawValue,
+            "captureErrorCategory": failure.domain == SCStreamErrorDomain ? "screen-capture-kit" : "other",
+            "captureErrorCode": code,
+            "captureErrorCodeClamped": code != failure.code,
+        ]
     }
 
     private static func rectangle(_ rect: NSRect) -> [String: CGFloat] {
@@ -337,8 +419,13 @@ enum DesktopSnapshotRenderer {
     }
 
     static func backgroundMatchesCanvas(_ window: NSWindow) -> Bool {
-        guard let actual = window.backgroundColor.usingColorSpace(.sRGB),
-              let expected = NSColor(DesktopTheme.canvas).usingColorSpace(.sRGB) else { return false }
+        var actual: NSColor?
+        var expected: NSColor?
+        window.effectiveAppearance.performAsCurrentDrawingAppearance {
+            actual = window.backgroundColor.usingColorSpace(.sRGB)
+            expected = NSColor(DesktopTheme.canvas).usingColorSpace(.sRGB)
+        }
+        guard let actual, let expected else { return false }
         return abs(actual.redComponent - expected.redComponent) < 0.001
             && abs(actual.greenComponent - expected.greenComponent) < 0.001
             && abs(actual.blueComponent - expected.blueComponent) < 0.001
@@ -407,17 +494,26 @@ enum DesktopSnapshotRenderer {
             XCTAssertTrue(usable.contains(frame), "The banner label and action must remain inside usable content", file: file, line: line)
             XCTAssertTrue(group.insetBy(dx: -1, dy: -1).contains(frame), "The banner must contain its label/action", file: file, line: line)
         }
+        let contentEnvelope = label.union(review)
         for identifier in identifiers {
             let frame = try DesktopAccessibilityDriver.element(identifier, in: hosting).accessibilityFrame()
             XCTAssertGreaterThan(frame.height, 10, file: file, line: line)
             XCTAssertTrue(usable.contains(frame), "The toolbar must not cover \(identifier)", file: file, line: line)
-            XCTAssertLessThanOrEqual(
-                frame.maxY,
-                min(label.minY, review.minY) + 1,
-                "The banner content must remain above \(identifier)",
-                file: file,
-                line: line
-            )
+            // Detail-column content remains below the banner. Sidebar branding is a
+            // separate structural column and must not overlap the required controls.
+            let overlapsBannerColumn = frame.maxX > contentEnvelope.minX && frame.minX < contentEnvelope.maxX
+            if overlapsBannerColumn {
+                XCTAssertLessThanOrEqual(
+                    frame.maxY,
+                    min(label.minY, review.minY) + 1,
+                    "The banner content must remain above \(identifier)",
+                    file: file,
+                    line: line
+                )
+            } else {
+                XCTAssertFalse(label.intersects(frame), "The sidebar must not cover the required label", file: file, line: line)
+                XCTAssertFalse(review.intersects(frame), "The sidebar must not cover the required action", file: file, line: line)
+            }
         }
     }
 

@@ -2824,7 +2824,9 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   });
   const storagePressure: StoragePressureManager = storageRuntime.pressure;
   storagePressureHandle = storagePressure;
-  storageRuntime.start();
+  // The first capacity measurement runs alongside the rest of startup; the
+  // listener waits for it, within a bound, before opening (see below).
+  void storageRuntime.start();
 
   const httpShutdown = boot.listener.shutdown;
   // What follows a task change, wherever it is made: the searchable loop mirror
@@ -4562,6 +4564,12 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   });
   coordinatedShutdown = shutdown;
   boot.setShutdown(shutdown);
+  // Until capacity has been measured once, every write is refused as
+  // unverified. Opening before that would turn each collector's first sync
+  // after a restart into a storage error; until the listener opens, requests
+  // get the startup server's retryable 503 instead. The wait is bounded so a
+  // hung filesystem cannot keep reads unreachable.
+  await storageRuntime.waitForFirstMeasurement();
   boot.signal.throwIfAborted();
   complete("services");
   phase("portal");

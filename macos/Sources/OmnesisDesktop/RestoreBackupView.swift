@@ -20,22 +20,22 @@ struct DesktopRestoreBackupView: View {
     var body: some View {
         @Bindable var flow = flow
         @Bindable var store = store
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Restore a backup").font(.title2.bold())
+        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.regular) {
+            Text("Restore a backup").font(DesktopDesignTokens.Typography.pageTitle).accessibilityAddTraits(.isHeader)
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.regular) {
                     if store.state.mode == "joined" {
                         Text(store.state.homeName
                             .map { "Your library is kept on \($0). Restore its backup there." } ??
                             "Restore a backup on the computer that keeps your library.")
                         Text("This Mac connects to that library. Restore the library on its server.")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DesktopTheme.secondary)
                     } else if flow.startupVerified {
                         Label(
                             flow.outcome?.status == .rolledBack ? "Previous library is running" : "Your backup is restored",
                             systemImage: "checkmark.shield"
                         )
-                        .font(.title2).foregroundStyle(.green)
+                        .font(DesktopDesignTokens.Typography.section).foregroundStyle(DesktopTheme.success)
                         Text(
                             "The library has passed its startup and encryption checks. Review Sources and resume only the connections you want to collect from."
                         )
@@ -63,7 +63,7 @@ struct DesktopRestoreBackupView: View {
                                 "Previous library recovered; check it by starting Omnesis",
                             systemImage: "pause.circle"
                         )
-                        .font(.headline)
+                        .font(DesktopDesignTokens.Typography.body.weight(.medium))
                         Text(
                             "Your backup has been applied, but Omnesis has not checked it while running yet. Start Omnesis below to finish restoring."
                         )
@@ -78,7 +78,7 @@ struct DesktopRestoreBackupView: View {
                         if let count = outcome.watchesPaused { LabeledContent("Watches kept paused", value: count.formatted()) }
                         Text(outcome
                             .recoveryCopyRetained ? "A protected recovery copy has been kept." : "No retained recovery copy was reported.")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DesktopTheme.secondary)
                         if flow.requiresAccount { accountFields }
                         Button("Start Omnesis and finish restoring") {
                             flow.startAndVerify(params: accountParameters)
@@ -122,7 +122,7 @@ struct DesktopRestoreBackupView: View {
                         Button("Prepare backup selection") { flow.begin() }.disabled(flow.busy)
                     } else {
                         Text("Restore your saved library on this Mac")
-                            .font(.headline)
+                            .font(DesktopDesignTokens.Typography.body.weight(.medium))
                         Text(
                             "Choose the Mac you leave at home and keep awake. Your other devices cannot use its library while this Mac sleeps."
                         )
@@ -148,7 +148,7 @@ struct DesktopRestoreBackupView: View {
                 }.disabled(flow.cancelling)
                 Spacer()
             }
-        }.padding(28).frame(width: 680, height: 650)
+        }.padding(DesktopDesignTokens.Space.section).frame(width: 680, height: 650)
             .interactiveDismissDisabled(flow.busy || flow.cancelling)
             .task { flow.observeAccountContext(store.state)
                 if flow.status == nil {
@@ -190,17 +190,22 @@ struct DesktopRestoreBackupView: View {
     }
 
     private var accountFields: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Connect your account before starting").font(.headline)
+        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.medium) {
+            Text("Connect your account before starting").font(DesktopDesignTokens.Typography.body.weight(.medium))
             Picker("Omnesis account", selection: $accountIntent) {
                 Text("I have an account").tag(DesktopAccountIntent.existing)
                 Text("Create an account").tag(DesktopAccountIntent.create)
             }.pickerStyle(.segmented)
             if accountIntent == .create, flow.signup?.policy != "open" {
-                TextField("Invitation code or link", text: $invitation).privacySensitive()
+                VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.xSmall) {
+                    Text("Invitation code or link").font(DesktopDesignTokens.Typography.secondary.weight(.medium))
+                        .accessibilityIdentifier("restore-invitation-code-label")
+                    TextField("Invitation code or link", text: $invitation).privacySensitive()
+                        .accessibilityIdentifier("restore-invitation-code")
+                }
             }
             Text("A certificate authority issues the certificate for your private address, so your devices can verify this Mac.")
-                .font(.callout).foregroundStyle(.secondary)
+                .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
             Toggle("I accept the certificate authority’s terms for my secure address", isOn: $termsAccepted)
                 .disabled(flow.signup?.readableTermsURL == nil)
             if let terms = flow.signup?.readableTermsURL {
@@ -209,19 +214,19 @@ struct DesktopRestoreBackupView: View {
                 Text(
                     "The certificate authority’s terms could not be loaded. Check your connection, then check restoration status again before continuing."
                 )
-                .font(.callout).foregroundStyle(.secondary)
+                .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
             }
             Text(
                 "Finish sign-in in your browser and return here. A startup check still has to pass before this backup is reported restored."
             )
-            .font(.callout).foregroundStyle(.secondary)
+            .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
         }
     }
 
     private func review(_ preview: DesktopRestorePreview) -> some View {
         @Bindable var flow = flow
-        return VStack(alignment: .leading, spacing: 12) {
-            Text("Review this backup").font(.headline)
+        return VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.medium) {
+            Text("Review this backup").font(DesktopDesignTokens.Typography.body.weight(.medium))
             if let selected = flow.selected { Text(URL(fileURLWithPath: selected.path).lastPathComponent).privacySensitive() }
             if let version = preview.version { LabeledContent("Created by Omnesis", value: version) }
             if let date = preview.createdAt { LabeledContent("Backup date", value: date) }

@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import {
   embeddingServer,
+  exitWithoutModelTeardown,
   fetchModel,
   REFERENCE_MODEL,
   runWithEmbeddingRuntime,
@@ -116,6 +117,43 @@ test.each([
   );
   expect(result).toBe(status);
   expect(writeStderr.mock.calls).toEqual(lines);
+});
+
+test("a runtime that leaves the model to process exit still closes its server and context", async () => {
+  const runtime = fakeRuntime();
+  let url;
+  const result = await runWithEmbeddingRuntime(
+    ["invented.mjs"],
+    { modelPath: "invented.gguf", port: 0, llama: runtime.llama, disposeModel: false },
+    async (_command, _args, options) => {
+      url = options.env.OMNESIS_TEST_EMBEDDER_URL;
+      return 0;
+    },
+  );
+  expect(result).toBe(0);
+  expect(runtime.disposed).toEqual(["context"]);
+  expect(runtime.loaded.dispose).not.toHaveBeenCalled();
+  expect(runtime.llama.dispose).not.toHaveBeenCalled();
+  await expect(fetch(`${url}/v1/models`)).rejects.toThrow();
+});
+
+test("the process exits with its status only after its output streams drain", async () => {
+  const pending = [];
+  const stream = () => ({
+    write: vi.fn((_chunk, callback) => {
+      pending.push(callback);
+      return false;
+    }),
+  });
+  const streams = [stream(), stream()];
+  const exit = vi.fn();
+  const exiting = exitWithoutModelTeardown(3, { exit, streams });
+  await Promise.resolve();
+  expect(pending).toHaveLength(2);
+  expect(exit).not.toHaveBeenCalled();
+  pending.splice(0).forEach((callback) => callback());
+  await exiting;
+  expect(exit).toHaveBeenCalledExactlyOnceWith(3);
 });
 
 test("ordinary joined command failure still disposes every independent embedding resource", async () => {

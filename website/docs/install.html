@@ -334,11 +334,14 @@ Help me install Omnesis across the devices I choose. Read https://omnesis.dev/in
           <li>Checks the platform: macOS or Linux, amd64 or arm64. Anything else is refused.</li>
           <li>
             Installs Node 24 when no supported Node is on your PATH: Homebrew on macOS, NodeSource
-            on Linux.
+            through apt or dnf on Linux, and the distribution's own Node 24 LTS package through
+            pacman on Arch Linux.
           </li>
           <li>
             For a Linux source install, installs make, C/C++ compilers and Python 3 if they are
-            missing.
+            missing. On Arch Linux it installs them without refreshing the package databases; if
+            pacman reports missing packages, run <code>sudo pacman -Syu</code> and re-run the
+            installer.
           </li>
           <li>
             Installs the newest stable release of the <code>omnesis</code> CLI (a checkout in

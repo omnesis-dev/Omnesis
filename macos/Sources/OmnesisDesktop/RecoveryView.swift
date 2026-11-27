@@ -21,8 +21,8 @@ struct DesktopRecoveryView: View {
     @State private var keptSeparately = false
     @State private var error: String?
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Recovery protection").font(.title2.bold())
+        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.regular) {
+            Text("Recovery protection").font(DesktopDesignTokens.Typography.pageTitle).accessibilityAddTraits(.isHeader)
             if let outcome = store.recoveryImportOutcome, outcome.verified {
                 Label(
                     outcome.status == "restored" ? "Library access restored" : "This Mac already has the matching protection",
@@ -40,7 +40,12 @@ struct DesktopRecoveryView: View {
                 )
                 Button("Choose recovery file…") { chooseRecoveryFile() }.disabled(store.busy)
                 if let importFileName { LabeledContent("Selected file", value: importFileName) }
-                SecureField("Recovery code", text: $importCode).privacySensitive().disabled(store.busy)
+                VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.xSmall) {
+                    Text("Recovery code").font(DesktopDesignTokens.Typography.secondary.weight(.medium))
+                        .accessibilityIdentifier("recovery-import-code-label")
+                    SecureField("Recovery code", text: $importCode).privacySensitive().disabled(store.busy)
+                        .accessibilityIdentifier("recovery-import-code")
+                }
                 Button("Restore library access") {
                     guard let importFile else { return }
                     store.command("recoveryImport", params: ["envelope": importFile, "recoveryCode": .string(importCode)])
@@ -84,7 +89,7 @@ struct DesktopRecoveryView: View {
                         Text(
                             "Future backups will include the new recovery file. Keep older codes for older backups. Replacement does not invalidate recovery files or codes you saved before."
                         )
-                        .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                        .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                     }
                     Button("Restore access with a recovery file…") {
                         store.recoveryImportOutcome = nil
@@ -110,7 +115,7 @@ struct DesktopRecoveryView: View {
                     dismiss()
                 }.disabled(store.busy && !importing).keyboardShortcut(.cancelAction)
             }
-        }.buttonStyle(DesktopButtonStyle()).padding(24).frame(width: 520)
+        }.buttonStyle(DesktopButtonStyle()).padding(DesktopDesignTokens.Space.section).frame(width: 520)
             .interactiveDismissDisabled(store.busy)
             .task(id: store.recoveryDraft?.draftId) {
                 guard let draft = store.recoveryDraft else { return }

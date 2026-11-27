@@ -33,7 +33,7 @@ final class BackgroundOriginRegistrationTests: XCTestCase {
             let registration = DesktopBackgroundOriginRegistration(application: resolved) { _, _, _ in }
             defer { registration.stop() }
             do {
-                _ = try await Task.detached { try registration.verify(record, archiveRoot: archive, validate: { _ in }) }.value
+                _ = try await registration.verify(record, archiveRoot: archive, validate: { _ in })
                 XCTFail("Replacement at the old path cannot acquire the original attachment")
             } catch {}
             XCTAssertFalse(registration.isVerified)
@@ -48,7 +48,7 @@ final class BackgroundOriginRegistrationTests: XCTestCase {
             defer { registration.stop() }
             do {
                 _ = try await Task.detached {
-                    try registration.verify(record, archiveRoot: archive, validate: { _ in
+                    try await registration.verify(record, archiveRoot: archive, validate: { _ in
                         try FileManager.default.moveItem(at: original, to: root.appendingPathComponent("Moved.app"))
                         try FileManager.default.createDirectory(at: original, withIntermediateDirectories: true)
                     })
@@ -69,7 +69,7 @@ final class BackgroundOriginRegistrationTests: XCTestCase {
             old.stop()
             let next = DesktopBackgroundOriginRegistration(application: original) { _, _, _ in }
             defer { next.stop() }
-            _ = try await Task.detached { try next.verify(record, archiveRoot: archive, validate: { _ in }) }.value
+            _ = try await next.verify(record, archiveRoot: archive, validate: { _ in })
             XCTAssertTrue(next.isVerified)
             old.accommodatePresentedItemDeletion { XCTAssertNil($0) }
             XCTAssertTrue(next.isVerified)
@@ -115,7 +115,7 @@ final class BackgroundOriginRegistrationTests: XCTestCase {
             let latest = try XCTUnwrap(events.event(current))
             XCTAssertFalse(registration.isCurrent(event: stale))
             XCTAssertTrue(registration.isCurrent(event: latest))
-            let verified = try await Task.detached { try registration.verify(record, archiveRoot: archive, validate: { _ in }) }.value
+            let verified = try await registration.verify(record, archiveRoot: archive, validate: { _ in })
             XCTAssertEqual(verified.path, current.path)
             XCTAssertTrue(registration.isVerified)
             XCTAssertFalse(registration.isCurrent(event: stale))
@@ -124,6 +124,162 @@ final class BackgroundOriginRegistrationTests: XCTestCase {
             XCTAssertFalse(registration.isVerified)
             XCTAssertFalse(registration.isCurrent(event: latest))
         }
+    }
+
+    func testActualCoordinatedMovePrecedesVerificationOnTheExactPresenterQueue() async throws {
+        try await fixture { root, archive in
+            let original = try app(root, "QueuedOriginal")
+            let moved = root.appendingPathComponent("QueuedMoved.app")
+            // The destination need not exist until the real move. Canonicalize only its existing parent.
+            let canonicalDestination = try DesktopCanonicalPath.resolve(root.path) + "/" + moved.lastPathComponent
+            let record = try DesktopBackgroundApplicationOrigin.capture(original, archiveRoot: archive, validate: { _ in })
+            let entered = expectation(description: "actual presenter move callback")
+            let returned = expectation(description: "owned presenter callback returned")
+            let gate = PresenterQueueGate()
+            let events = PresenterQueueEvents()
+            let registration = DesktopBackgroundOriginRegistration(application: original) { _, _, location in
+                let rawPathEqual = location?.path == moved.path
+                let canonicalMatch = location.flatMap { try? DesktopCanonicalPath.resolve($0.path) } == canonicalDestination
+                guard events.observeMove(rawPathEqual: rawPathEqual, canonicalMatch: canonicalMatch) else { return }
+                events.append("move")
+                entered.fulfill()
+                XCTAssertTrue(gate.wait(), "The owned callback hold must be released")
+                events.append("callback-returning")
+                returned.fulfill()
+            }
+            defer { registration.stop() }
+            let moving = Task.detached { try Self.moveCoordinated(original, to: moved) }
+            await fulfillment(of: [entered], timeout: 2)
+            let verification = Task {
+                try await registration.verify(record, archiveRoot: archive, validate: { current in
+                    XCTAssertTrue(OperationQueue.current === registration.presentedItemOperationQueue)
+                    XCTAssertEqual(try DesktopCanonicalPath.resolve(current.path), canonicalDestination)
+                    let presented = try XCTUnwrap(registration.presentedItemURL)
+                    XCTAssertEqual(try DesktopCanonicalPath.resolve(presented.path), canonicalDestination)
+                    events.append("verify")
+                })
+            }
+            let queued = expectation(for: NSPredicate { _, _ in
+                registration.presentedItemOperationQueue.operationCount > 1
+            }, evaluatedWith: nil)
+            await fulfillment(of: [queued], timeout: 2)
+            gate.release()
+            let movedResult = await moving.result
+            let verifiedResult = await verification.result
+            await fulfillment(of: [returned], timeout: 2)
+            // Removing the presenter is not a queue join. Drain callbacks already admitted before teardown.
+            registration.stop()
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                registration.presentedItemOperationQueue.addBarrierBlock { continuation.resume() }
+            }
+            let observations = events.moveObservations
+            // Only finite boolean facts cross the test log; callback URLs remain private.
+            let facts = observations.values.map { "rawPathEqual=\($0.rawPathEqual),canonicalMatch=\($0.canonicalMatch)" }
+            FileHandle.standardError.write(Data(
+                "owned-presenter-move callbacks=[\(facts.joined(separator: ";"))] truncated=\(observations.truncated)\n".utf8
+            ))
+            try movedResult.get()
+            XCTAssertEqual(try verifiedResult.get().path, moved.path)
+            XCTAssertEqual(events.values, ["move", "callback-returning", "verify"])
+            XCTAssertTrue(observations.values.contains { $0.canonicalMatch })
+            // A later legitimate change may invalidate the proof; the assertion concerns the
+            // actual verification queue/object checkpoint, not permanent future authority.
+        }
+    }
+
+    func testStoppedQueuedVerificationSettlesWithoutRunningValidation() async throws {
+        try await fixture { root, archive in
+            let application = try app(root, "Stopped")
+            let record = try DesktopBackgroundApplicationOrigin.capture(application, archiveRoot: archive, validate: { _ in })
+            let registration = DesktopBackgroundOriginRegistration(application: application) { _, _, _ in }
+            defer { registration.stop() }
+            let hold = holdPresenterQueue(registration)
+            await fulfillment(of: [hold.entered], timeout: 2)
+            let checking = Task {
+                try await registration.verify(
+                    record,
+                    archiveRoot: archive,
+                    validate: { _ in XCTFail("Stopped verification cannot validate") }
+                )
+            }
+            let queued = expectation(
+                for: NSPredicate { _, _ in registration.presentedItemOperationQueue.operationCount > 1 },
+                evaluatedWith: nil
+            )
+            await fulfillment(of: [queued], timeout: 2)
+            registration.stop()
+            hold.gate.release()
+            let result = await checking.result
+            await fulfillment(of: [hold.returned], timeout: 2)
+            if case .success = result { XCTFail("A stopped queued verification cannot publish a proof") }
+            XCTAssertFalse(registration.isVerified)
+        }
+    }
+
+    @MainActor
+    func testCancelledQueuedVerificationKeepsMainActorResponsiveAndSettles() async throws {
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("origin-registration-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+        let root = try URL(fileURLWithPath: DesktopCanonicalPath.resolve(temporary.path))
+        let archive = root.appendingPathComponent("archive")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let application = try app(root, "Cancelled")
+        let record = try DesktopBackgroundApplicationOrigin.capture(application, archiveRoot: archive, validate: { _ in })
+        let registration = DesktopBackgroundOriginRegistration(application: application) { _, _, _ in }
+        defer { registration.stop() }
+        let hold = holdPresenterQueue(registration)
+        await fulfillment(of: [hold.entered], timeout: 2)
+        let checking = Task {
+            try await registration.verify(
+                record,
+                archiveRoot: archive,
+                validate: { _ in XCTFail("Cancelled verification cannot validate") }
+            )
+        }
+        let queued = expectation(
+            for: NSPredicate { _, _ in registration.presentedItemOperationQueue.operationCount > 1 },
+            evaluatedWith: nil
+        )
+        await fulfillment(of: [queued], timeout: 2)
+        checking.cancel()
+        // Reaching this actor while its owned queue is held proves there was no synchronous queue wait.
+        XCTAssertTrue(Thread.isMainThread)
+        hold.gate.release()
+        let result = await checking.result
+        await fulfillment(of: [hold.returned], timeout: 2)
+        if case .failure(let error) = result { XCTAssertTrue(error is CancellationError) }
+        else { XCTFail("A canceled queued verification must settle as cancellation") }
+        XCTAssertFalse(registration.isVerified)
+    }
+
+    private func holdPresenterQueue(_ registration: DesktopBackgroundOriginRegistration)
+        -> (gate: PresenterQueueGate, entered: XCTestExpectation, returned: XCTestExpectation) {
+        let gate = PresenterQueueGate()
+        let entered = expectation(description: "owned presenter queue held")
+        let returned = expectation(description: "owned presenter queue released")
+        registration.presentedItemOperationQueue.addOperation {
+            entered.fulfill()
+            XCTAssertTrue(gate.wait(), "The owned queue hold must be released")
+            returned.fulfill()
+        }
+        return (gate, entered, returned)
+    }
+
+    private static func moveCoordinated(_ original: URL, to destination: URL) throws {
+        let coordinator = NSFileCoordinator(filePresenter: nil)
+        var coordinationError: NSError?
+        var result: Result<Void, Error>?
+        coordinator.coordinate(writingItemAt: original, options: .forMoving, error: &coordinationError) { current in
+            do {
+                coordinator.item(at: current, willMoveTo: destination)
+                try FileManager.default.moveItem(at: current, to: destination)
+                coordinator.item(at: current, didMoveTo: destination)
+                result = .success(())
+            } catch { result = .failure(error) }
+        }
+        if let coordinationError { throw coordinationError }
+        guard let result else { throw DesktopBackgroundApplicationOrigin.Failure.changedObject }
+        try result.get()
     }
 
     func testLivePendingClientNeverCountsAsGoneAndDifferentBirthIsExactOldIncarnationAbsence() throws {
@@ -172,5 +328,70 @@ final class BackgroundOriginRegistrationTests: XCTestCase {
         child.waitUntilExit()
         stage("joined")
         XCTAssertTrue(client.isGone())
+    }
+}
+
+private final class PresenterQueueGate: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var released = false
+    func wait() -> Bool {
+        condition.lock()
+        defer { condition.unlock() }
+        let deadline = Date().addingTimeInterval(5)
+        while !released {
+            if !condition.wait(until: deadline) { return false }
+        }
+        return Date() < deadline
+    }
+
+    func release() {
+        condition.lock()
+        released = true
+        condition.broadcast()
+        condition.unlock()
+    }
+}
+
+private final class PresenterQueueEvents: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [String] = []
+    struct MoveObservation {
+        let rawPathEqual: Bool
+        let canonicalMatch: Bool
+    }
+
+    private var callbacks: [MoveObservation] = []
+    private var callbacksTruncated = false
+    private var claimedMatchingCallback = false
+    /// Record every bounded observation, but hold and fulfill only the first matching callback.
+    func observeMove(rawPathEqual: Bool, canonicalMatch: Bool) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if callbacks.count < 4 {
+            callbacks.append(.init(rawPathEqual: rawPathEqual, canonicalMatch: canonicalMatch))
+        } else {
+            callbacksTruncated = true
+        }
+        guard canonicalMatch, !claimedMatchingCallback else { return false }
+        claimedMatchingCallback = true
+        return true
+    }
+
+    var moveObservations: (values: [MoveObservation], truncated: Bool) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (callbacks, callbacksTruncated)
+    }
+
+    func append(_ value: String) {
+        lock.lock()
+        recorded.append(value)
+        lock.unlock()
+    }
+
+    var values: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recorded
     }
 }

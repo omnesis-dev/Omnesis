@@ -14,12 +14,12 @@ struct DesktopSourceSettingsView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.section) {
                     if flow.removalComplete {
-                        Label("Source removed", systemImage: "checkmark.circle.fill").font(.title2)
+                        Label("Source removed", systemImage: "checkmark.circle.fill").font(DesktopDesignTokens.Typography.section)
                         Text("Its managed information was removed from Omnesis. Your originals remain where they were.")
                     } else if flow.removalRequested {
-                        Label("Removing managed information", systemImage: "clock").font(.title2)
+                        Label("Removing managed information", systemImage: "clock").font(DesktopDesignTokens.Typography.section)
                         Text(
                             "Omnesis has stopped this source. Cleanup continues on the library's home computer even if you close this window."
                         )
@@ -28,7 +28,7 @@ struct DesktopSourceSettingsView: View {
                             await store.refresh()
                         } } }
                     } else if let source = flow.snapshot?.source {
-                        Text(source.accountId).font(.headline).textSelection(.enabled)
+                        Text(source.accountId).font(DesktopDesignTokens.Typography.body.weight(.medium)).textSelection(.enabled)
                         Label(
                             flow.historical ? "Historical data" : source.enabled ? "Enabled" : "Paused",
                             systemImage: flow.historical ? "clock.arrow.circlepath" : source.enabled ? "checkmark.circle" : "pause.circle"
@@ -40,7 +40,7 @@ struct DesktopSourceSettingsView: View {
                             Text(
                                 "Indexed information stays in your library. Refresh an eligible computer's source settings before editing collection settings."
                             )
-                            .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                            .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                         }
                         Button(source.enabled ? "Pause and keep indexed information" : "Resume this source") {
                             Task { await flow.setEnabled(!source.enabled)
@@ -50,8 +50,9 @@ struct DesktopSourceSettingsView: View {
 
                         if !flow.sharedParams.isEmpty {
                             GroupBox("Library settings") {
-                                VStack(alignment: .leading, spacing: 14) {
-                                    Text("These settings apply to the source across your library.").font(.callout)
+                                VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.medium) {
+                                    Text("These settings apply to the source across your library.")
+                                        .font(DesktopDesignTokens.Typography.secondary)
                                         .foregroundStyle(DesktopTheme.secondary)
                                     ForEach(flow.sharedParams) { param in
                                         SourceParameterField(
@@ -64,12 +65,12 @@ struct DesktopSourceSettingsView: View {
                                         await store.refresh()
                                     } }
                                     .disabled(flow.busy || !flow.canEditSelectedHost)
-                                }.padding(8)
+                                }.padding(DesktopDesignTokens.Space.small)
                             }
                         }
 
                         GroupBox("Collection computers") {
-                            VStack(alignment: .leading, spacing: 14) {
+                            VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.medium) {
                                 Picker("Settings on", selection: Binding(get: { flow.selectedDeviceId }, set: { id in
                                     Task { await flow.selectDevice(id) }
                                 })) {
@@ -77,7 +78,7 @@ struct DesktopSourceSettingsView: View {
                                 }.disabled(flow.busy)
                                 if !flow.selectedDeviceId.isEmpty, !isLocalSelectedDevice {
                                     Text("Paths below refer to \(deviceName(flow.selectedDeviceId)), rather than this Mac.")
-                                        .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                                        .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                                 }
                                 ForEach(flow.localParams) { param in
                                     SourceParameterField(
@@ -94,7 +95,7 @@ struct DesktopSourceSettingsView: View {
                                     Text(source.enabled
                                         ? "Editing these settings keeps collection running."
                                         : "Editing these settings keeps this source paused.")
-                                        .font(.caption).foregroundStyle(DesktopTheme.secondary)
+                                        .font(DesktopDesignTokens.Typography.metadata).foregroundStyle(DesktopTheme.secondary)
                                 }
                                 if ["replicated", "partitioned", "handoff"].contains(source.multiDeviceMode ?? ""),
                                    flow.memberIds.count > 1 {
@@ -104,18 +105,18 @@ struct DesktopSourceSettingsView: View {
                                     Text(
                                         "This is the source's only computer. Pause it to keep its indexed information, or remove the source below."
                                     )
-                                    .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                                    .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                                 }
-                            }.padding(8)
+                            }.padding(DesktopDesignTokens.Space.small)
                         }
 
                         if source.multiDeviceMode == "exclusive" {
                             GroupBox("Move this account") {
-                                VStack(alignment: .leading, spacing: 12) {
+                                VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.medium) {
                                     Text(
                                         "Connect this same account on another computer. Omnesis asks before moving collection and keeps the information already in your library."
                                     )
-                                    .font(.callout)
+                                    .font(DesktopDesignTokens.Typography.secondary)
                                     let targets = (flow.descriptor.devices ?? []).filter { $0.id != source.deviceId }
                                     ForEach(targets) { host in
                                         Button("Set up on \(host.name ?? "the selected computer")") { movingHost = host }
@@ -123,9 +124,9 @@ struct DesktopSourceSettingsView: View {
                                     }
                                     if targets.isEmpty {
                                         Text("Open Omnesis on the other computer first. It appears here when it can connect this source.")
-                                            .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                                            .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                                     }
-                                }.padding(8)
+                                }.padding(DesktopDesignTokens.Space.small)
                             }
                         }
 
@@ -133,7 +134,7 @@ struct DesktopSourceSettingsView: View {
                         Text(
                             "Removing a source deletes its managed information from Omnesis on all connected computers. Your originals stay where they are."
                         )
-                        .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                        .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                         Button("Remove this source…", role: .destructive) { confirmRemoval = true }.disabled(flow.busy)
                     } else if flow.busy {
                         ProgressView("Loading source settings…")
@@ -144,7 +145,7 @@ struct DesktopSourceSettingsView: View {
                         if !flow.removalRequested { Button("Refresh settings") { Task { await flow.load() } }.disabled(flow.busy) }
                     }
                     if flow.busy, flow.snapshot != nil { ProgressView("Saving source changes…") }
-                }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
+                }.padding(DesktopDesignTokens.Space.section).frame(maxWidth: .infinity, alignment: .leading)
             }
             .navigationTitle(flow.descriptor.name)
             .toolbar { Button("Done") { dismiss() }.disabled(flow.busy) }
@@ -232,9 +233,9 @@ struct DesktopSourceMoveConfirmation: View {
     let pending: DesktopSourceSettingsSnapshot
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("Move this account to \(targetName)?").font(.title2)
-            Text(pending.source.accountId).font(.headline).textSelection(.enabled)
+        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.regular) {
+            Text("Move this account to \(targetName)?").font(DesktopDesignTokens.Typography.section).accessibilityAddTraits(.isHeader)
+            Text(pending.source.accountId).font(DesktopDesignTokens.Typography.body.weight(.medium)).textSelection(.enabled)
             if flow.needsAccess {
                 DesktopCollectionAccessCard(
                     flow: flow.access,

@@ -52,7 +52,6 @@ struct OmnesisDesktopApp: App {
 
 struct DesktopRootView: View {
     @Environment(DesktopStore.self) private var store
-    @Environment(\.desktopContrast) private var contrast
     @State private var columns = NavigationSplitViewVisibility.all
     @State private var hadVerifiedSetup = false
     private var accessHealth: DesktopSourceHealthMonitor {
@@ -65,15 +64,13 @@ struct DesktopRootView: View {
 
     var body: some View {
         @Bindable var store = store
-        VStack(spacing: 0) {
-            prerequisiteBanners
-            Group {
-                if store.state.canOpenLibrary { libraryNavigation }
-                else {
-                    VStack(spacing: 0) {
-                        failureBanner
-                        DesktopOnboardingView()
-                    }
+        Group {
+            if store.state.canOpenLibrary { libraryNavigation }
+            else {
+                VStack(spacing: 0) {
+                    prerequisiteBanners
+                    failureBanner
+                    DesktopOnboardingView()
                 }
             }
         }
@@ -93,27 +90,29 @@ struct DesktopRootView: View {
     private var prerequisiteBanners: some View {
         VStack(spacing: 0) {
             if store.state.canOpenLibrary, !store.requiredSetupReady, store.requiredSetupNeedsAction || !hadVerifiedSetup {
-                HStack {
-                    Label(
-                        DesktopSetupRepair.bannerTitle(in: store),
-                        systemImage: "checklist"
-                    ).font(.callout.weight(.medium)).accessibilityIdentifier("required-setup-label")
-                    Spacer()
+                HStack(alignment: .center, spacing: DesktopDesignTokens.Space.medium) {
+                    Label(DesktopSetupRepair.bannerTitle(in: store), systemImage: "checklist")
+                        .font(DesktopDesignTokens.Typography.secondary.weight(.medium))
+                        .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("required-setup-label")
+                    Spacer(minLength: DesktopDesignTokens.Space.small)
                     Button("Review setup") { store.destination = .setup }.buttonStyle(DesktopButtonStyle())
                         .accessibilityIdentifier("required-setup-review")
-                }.padding(.horizontal, 20).padding(.vertical, 10).background(DesktopTheme.panel)
+                }.padding(.horizontal, DesktopDesignTokens.Layout.pageMargin).padding(.vertical, DesktopDesignTokens.Space.small)
+                    .background(DesktopTheme.surface)
                     .accessibilityElement(children: .contain).accessibilityIdentifier("required-setup-banner")
             }
             if let issue = accessIssues.first {
-                HStack(spacing: 14) {
-                    Image(systemName: "lock.trianglebadge.exclamationmark")
+                HStack(alignment: .top, spacing: DesktopDesignTokens.Space.medium) {
+                    Image(systemName: "lock.trianglebadge.exclamationmark").foregroundStyle(DesktopTheme.warning)
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("\(issue.account) needs attention on \(issue.computer)").font(.callout.weight(.semibold))
+                        Text("\(issue.account) needs attention on \(issue.computer)")
+                            .font(DesktopDesignTokens.Typography.secondary.weight(.medium))
                         Text(accessHealth
                             .failure == nil ?
                             "Your indexed information is kept. Review the affected source and computer before collecting again." :
                             "The last collection reported an access problem. Its current status could not be refreshed.")
-                            .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                            .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                     }
                     Spacer()
                     Button(issue.target == nil ? "Review sources" : "Review access") {
@@ -121,7 +120,8 @@ struct DesktopRootView: View {
                             store.presentAccess = true
                         } else { store.destination = .sources }
                     }.buttonStyle(DesktopButtonStyle())
-                }.padding(16).background(DesktopTheme.raised)
+                }.padding(.horizontal, DesktopDesignTokens.Layout.pageMargin).padding(.vertical, DesktopDesignTokens.Space.medium)
+                    .background(DesktopTheme.surface)
             }
         }
     }
@@ -129,37 +129,35 @@ struct DesktopRootView: View {
     private var libraryNavigation: some View {
         @Bindable var store = store
         return NavigationSplitView(columnVisibility: $columns) {
-            VStack(alignment: .leading, spacing: 20) {
-                HStack(spacing: 12) {
-                    DesktopBrandMark(size: 30)
-                    Text("Omnesis").font(.system(size: 18, weight: .semibold)).accessibilityIdentifier("library-brand-title")
+            VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.small) {
+                HStack(spacing: DesktopDesignTokens.Space.small) {
+                    DesktopBrandMark(size: 24)
+                    Text("Omnesis").font(DesktopDesignTokens.Typography.body.weight(.semibold))
+                        .accessibilityIdentifier("library-brand-title")
                     Spacer()
-                }.padding(.horizontal, 20).padding(.top, 28)
+                }.padding(.horizontal, DesktopDesignTokens.Space.medium).padding(.top, DesktopDesignTokens.Space.regular)
                 List(selection: $store.destination) {
                     ForEach(DesktopStore.Destination.allCases) { item in
                         Label(item.rawValue, systemImage: item.symbol)
-                            .font(.system(size: 14, weight: .medium)).padding(.vertical, 5).tag(item)
+                            .font(DesktopDesignTokens.Typography.navigation)
+                            .foregroundStyle(store.destination == item ? DesktopTheme.ink : DesktopTheme.secondary)
+                            .frame(minHeight: 34).tag(item)
+                            .listRowInsets(EdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12))
                             .listRowSeparator(.hidden)
-                            .listRowBackground(store.destination == item ? DesktopTheme.selected : Color.clear)
-                            .overlay(alignment: .leading) {
-                                if store.destination == item {
-                                    Capsule().fill(DesktopTheme.primary).frame(
-                                        width: contrast == .increased ? 4 : 3,
-                                        height: contrast == .increased ? 22 : 16
-                                    )
-                                    .offset(x: -10)
-                                }
-                            }
+                            .listRowBackground(RoundedRectangle(cornerRadius: DesktopDesignTokens.Radius.medium)
+                                .fill(store.destination == item ? DesktopTheme.selected : .clear))
                     }
                 }.listStyle(.sidebar).scrollContentBackground(.hidden)
                 Label(store.state.statusLabel, systemImage: "checkmark.shield")
-                    .font(.caption.weight(.medium)).foregroundStyle(DesktopTheme.teal)
-                    .padding(.horizontal, 20).padding(.bottom, 24).frame(maxWidth: .infinity, alignment: .leading)
+                    .font(DesktopDesignTokens.Typography.caption).foregroundStyle(DesktopTheme.secondary)
+                    .padding(.horizontal, DesktopDesignTokens.Space.medium).padding(.bottom, DesktopDesignTokens.Space.medium)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }.frame(maxHeight: .infinity)
-                .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 260)
+                .navigationSplitViewColumnWidth(min: 180, ideal: 216, max: 276)
                 .background(DesktopTheme.sidebar)
         } detail: {
             VStack(spacing: 0) {
+                prerequisiteBanners
                 failureBanner
                 switch store.destination ?? .ask {
                 case .ask: DesktopAskView()
@@ -178,11 +176,13 @@ struct DesktopRootView: View {
     private var failureBanner: some View {
         if let failure = store.failure {
             HStack {
-                Image(systemName: "exclamationmark.triangle").accessibilityHidden(true)
+                Image(systemName: "exclamationmark.triangle").foregroundStyle(DesktopTheme.danger).accessibilityHidden(true)
                 Text(failure).textSelection(.enabled).accessibilityIdentifier("runtime-error")
                 Spacer()
                 Button("Retry") { store.start() }
-            }.padding().background(.orange.opacity(0.12))
+            }.font(DesktopDesignTokens.Typography.secondary)
+                .padding(.horizontal, DesktopDesignTokens.Layout.pageMargin).padding(.vertical, DesktopDesignTokens.Space.medium)
+                .background(DesktopTheme.surface)
         }
     }
 }

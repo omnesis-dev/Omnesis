@@ -11,6 +11,7 @@ import { parseHTML } from "linkedom";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
+  addRecordingParticipant: vi.fn(),
   deleteRecording: vi.fn(),
   dismissRecordingSuggestion: vi.fn(),
   getPeople: vi.fn(),
@@ -19,6 +20,8 @@ const api = vi.hoisted(() => ({
   getRecordingSpeakers: vi.fn(),
   getRecordingSuggestions: vi.fn(),
   listRecordings: vi.fn(),
+  removeRecordingParticipant: vi.fn(),
+  setRecordingConversationTitle: vi.fn(),
   setRecordingSpeaker: vi.fn(),
   setRecordingTitle: vi.fn(),
 }));
@@ -294,18 +297,78 @@ describe("Recordings page", () => {
     expect(api.deleteRecording).toHaveBeenCalledWith(ID);
     expect(router.navigate).toHaveBeenCalledWith("/portal/recordings");
   });
+  describe("also present", () => {
+    const present = () => host.querySelector(".recording-present") as HTMLElement;
+    const chips = () =>
+      [...present().querySelectorAll(".recording-participant")].map((li) => li.textContent?.replace("×", "").trim());
+    const DAVID = { key: "person:p-david", personId: "p-david", name: "David Lin" };
+    const SARAH = { key: "name:sarah mendez", personId: null, name: "Sarah Mendez" };
+
+    test("lists who was there without a turn, and says how to add someone when nobody is", async () => {
+      await mount({ recordingId: ID });
+      expect(present().textContent).toContain("No one added.");
+      api.getRecordingSpeakers.mockResolvedValue({ speakers: [speaker(1)], participants: [DAVID, SARAH] });
+      await mount({ recordingId: "other" });
+      expect(chips()).toEqual(["David Lin, from People", "Sarah Mendez"]);
+    });
+
+    test("the owner adds a person from People", async () => {
+      api.getPeople.mockResolvedValue({ people: [{ id: "p-david", canonicalName: "David Lin" }] });
+      api.addRecordingParticipant.mockResolvedValue({ participants: [DAVID] });
+      await mount({ recordingId: ID });
+      await click(within(present(), "Add a person…"));
+      await type(present().querySelector("input") as HTMLInputElement, "Dav");
+      await vi.waitFor(() => expect(api.getPeople).toHaveBeenCalledWith("Dav", 8));
+      await settle();
+      await click(within(present(), "David Lin"));
+      expect(api.addRecordingParticipant).toHaveBeenCalledWith(ID, { personId: "p-david" });
+      expect(chips()).toEqual(["David Lin, from People"]);
+      // Adding someone can settle a calendar suggestion, so they are read again.
+      expect(api.getRecordingSuggestions).toHaveBeenCalledTimes(2);
+    });
+
+    test("the owner adds a plain name and removes someone", async () => {
+      api.getRecordingSpeakers.mockResolvedValue({ speakers: [speaker(1)], participants: [DAVID] });
+      api.addRecordingParticipant.mockResolvedValue({ participants: [DAVID, SARAH] });
+      api.removeRecordingParticipant.mockResolvedValue({ participants: [SARAH] });
+      await mount({ recordingId: ID });
+      await click(within(present(), "Type a name…"));
+      await type(present().querySelector("input") as HTMLInputElement, " Sarah Mendez ");
+      await act(async () => {
+        present().querySelector("form")!.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+      });
+      await settle();
+      expect(api.addRecordingParticipant).toHaveBeenCalledWith(ID, { name: "Sarah Mendez" });
+      expect(chips()).toEqual(["David Lin, from People", "Sarah Mendez"]);
+
+      await click(present().querySelector('[data-key="person:p-david"] .recording-participant-remove') as HTMLButtonElement);
+      expect(api.removeRecordingParticipant).toHaveBeenCalledWith(ID, "person:p-david");
+      expect(chips()).toEqual(["Sarah Mendez"]);
+    });
+
+    test("a calendar attendee is offered as present, and a refusal is shown", async () => {
+      const PRIYA = {
+        key: "person:p-priya",
+        kind: "person",
+        source: "calendar",
+        speaker: null,
+        personId: "p-priya",
+        name: "Priya",
+        evidence: "Weekly sync",
+      };
+      api.getRecordingSuggestions.mockResolvedValue({ suggestions: [PRIYA] });
+      api.addRecordingParticipant.mockRejectedValue(Object.assign(new Error("400"), { serverMessage: "no such person" }));
+      await mount({ recordingId: ID });
+      const offer = present().querySelector(".recording-suggestion-accept") as HTMLButtonElement;
+      expect(offer.textContent).toBe("Priya");
+      await click(offer);
+      expect(api.addRecordingParticipant).toHaveBeenCalledWith(ID, { personId: "p-priya" });
+      expect(present().querySelector("[role=alert]")?.textContent).toBe("no such person");
+    });
+  });
+
   describe("suggestions", () => {
     const TITLE = { key: "title:doc-sync", kind: "title", source: "calendar", title: "Weekly sync", documentId: "doc-sync" };
-    const JAMIE = {
-      key: "mention:2:p-jamie",
-      kind: "person",
-      source: "mention",
-      speaker: 2,
-      personId: "p-jamie",
-      name: "Jamie",
-      evidence: "Thanks, Jamie.",
-    };
-    const ALEX = { ...JAMIE, key: "mention:1:alex", speaker: 1, personId: null, name: "Alex", evidence: "Alex, go on." };
     const PRIYA = {
       key: "person:p-priya",
       kind: "person",
@@ -315,15 +378,15 @@ describe("Recordings page", () => {
       name: "Priya",
       evidence: "Weekly sync",
     };
+    const JAMIE = { ...PRIYA, key: "person:p-jamie", personId: "p-jamie", name: "Jamie" };
     const offered = (n: number) =>
       [...speakerRow(n).querySelectorAll(".recording-suggestion-accept")].map((b) => b.textContent);
 
-    test("each unnamed speaker is offered who was heard answering, and the meeting's attendees", async () => {
+    test("each unnamed speaker is offered the meeting's attendees", async () => {
       api.getRecordingSuggestions.mockResolvedValue({ suggestions: [JAMIE, PRIYA] });
       await mount({ recordingId: ID });
-      expect(offered(1)).toEqual(["Priya"]);
+      expect(offered(1)).toEqual(["Jamie", "Priya"]);
       expect(offered(2)).toEqual(["Jamie", "Priya"]);
-      expect(speakerRow(2).querySelector(".recording-suggestion-why")?.textContent).toBe("Heard: “Thanks, Jamie.”");
       expect(speakerRow(1).querySelector(".recording-suggestion-why")?.textContent).toBe("On your calendar: Weekly sync");
     });
 
@@ -349,21 +412,13 @@ describe("Recordings page", () => {
       expect(offered(1)).toEqual(["Priya"]);
     });
 
-    test("accepting a plain name gives the speaker that name", async () => {
-      api.getRecordingSuggestions.mockResolvedValue({ suggestions: [ALEX] });
-      api.setRecordingSpeaker.mockResolvedValue({ speakers: [speaker(1, { name: "Alex" }), speaker(2)] });
-      await mount({ recordingId: ID });
-      await click(within(speakerRow(1), "Alex"));
-      expect(api.setRecordingSpeaker).toHaveBeenCalledWith(ID, 1, { name: "Alex" });
-    });
-
     test("dismissing a suggestion stops it being offered", async () => {
       api.getRecordingSuggestions.mockResolvedValueOnce({ suggestions: [JAMIE, PRIYA] }).mockResolvedValue({ suggestions: [JAMIE] });
       api.dismissRecordingSuggestion.mockResolvedValue(null);
       await mount({ recordingId: ID });
       await click(speakerRow(1).querySelector('[data-key="person:p-priya"] .recording-suggestion-dismiss') as HTMLButtonElement);
       expect(api.dismissRecordingSuggestion).toHaveBeenCalledWith(ID, "person:p-priya");
-      expect(offered(1)).toEqual([]);
+      expect(offered(1)).toEqual(["Jamie"]);
       expect(offered(2)).toEqual(["Jamie"]);
     });
 
@@ -384,6 +439,77 @@ describe("Recordings page", () => {
       expect(host.querySelector("h1")?.textContent).toBe("Planning the move");
       expect(host.querySelector(".recording-suggestions")).toBeNull();
       expect(host.querySelector(".privacy-banner.error")).toBeNull();
+    });
+  });
+
+  describe("an all-day recording split into conversations", () => {
+    const conversation = (n: number, overrides: Record<string, unknown> = {}) => ({
+      n,
+      title: `Conversation ${n}`,
+      titled: false,
+      startedAt: n === 1 ? START : "2026-03-02T09:03:00.000Z",
+      endedAt: n === 1 ? "2026-03-02T09:00:07.000Z" : "2026-03-02T09:03:14.000Z",
+      documentId: `doc-${n}`,
+      ...overrides,
+    });
+    const split = (overrides: Record<string, unknown> = {}) =>
+      recording({
+        state: "recording",
+        documentId: "doc-1",
+        conversations: [conversation(1), conversation(2)],
+        ...overrides,
+      });
+    const section = (n: number) =>
+      host.querySelector(`.recording-conversation[data-conversation="${n}"]`) as HTMLElement;
+
+    beforeEach(() => {
+      api.getRecordingChunks.mockResolvedValue({ recording: split(), chunks: CHUNKS });
+      api.getRecordingSpeakers.mockResolvedValue({
+        speakers: [
+          speaker(1, { conversation: 1 }),
+          speaker(2, { conversation: 1 }),
+          speaker(3, { conversation: 2 }),
+        ],
+      });
+    });
+
+    test("each conversation has its own section, transcript and speakers", async () => {
+      await mount({ recordingId: ID });
+      expect([...host.querySelectorAll(".recording-conversation h2")].map((h) => h.textContent)).toEqual([
+        "Conversation 1",
+        "Conversation 2",
+      ]);
+      expect([...section(1).querySelectorAll(".recording-speaker")].map((r) => r.getAttribute("data-speaker"))).toEqual(["1", "2"]);
+      expect([...section(2).querySelectorAll(".recording-speaker")].map((r) => r.getAttribute("data-speaker"))).toEqual(["3"]);
+      expect(section(2).querySelector("a")?.getAttribute("href")).toBe("/portal/doc/doc-2");
+      expect(section(1).querySelector(".recording-conversation-span")?.textContent).toContain("· 7 s");
+      // No transcript for the whole recording: each conversation has its own.
+      expect(host.querySelector(".recording-detail > .recording-actions a")).toBeNull();
+      expect(text()).toContain("The conversation going on now is written once it has been quiet for a while.");
+      expect(api.getRecordingSuggestions).toHaveBeenCalledWith(ID, 1);
+      expect(api.getRecordingSuggestions).toHaveBeenCalledWith(ID, 2);
+    });
+
+    test("a conversation takes the calendar's title for its own time", async () => {
+      const title = { key: "c2:title:doc-9", kind: "title", source: "calendar", title: "Facilities sync", documentId: "doc-9" };
+      api.getRecordingSuggestions.mockImplementation(async (_id: string, n?: number) => ({
+        suggestions: n === 2 ? [title] : [],
+      }));
+      api.setRecordingConversationTitle.mockResolvedValue(
+        split({ conversations: [conversation(1), conversation(2, { title: "Facilities sync", titled: true })] }),
+      );
+      await mount({ recordingId: ID });
+      expect(section(1).querySelector(".recording-title-suggestion")).toBeNull();
+      await click(within(section(2), "Use this title"));
+      expect(api.setRecordingConversationTitle).toHaveBeenCalledWith(ID, 2, "Facilities sync");
+      expect(section(2).querySelector("h2")?.textContent).toBe("Facilities sync");
+      expect(section(2).querySelector(".recording-title-suggestion")).toBeNull();
+    });
+
+    test("the list says how many conversations a recording became", async () => {
+      api.listRecordings.mockResolvedValue({ recordings: [split()] });
+      await mount();
+      expect(text()).toContain("2 conversations");
     });
   });
 });

@@ -16,10 +16,10 @@ struct DesktopRemovalView: View {
     @State private var localFailure: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.large) {
             if let outcome = store.removalOutcome {
                 Label(outcome.title, systemImage: outcome.finished ? "checkmark.circle.fill" : "exclamationmark.triangle")
-                    .font(.title2.bold())
+                    .font(DesktopDesignTokens.Typography.pageTitle).accessibilityAddTraits(.isHeader)
                 Text(outcome.message).textSelection(.enabled)
                 if outcome.finished {
                     Text("You can keep the app for later or move this copy of Omnesis to Trash and quit.")
@@ -28,14 +28,15 @@ struct DesktopRemovalView: View {
                     HStack {
                         Button("Done") { dismiss() }
                         Spacer()
-                        Button("Move app to Trash and quit…", role: .destructive) { confirmTrash = true }.buttonStyle(DesktopButtonStyle(primary: true))
+                        Button("Move app to Trash and quit…", role: .destructive) { confirmTrash = true }
+                            .buttonStyle(DesktopButtonStyle(primary: true))
                     }
                 } else {
                     Button("Retry saved key cleanup") { review() }.buttonStyle(DesktopButtonStyle(primary: true))
                     Button("Keep the app for now") { dismiss() }
                 }
             } else {
-                Text("Remove Omnesis from this Mac").font(.title2.bold())
+                Text("Remove Omnesis from this Mac").font(DesktopDesignTokens.Typography.pageTitle).accessibilityAddTraits(.isHeader)
                 Text("Omnesis will stop on this Mac and will no longer start when you sign in.")
                 if store.state.mode == "home" {
                     Text(
@@ -49,7 +50,8 @@ struct DesktopRemovalView: View {
                 Text(eraseData ?
                     "This permanently deletes Omnesis data and its saved encryption key on this Mac. Your original files and accounts are unaffected." :
                     "Your library and its encryption key will be kept so you can reinstall later.")
-                    .font(.callout).foregroundStyle(eraseData ? Color.orange : DesktopTheme.secondary)
+                    .font(DesktopDesignTokens.Typography.secondary)
+                    .foregroundStyle(eraseData ? DesktopTheme.warning : DesktopTheme.secondary)
                 if let plan = store.removalPlan {
                     Text(plan.summary).textSelection(.enabled)
                     if plan.canConfirm, plan.mode == (eraseData ? .eraseData : .keepData) {
@@ -61,7 +63,8 @@ struct DesktopRemovalView: View {
                         }.buttonStyle(DesktopButtonStyle(primary: true))
                     }
                 }
-                if let failure = localFailure ?? store.failure { Text(failure).foregroundStyle(DesktopTheme.danger).textSelection(.enabled) }
+                if let failure = localFailure ?? store
+                    .failure { Text(failure).foregroundStyle(DesktopTheme.danger).textSelection(.enabled) }
                 if localFailure != nil { Button("Open Login Items settings") { SMAppService.openSystemSettingsLoginItems() } }
                 HStack {
                     Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
@@ -70,7 +73,8 @@ struct DesktopRemovalView: View {
                 }
                 if store.busy { ProgressView("Preparing removal…") }
             }
-        }.buttonStyle(DesktopButtonStyle()).padding(30).frame(width: 540).disabled(store.busy || movingApplication)
+        }.buttonStyle(DesktopButtonStyle()).padding(DesktopDesignTokens.Space.section).frame(width: 540)
+            .disabled(store.busy || movingApplication)
             .interactiveDismissDisabled(store.busy || movingApplication)
             .onAppear {
                 if store.state.retirement?.mode == "erase-data", store.state.retirement?.phase != "complete" { eraseData = true }

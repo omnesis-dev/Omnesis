@@ -1868,7 +1868,10 @@ export const listRecordings = (limit = 100) => request("GET", "/recordings", { q
 /** One recording as the list shows it, with its chunks: `{ recording, chunks }`. */
 export const getRecordingChunks = (id) => request("GET", `${recordingPath(id)}/chunks`);
 
-/** A recording's speakers, with how long each spoke and what they said first: `{ speakers }`. */
+/**
+ * A recording's speakers, with how long each spoke and what they said first,
+ * and the people present without a turn: `{ speakers, participants }`.
+ */
 export const getRecordingSpeakers = (id) => request("GET", `${recordingPath(id)}/speakers`);
 
 /**
@@ -1879,6 +1882,14 @@ export const setRecordingSpeaker = (id, speaker, mapping) =>
   request("PUT", `${recordingPath(id)}/speakers/${encodeURIComponent(String(speaker))}`, {
     body: mapping,
   });
+
+/** Add someone present without a turn: `{ personId }` or `{ name }`. Answers `{ participants }`. */
+export const addRecordingParticipant = (id, participant) =>
+  request("POST", `${recordingPath(id)}/participants`, { body: participant });
+
+/** Remove a participant by its key. Answers `{ participants }`. */
+export const removeRecordingParticipant = (id, key) =>
+  request("DELETE", `${recordingPath(id)}/participants/${encodeURIComponent(key)}`);
 
 /** Delete a recording with its chunks, any kept audio, and its document. */
 export const deleteRecording = (id) => request("DELETE", recordingPath(id));
@@ -1893,9 +1904,13 @@ export async function getRecordingChunkAudio(id, seq) {
 
 /**
  * Who likely took part in a recording and what it was, from the owner's
- * calendar and names heard in it: `{ suggestions }`. Nothing is applied.
+ * calendar and names heard in it: `{ suggestions }`. Nothing is applied. With
+ * `conversation`, for that conversation of a split all-day recording.
  */
-export const getRecordingSuggestions = (id) => request("GET", `${recordingPath(id)}/suggestions`);
+export const getRecordingSuggestions = (id, conversation) =>
+  request("GET", `${recordingPath(id)}/suggestions`, {
+    ...(conversation === undefined ? {} : { query: { conversation } }),
+  });
 
 /** Stop offering one suggestion for a recording. */
 export const dismissRecordingSuggestion = (id, key) =>
@@ -1904,3 +1919,12 @@ export const dismissRecordingSuggestion = (id, key) =>
 /** Give a recording the owner's title; null goes back to the date-based one. Answers its summary. */
 export const setRecordingTitle = (id, title) =>
   request("PUT", `${recordingPath(id)}/title`, { body: { title } });
+
+/**
+ * Give conversation `n` of a split all-day recording the owner's title; null
+ * goes back to the time-based one. Answers the recording's summary.
+ */
+export const setRecordingConversationTitle = (id, n, title) =>
+  request("PUT", `${recordingPath(id)}/conversations/${encodeURIComponent(String(n))}/title`, {
+    body: { title },
+  });

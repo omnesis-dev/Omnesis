@@ -26,12 +26,12 @@ private struct DesktopModelCredentialForm: View {
     @State private var error: String?
     @State private var savedKey = false
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.small) {
             if entry.configured { Label("API credentials saved", systemImage: "key") }
             Text(
                 "Saving a key keeps the provider connection available. Choose a model for each task separately; saving does not enable a task."
             )
-            .font(.callout).foregroundStyle(.secondary)
+            .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
             ForEach(entry.spec.fields) { field in
                 let binding = Binding(get: { values[field.name] ?? "" }, set: { values[field.name] = $0 })
                 if field
@@ -43,7 +43,8 @@ private struct DesktopModelCredentialForm: View {
                     TextField(field.label, text: binding).privacySensitive()
                         .accessibilityIdentifier("model-credential-" + entry.fileKey + "-" + field.name)
                 }
-                if let hint = field.patternHint { Text(hint).font(.caption).foregroundStyle(.secondary) }
+                if let hint = field
+                    .patternHint { Text(hint).font(DesktopDesignTokens.Typography.metadata).foregroundStyle(DesktopTheme.secondary) }
             }
             Button(entry.configured ? "Replace API credentials" : "Save API credentials") { context.run { _ in await save() } }
                 .accessibilityIdentifier("model-credential-save-" + entry.fileKey)
@@ -51,7 +52,9 @@ private struct DesktopModelCredentialForm: View {
                     .contains { (values[$0.name] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } || values.values
                     .contains { $0.utf8.count > 16384 })
             if loading { ProgressView("Saving credentials…") }
-            if savedKey { Text("Credentials saved. Select the tasks you want this provider to serve.").font(.callout) }
+            if savedKey {
+                Text("Credentials saved. Select the tasks you want this provider to serve.").font(DesktopDesignTokens.Typography.secondary)
+            }
             if let error { Text(error).foregroundStyle(DesktopTheme.danger) }
         }.onDisappear { values.removeAll() }
     }

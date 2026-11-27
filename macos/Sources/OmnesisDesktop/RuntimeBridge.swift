@@ -110,7 +110,7 @@ final class RuntimeBridge {
     /// Native presentation remains a code consumer even after its bridge exits.
     private var usageLease: DesktopRuntimeUsageLease?
     private let preparationOverride: Preparation?
-    private let beforeReading: (@MainActor () async -> Void)?
+    private let beforeReading: (@MainActor @Sendable () async -> Void)?
     private let inputClosure: InputClosure
     private var preparationTask: Task<PreparedRuntime, Error>?
 
@@ -118,7 +118,7 @@ final class RuntimeBridge {
 
     init(
         preparation: Preparation? = nil,
-        beforeReading: (@MainActor () async -> Void)? = nil,
+        beforeReading: (@MainActor @Sendable () async -> Void)? = nil,
         inputClosure: @escaping InputClosure = { try $0.close() }
     ) {
         self.inputClosure = inputClosure
@@ -256,32 +256,56 @@ final class RuntimeBridge {
         selectedRuntime = runtime
         let handle = incoming.fileHandleForReading
         let beforeReading = beforeReading
-        owned.reader = Task { [weak self, owned] in
+        // The exact retained task owns one iterator until EOF. Only complete frame decisions
+        // cross to MainActor; revoked shutdown output must not consume its executor per byte.
+        owned.reader = Task.detached { [weak self, owned] in
             await beforeReading?()
+            var revoked = false
             do {
                 var buffer = JSONLineBuffer()
                 for try await byte in handle.bytes {
-                    guard owned.active else { continue }
+                    guard !revoked else { continue }
                     do {
                         for line in try buffer.append(Data([byte])) {
                             let envelope = try JSONDecoder().decode(BridgeEnvelope.self, from: line)
-                            guard let self, self.session === owned, owned.active else { continue }
-                            self.onEnvelope?(envelope)
+                            let accepted = await MainActor.run { [weak self, owned] in
+                                guard let self, self.session === owned, owned.active else { return false }
+                                self.onEnvelope?(envelope)
+                                // An envelope callback can synchronously disconnect this session.
+                                return self.session === owned && owned.active
+                            }
+                            if !accepted { revoked = true
+                                break
+                            }
                         }
                     } catch {
+                        revoked = true
+                        await MainActor.run { [weak self, owned] in
+                            guard let self, self.session === owned else { return }
+                            self.fail(
+                                owned,
+                                message: "Omnesis could not read its background service. Check the connection status before trying again."
+                            )
+                        }
+                        // Keep this same iterator draining without any further publication.
+                    }
+                }
+                if !revoked {
+                    await MainActor.run { [weak self, owned] in
+                        guard let self, self.session === owned else { return }
+                        self.fail(owned, message: "Omnesis lost its background connection. Your library stays on disk.")
+                    }
+                }
+            } catch {
+                if !revoked {
+                    await MainActor.run { [weak self, owned] in
                         guard let self, self.session === owned else { return }
                         self.fail(
                             owned,
                             message: "Omnesis could not read its background service. Check the connection status before trying again."
                         )
-                        // Continue draining revoked bytes so portable shutdown cannot block on stdout.
                     }
                 }
-                guard let self, self.session === owned else { return }
-                self.fail(owned, message: "Omnesis lost its background connection. Your library stays on disk.")
-            } catch {
-                guard let self, self.session === owned else { return }
-                self.fail(owned, message: "Omnesis could not read its background service. Check the connection status before trying again.")
             }
         }
     }

@@ -30,7 +30,7 @@ struct DesktopRecoveryCopiesSection: View {
                 Text(store.state.homeName
                     .map { "These protect this Mac’s setup. Your library stays on \($0); manage its backups there." }
                     ?? "These protect this Mac’s setup. Manage library backups on your library server.")
-                    .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                    .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
             }
             if let flow {
                 if flow.busy {
@@ -57,14 +57,15 @@ struct DesktopRecoveryCopiesSection: View {
                     LabeledContent("Recorded copies", value: "\(catalog.items.count) of \(catalog.limit)")
                     if let pending = catalog.pending { pendingView(pending, catalog: catalog, flow: flow) }
                     ForEach(catalog.items) { copy in
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(copyName(copy)).font(.headline)
+                        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.small) {
+                            Text(copyName(copy)).font(DesktopDesignTokens.Typography.body.weight(.medium))
                             LabeledContent(
                                 "Retained",
                                 value: copy.retainedDate?.formatted(date: .abbreviated, time: .shortened) ?? "Date unavailable"
                             )
                             LabeledContent("Recorded size", value: size(copy.bytes))
-                            Text(copy.protectionLabel).font(.callout).foregroundStyle(DesktopTheme.secondary)
+                            Text(copy.protectionLabel).font(DesktopDesignTokens.Typography.secondary)
+                                .foregroundStyle(DesktopTheme.secondary)
                             HStack {
                                 Toggle("Always keep this copy", isOn: Binding(get: { copy.pinned }, set: { value in
                                     Task { await flow.setPinned(copy.id, value) }
@@ -81,16 +82,17 @@ struct DesktopRecoveryCopiesSection: View {
                                         .accessibilityIdentifier("review-recovery-" + copy.id)
                                 }
                             }
-                        }.padding(.vertical, 8)
+                        }.padding(.vertical, DesktopDesignTokens.Space.small)
                     }
                     ForEach(Array(catalog.partialCopies.enumerated()), id: \.offset) { _, copy in
-                        VStack(alignment: .leading, spacing: 8) {
+                        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.small) {
                             Label(
                                 copy.purpose == .update ? "An unfinished update copy is kept" : "An unfinished restoration copy is kept",
                                 systemImage: "pause.circle"
                             )
                             if copy.ownership == .unknown {
-                                Text("Its ownership could not be confirmed, so Omnesis keeps it unchanged.").font(.callout)
+                                Text("Its ownership could not be confirmed, so Omnesis keeps it unchanged.")
+                                    .font(DesktopDesignTokens.Typography.secondary)
                                     .foregroundStyle(DesktopTheme.secondary)
                             } else if copy.canReview {
                                 Button("Review unfinished copy") {
@@ -106,7 +108,7 @@ struct DesktopRecoveryCopiesSection: View {
                         Text(
                             "Older copies not listed individually: \(catalog.unregisteredCopies). Their ownership is uncertain, so they stay kept."
                         )
-                        .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                        .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                     }
                     if catalog.items.isEmpty, catalog.partialCopies.isEmpty, catalog.unregisteredCopies == 0 {
                         Text("No automatic recovery copies are recorded on this Mac.").foregroundStyle(DesktopTheme.secondary)
@@ -134,23 +136,24 @@ struct DesktopRecoveryCopiesSection: View {
         flow: DesktopRecoveryCopiesFlow
     )
         -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.small) {
             Text(pending.phase == .deleting ? "A recovery-copy removal needs to finish" : "A recovery-copy removal is pending")
-                .font(.headline)
+                .font(DesktopDesignTokens.Typography.body.weight(.medium))
             Text(pendingName(pending, catalog: catalog)).foregroundStyle(DesktopTheme.secondary)
             if let keeper = catalog.items.first(where: { $0.id == pending.keeperId }) {
                 Text(
                     "Kept copy: \(copyName(keeper)) · \(keeper.retainedDate?.formatted(date: .abbreviated, time: .shortened) ?? "Date unavailable")"
                 )
-                .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
             }
             Text(
                 pending.phase == .deleting ? "Some of this selected copy may already be removed. Finishing uses the same original copy; other copies are kept."
                     : "You can finish removing this selected copy, or keep it and cancel the pending removal."
             )
-            .font(.callout).foregroundStyle(DesktopTheme.secondary)
+            .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
             if !pending.hasCleanupBinding {
-                Text("Omnesis could not identify this pending choice safely. Refresh the list before continuing.").font(.callout)
+                Text("Omnesis could not identify this pending choice safely. Refresh the list before continuing.")
+                    .font(DesktopDesignTokens.Typography.secondary)
                     .foregroundStyle(DesktopTheme.secondary)
             }
             HStack {
@@ -164,7 +167,7 @@ struct DesktopRecoveryCopiesSection: View {
                         .accessibilityIdentifier("cancel-pending-recovery-cleanup")
                 }
             }
-        }.padding(.vertical, 8)
+        }.padding(.vertical, DesktopDesignTokens.Space.small)
             .confirmationDialog("Finish removing this automatic recovery copy?", isPresented: $confirmRetry, titleVisibility: .visible) {
                 Button("Finish removal", role: .destructive) { Task { await flow.retryPending(expectedId: pending.id) } }
                 Button("Keep pending", role: .cancel) {}
@@ -192,9 +195,10 @@ struct DesktopRecoveryCopyConfirmation: View {
     let preview: DesktopRecoveryCleanupPreview
     @State private var understood = false
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("Remove this automatic recovery copy?").font(.title2.bold()).accessibilityAddTraits(.isHeader)
-            Text(preview.selected?.label ?? "The selected unfinished automatic recovery copy").font(.headline)
+        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.regular) {
+            Text("Remove this automatic recovery copy?").font(DesktopDesignTokens.Typography.pageTitle).accessibilityAddTraits(.isHeader)
+            Text(preview.selected?.label ?? "The selected unfinished automatic recovery copy")
+                .font(DesktopDesignTokens.Typography.body.weight(.medium))
             LabeledContent(
                 "Recorded size",
                 value: preview.bytes.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "Not measured"
@@ -202,7 +206,7 @@ struct DesktopRecoveryCopyConfirmation: View {
             if let keeper = preview.keeper {
                 VStack(alignment: .leading, spacing: 6) {
                     Label("This newer recovery copy stays kept", systemImage: "checkmark.shield")
-                    Text(keeper.label).font(.callout).foregroundStyle(DesktopTheme.secondary)
+                    Text(keeper.label).font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                 }
             } else if preview.mode == .lastCopyOldEpoch {
                 Text(
@@ -221,7 +225,7 @@ struct DesktopRecoveryCopyConfirmation: View {
                     .buttonStyle(DesktopButtonStyle(primary: true)).disabled(!understood || !preview.valid || flow.busy)
                     .accessibilityIdentifier("confirm-remove-recovery-copy")
             }
-        }.padding(24).frame(width: 620).fixedSize(horizontal: false, vertical: true)
+        }.padding(DesktopDesignTokens.Space.section).frame(width: 620).fixedSize(horizontal: false, vertical: true)
             .interactiveDismissDisabled(flow.busy)
     }
 }

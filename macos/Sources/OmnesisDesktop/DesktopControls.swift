@@ -10,29 +10,43 @@ struct DesktopButtonStyle: ButtonStyle {
     @Environment(\.isFocused) private var focused
     @Environment(\.desktopContrast) private var contrast
     @State private var hovered = false
+
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label.font(.system(size: 13, weight: .medium))
-            .padding(.horizontal, iconOnly ? 0 : 12)
-            .frame(width: iconOnly ? 36 : nil, height: iconOnly ? 36 : 34)
-            .foregroundStyle(foreground(destructive: configuration.role == .destructive))
-            .background(
-                background(pressed: configuration.isPressed, destructive: configuration.role == .destructive),
-                in: RoundedRectangle(cornerRadius: 8)
+        let destructive = configuration.role == .destructive
+        configuration.label.font(DesktopDesignTokens.Typography.button)
+            .padding(.horizontal, iconOnly ? 0 : DesktopDesignTokens.Control.horizontalPadding)
+            .padding(.vertical, iconOnly ? 0 : 6)
+            .frame(
+                width: iconOnly ? DesktopDesignTokens.Control.iconTarget : nil,
+                height: iconOnly ? DesktopDesignTokens.Control.iconTarget : nil
             )
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(
-                contrast == .increased ? DesktopTheme.secondary : iconOnly && !primary ? DesktopTheme.border : Color.clear,
+            .frame(minHeight: iconOnly ? nil : DesktopDesignTokens.Control.height)
+            .foregroundStyle(foreground(destructive: destructive))
+            .background(
+                background(pressed: configuration.isPressed, destructive: destructive),
+                in: RoundedRectangle(cornerRadius: DesktopDesignTokens.Radius.control)
+            )
+            .overlay(RoundedRectangle(cornerRadius: DesktopDesignTokens.Radius.control).strokeBorder(
+                boundary,
                 lineWidth: contrast == .increased ? 2 : 1
             ))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(focused ? DesktopTheme.primaryHover : Color.clear, lineWidth: 2)
-                .padding(-4))
+            .overlay(RoundedRectangle(cornerRadius: DesktopDesignTokens.Radius.medium).strokeBorder(
+                enabled && focused ? DesktopTheme.focusRing : Color.clear,
+                lineWidth: 2
+            ).padding(-3))
             .onHover { hovered = $0 }
+    }
+
+    private var boundary: Color {
+        if contrast == .increased { return DesktopTheme.strongBorder }
+        return !primary && !iconOnly ? DesktopTheme.border : .clear
     }
 
     private func foreground(destructive: Bool) -> Color {
         if !enabled { return DesktopTheme.muted }
-        if primary { return DesktopTheme.primaryInk }
+        if primary { return destructive ? DesktopTheme.dangerInk : DesktopTheme.primaryInk }
         if destructive { return DesktopTheme.danger }
-        return iconOnly ? DesktopTheme.ink : DesktopTheme.accent
+        return DesktopTheme.ink
     }
 
     private func background(pressed: Bool, destructive: Bool) -> Color {
@@ -41,6 +55,9 @@ struct DesktopButtonStyle: ButtonStyle {
             if destructive { return pressed ? DesktopTheme.dangerPressed : hovered ? DesktopTheme.dangerHover : DesktopTheme.danger }
             return pressed ? DesktopTheme.primaryPressed : hovered ? DesktopTheme.primaryHover : DesktopTheme.primary
         }
-        return iconOnly || pressed || hovered ? (destructive ? DesktopTheme.dangerSurface : DesktopTheme.raised) : .clear
+        if destructive, pressed || hovered { return DesktopTheme.dangerSurface }
+        if pressed { return DesktopTheme.pressed }
+        if hovered { return DesktopTheme.hover }
+        return iconOnly ? .clear : DesktopTheme.surface
     }
 }

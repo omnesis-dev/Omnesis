@@ -4875,7 +4875,8 @@ function compareSummaryNewestFirst(a: ConversationSummary, b: ConversationSummar
   return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
 }
 
-function clampConversationLimit(value: number | undefined): number {
+/** A list page size within bounds; the default when none is asked for. */
+export function clampConversationLimit(value: number | undefined): number {
   if (value === undefined) return DEFAULT_CONVERSATION_LIST_LIMIT;
   if (!Number.isFinite(value) || value < 1) {
     throw new AgentError("invalid_cursor", "conversation list limit must be a positive integer");

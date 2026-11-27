@@ -159,20 +159,21 @@ struct DesktopRecordingReviewContent: View {
         case .hidden: EmptyView()
         case .checking:
             Label("Checking restored recording choices…", systemImage: "clock")
-                .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
         case .required, .requiredUnverified, .unverified:
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.small) {
                 Text(state == .unverified ? "Recording review could not be checked" : "Restored recordings are paused")
-                    .font(.headline).accessibilityAddTraits(.isHeader).accessibilityIdentifier("recording-review-notice")
+                    .font(DesktopDesignTokens.Typography.body.weight(.medium)).accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier("recording-review-notice")
                 if state != .unverified {
                     Text(
                         "Review audio retention, transcription, and speaker processing in the web portal before resuming. Completed recordings remain available."
                     )
-                    .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                    .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                 }
                 if state == .unverified || state == .requiredUnverified {
                     Text("Omnesis could not verify the current recording choices. Check again or review them in the web portal.")
-                        .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                        .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                 }
                 HStack {
                     Button("Open review in web portal", action: openPortal)

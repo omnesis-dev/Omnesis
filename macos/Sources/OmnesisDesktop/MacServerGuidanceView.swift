@@ -10,10 +10,11 @@ struct DesktopMacServerTip: View {
     var compact = false
     @State private var showSteps = false
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.small) {
             if !compact {
-                Label("Keep this Mac available", systemImage: "desktopcomputer").font(.headline)
-                Text(DesktopMacServerGuidance.summary).font(.callout).foregroundStyle(DesktopTheme.secondary)
+                Label("Keep this Mac available", systemImage: "desktopcomputer").font(DesktopDesignTokens.Typography.body.weight(.medium))
+                Text(DesktopMacServerGuidance.summary).font(DesktopDesignTokens.Typography.secondary)
+                    .foregroundStyle(DesktopTheme.secondary)
             }
             Button("Show sleep settings steps") { showSteps = true }
                 .buttonStyle(DesktopButtonStyle())
@@ -35,16 +36,16 @@ struct DesktopMacServerPrerequisite: View {
             if compactChecking, flow.status == .checking || flow.status == .needed {
                 HStack {
                     Label("Checking this Mac’s sleep settings…", systemImage: "clock")
-                        .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                        .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                     Spacer()
                     Button("Show steps") { showSteps = true }.buttonStyle(DesktopButtonStyle())
                         .accessibilityIdentifier("mac-server-steps")
                 }
             } else if compactReady, flow.ready {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.small) {
                     HStack {
                         Label("Automatic sleep is off while plugged in", systemImage: "checkmark.circle")
-                            .font(.callout).foregroundStyle(DesktopTheme.teal)
+                            .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.success)
                         Spacer()
                         Button("Check again") { Task { await flow.refresh() } }.buttonStyle(DesktopButtonStyle())
                             .accessibilityIdentifier("mac-server-power-check")
@@ -52,17 +53,18 @@ struct DesktopMacServerPrerequisite: View {
                             .accessibilityIdentifier("mac-server-steps")
                     }
                     Text("Keep this Mac powered on and connected to the network. Its display can turn off and its screen can stay locked.")
-                        .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                        .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                 }
             } else {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.medium) {
                     Label("Keep your library Mac awake", systemImage: flow.ready ? "checkmark.circle" : "desktopcomputer")
-                        .font(.headline)
+                        .font(DesktopDesignTokens.Typography.body.weight(.medium))
                     Text(
                         "Required for your library to be available to your other devices. The display can turn off and the screen can stay locked."
                     )
-                    .font(.callout).foregroundStyle(DesktopTheme.secondary)
-                    Text(statusText).font(.callout).foregroundStyle(flow.ready ? DesktopTheme.teal : DesktopTheme.ink)
+                    .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
+                    Text(statusText).font(DesktopDesignTokens.Typography.secondary)
+                        .foregroundStyle(flow.ready ? DesktopTheme.success : DesktopTheme.ink)
                         .accessibilityIdentifier("mac-server-power-status")
                     if flow.status == .checking { ProgressView("Checking system sleep settings…").controlSize(.small) }
                     HStack {
@@ -112,20 +114,20 @@ struct DesktopMacServerGuidanceView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Text("Keep your library available").font(.title2.weight(.semibold))
+        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.large) {
+            Text("Keep your library available").font(DesktopDesignTokens.Typography.section).accessibilityAddTraits(.isHeader)
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.large) {
                     Text("A desktop Mac you leave powered on, such as a Mac mini, is a good home for your library.")
                     Text(DesktopMacServerGuidance.summary).foregroundStyle(DesktopTheme.secondary)
                     GroupBox("On a desktop Mac") {
-                        VStack(alignment: .leading, spacing: 8) {
+                        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.small) {
                             Text("1. Open System Settings → \(energyPane).")
                             Text("2. Turn on Prevent automatic sleeping when the display is off.")
                         }.frame(maxWidth: .infinity, alignment: .leading)
                     }
                     GroupBox("On a MacBook") {
-                        VStack(alignment: .leading, spacing: 8) {
+                        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.small) {
                             Text("1. Connect its power adapter.")
                             Text("2. Open System Settings → Battery → Options.")
                             Text("3. Turn on Prevent automatic sleeping on power adapter when the display is off.")
@@ -140,12 +142,12 @@ struct DesktopMacServerGuidanceView: View {
                     Text(
                         "These steps are for the Mac that stores your library. A Mac that only joins it does not need to stay awake for the library to remain available."
                     )
-                    .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                    .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
             if settingsUnavailable {
                 Text("Open System Settings from the Apple menu, then follow the steps above.")
-                    .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                    .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
             }
             HStack {
                 Link("Apple’s sleep settings guide", destination: DesktopMacServerGuidance.appleGuide)
@@ -155,7 +157,7 @@ struct DesktopMacServerGuidanceView: View {
                     .buttonStyle(DesktopButtonStyle()).accessibilityIdentifier("mac-server-open-settings")
                 Button("Done") { dismiss() }.buttonStyle(DesktopButtonStyle()).keyboardShortcut(.cancelAction)
             }
-        }.padding(28).frame(width: 600, height: 560).omnesisTheme()
+        }.padding(DesktopDesignTokens.Space.section).frame(width: 600, height: 560).omnesisTheme()
     }
 }
 

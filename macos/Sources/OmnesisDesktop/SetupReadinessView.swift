@@ -10,13 +10,17 @@ struct DesktopSetupReadinessView: View {
     @State private var powerWasReady = false
     var body: some View {
         GroupBox {
-            VStack(alignment: .leading, spacing: store.requiredSetupReady ? 10 : 18) {
+            VStack(
+                alignment: .leading,
+                spacing: store.requiredSetupReady ? DesktopDesignTokens.Space.medium : DesktopDesignTokens.Space.regular
+            ) {
                 Label(
                     store.requiredSetupReady ? "Required setup is complete on this Mac" : store
                         .requiredSetupNeedsAction ? "Finish setting up this Mac" : "Checking required settings",
                     systemImage: store.requiredSetupReady ? "checkmark.shield" : "checklist"
                 )
-                .font(.title3.weight(.semibold)).foregroundStyle(store.requiredSetupReady ? DesktopTheme.teal : DesktopTheme.ink)
+                .font(DesktopDesignTokens.Typography.section)
+                .foregroundStyle(store.requiredSetupReady ? DesktopTheme.success : DesktopTheme.ink)
                 .accessibilityAddTraits(.isHeader)
                 if store.state.canOpenLibrary, store.state.encrypted == true, store.installationIdentityReady {
                     ready("Library connected and protected")
@@ -24,17 +28,18 @@ struct DesktopSetupReadinessView: View {
                     Text(
                         "This Mac’s setup has not been confirmed. Reconnect or reopen the installed app, then check again. Your library is kept."
                     )
-                    .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                    .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                     Button("Check this Mac’s connection") { store.command("status") }
                         .buttonStyle(DesktopButtonStyle(primary: DesktopSetupRepair.first(in: store) == .connection))
                 }
                 if let block = store.backgroundStartupBlock {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Background connection needs attention").font(.headline).accessibilityAddTraits(.isHeader)
+                    VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.small) {
+                        Text("Background connection needs attention").font(DesktopDesignTokens.Typography.body.weight(.medium))
+                            .accessibilityAddTraits(.isHeader)
                         Text(block == .ownerMismatch || block == .originRequired ?
                             "Review the app or library change before collection can resume. Information already opened in this app remains available." :
                             "Restore Omnesis’s background connection so collection can resume. Your indexed information is kept.")
-                            .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                            .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                         if block == .ownerMismatch || block == .originRequired {
                             Button("Review recovery") { store.settingsTab = "updates"
                                 openSettings()
@@ -65,7 +70,7 @@ struct DesktopSetupReadinessView: View {
                     DesktopHomeServicePrerequisites()
                 }
                 if let message = store.sourceMetadataFailure {
-                    Text(message).font(.callout).foregroundStyle(DesktopTheme.secondary)
+                    Text(message).font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                     Button("Check library connection again") { Task { await store.refreshPrerequisiteMetadata() } }
                         .buttonStyle(DesktopButtonStyle())
                 }
@@ -86,7 +91,7 @@ struct DesktopSetupReadinessView: View {
                         Text(
                             "Review the access this Mac needs for your selected sources. Your indexed information and setup choices are kept."
                         )
-                        .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                        .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                         Button("Review collection access") { store.accessFocus = nil
                             store.presentAccess = true
                         }.buttonStyle(DesktopButtonStyle(primary: DesktopSetupRepair.first(in: store) == .access))
@@ -96,7 +101,7 @@ struct DesktopSetupReadinessView: View {
                         Text(
                             "Review the sign-in or computer connection for the sources this Mac collects. A file-access check does not confirm a sign-in."
                         )
-                        .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                        .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                         Button("Review sources") { store.destination = .sources }
                             .buttonStyle(DesktopButtonStyle(primary: DesktopSetupRepair.first(in: store) == .sources))
                     }
@@ -105,7 +110,7 @@ struct DesktopSetupReadinessView: View {
                     Text(
                         "This Mac’s collection connection needs attention. Repair its existing device connection; your indexed information is kept."
                     )
-                    .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                    .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                     Button("Review devices") { store.destination = .devices }
                         .buttonStyle(DesktopButtonStyle(primary: DesktopSetupRepair.first(in: store) == .devices))
                 }
@@ -120,10 +125,10 @@ struct DesktopSetupReadinessView: View {
     }
 
     private func ready(_ title: String) -> some View {
-        Label(title, systemImage: "checkmark.circle").font(.callout).foregroundStyle(DesktopTheme.teal)
+        Label(title, systemImage: "checkmark.circle").font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.success)
     }
 
     private func checking(_ title: String) -> some View {
-        Label(title, systemImage: "circle").font(.callout).foregroundStyle(DesktopTheme.secondary)
+        Label(title, systemImage: "circle").font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
     }
 }

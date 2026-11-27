@@ -17,9 +17,12 @@ import dev.omnesis.android.transport.client.GatewayClient
 import dev.omnesis.android.transport.client.RecordingsClient
 import dev.omnesis.android.transport.client.SearchClient
 import dev.omnesis.android.transport.dto.FinishRecordingBody
+import dev.omnesis.android.transport.dto.NewParticipant
 import dev.omnesis.android.transport.dto.PersonSummary
 import dev.omnesis.android.transport.dto.RecordingChunkMetadata
+import dev.omnesis.android.transport.dto.RecordingParticipantDto
 import dev.omnesis.android.transport.dto.RecordingSpeakerDto
+import dev.omnesis.android.transport.dto.RecordingSpeakersResponse
 import dev.omnesis.android.transport.dto.RecordingSummaryDto
 import dev.omnesis.android.transport.dto.SpeakerMapping
 import dev.omnesis.android.transport.dto.StartRecordingBody
@@ -74,10 +77,16 @@ class ClientRecordingsGateway(
 
     override suspend fun recent(limit: Int): List<RecordingSummaryDto> = client.list(limit)
 
-    override suspend fun speakers(sessionId: String): List<RecordingSpeakerDto> = client.speakers(sessionId)
+    override suspend fun speakers(sessionId: String): RecordingSpeakersResponse = client.speakers(sessionId)
 
     override suspend fun setSpeaker(sessionId: String, speaker: Int, mapping: SpeakerMapping): List<RecordingSpeakerDto> =
         client.setSpeaker(sessionId, speaker, mapping)
+
+    override suspend fun addParticipant(sessionId: String, participant: NewParticipant): List<RecordingParticipantDto> =
+        client.addParticipant(sessionId, participant)
+
+    override suspend fun removeParticipant(sessionId: String, key: String): List<RecordingParticipantDto> =
+        client.removeParticipant(sessionId, key)
 
     override suspend fun searchPeople(query: String, limit: Int): List<PersonSummary> =
         search.people(query.ifBlank { null }, limit)

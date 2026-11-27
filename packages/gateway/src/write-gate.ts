@@ -574,8 +574,15 @@ import {
   type RecordingChunkSettling,
   markRecordingSessionProjected,
   assignRecordingVoices,
+  closeRecordingConversations,
+  setRecordingConversationTitle,
+  markRecordingConversationProjected,
+  type ClosedRecordingConversation,
   setRecordingSpeaker,
   type RecordingSpeakerMapping,
+  addRecordingParticipant,
+  removeRecordingParticipant,
+  type NewRecordingParticipant,
   deleteRecordingSession,
   insertRecordingMark,
   type FinishRecordingOutcome,
@@ -2370,12 +2377,38 @@ export interface WriteGate extends KnowledgeWriteGate {
     sessionId: string,
     chunks: Array<{ seq: number; windows: VoiceWindow[] }>,
   ): Promise<void>;
+  /** Record conversations closed in a session; how many were recorded or extended. */
+  closeRecordingConversations(
+    sessionId: string,
+    spans: ClosedRecordingConversation[],
+    closedAt: string,
+  ): Promise<number>;
+  /** Give one conversation the owner's title; false when there is no such conversation. */
+  setRecordingConversationTitle(
+    sessionId: string,
+    n: number,
+    title: string | null,
+  ): Promise<boolean>;
+  /** Remember the hash of the document written for a conversation. */
+  markRecordingConversationProjected(
+    sessionId: string,
+    n: number,
+    contentHash: string | null,
+  ): Promise<void>;
   /** Map one speaker of a session; false when it has no such speaker. */
   setRecordingSpeaker(
     sessionId: string,
     speaker: number,
     mapping: RecordingSpeakerMapping,
   ): Promise<boolean>;
+  /** Add someone present without a speaking turn; false when the session does not exist. */
+  addRecordingParticipant(
+    sessionId: string,
+    participant: NewRecordingParticipant,
+    addedAt: string,
+  ): Promise<boolean>;
+  /** Remove a participant; false when the session has no such participant. */
+  removeRecordingParticipant(sessionId: string, key: string): Promise<boolean>;
   /** Delete a session and its chunks. */
   deleteRecordingSession(id: string): Promise<boolean>;
   /** Record a moment marked during a session; false when already recorded. */
@@ -3127,8 +3160,18 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
       call("recordings.markProjected", [id, revision]),
     assignRecordingVoices: (sessionId, chunks) =>
       call("recordings.assignVoices", [sessionId, chunks]),
+    closeRecordingConversations: (sessionId, spans, closedAt) =>
+      call("recordings.closeConversations", [sessionId, spans, closedAt]),
+    setRecordingConversationTitle: (sessionId, n, title) =>
+      call("recordings.setConversationTitle", [sessionId, n, title]),
+    markRecordingConversationProjected: (sessionId, n, contentHash) =>
+      call("recordings.markConversationProjected", [sessionId, n, contentHash]),
     setRecordingSpeaker: (sessionId, speaker, mapping) =>
       call("recordings.setSpeaker", [sessionId, speaker, mapping]),
+    addRecordingParticipant: (sessionId, participant, addedAt) =>
+      call("recordings.addParticipant", [sessionId, participant, addedAt]),
+    removeRecordingParticipant: (sessionId, key) =>
+      call("recordings.removeParticipant", [sessionId, key]),
     deleteRecordingSession: (id) => call("recordings.deleteSession", [id]),
     addRecordingMark: (mark) => call("recordings.addMark", [mark]),
 
@@ -3891,8 +3934,18 @@ export function directWriteGate(db: Db): WriteGate {
       markRecordingSessionProjected(db, id, revision),
     assignRecordingVoices: async (sessionId, chunks) =>
       assignRecordingVoices(db, sessionId, chunks),
+    closeRecordingConversations: async (sessionId, spans, closedAt) =>
+      closeRecordingConversations(db, sessionId, spans, closedAt),
+    setRecordingConversationTitle: async (sessionId, n, title) =>
+      setRecordingConversationTitle(db, sessionId, n, title),
+    markRecordingConversationProjected: async (sessionId, n, contentHash) =>
+      markRecordingConversationProjected(db, sessionId, n, contentHash),
     setRecordingSpeaker: async (sessionId, speaker, mapping) =>
       setRecordingSpeaker(db, sessionId, speaker, mapping),
+    addRecordingParticipant: async (sessionId, participant, addedAt) =>
+      addRecordingParticipant(db, sessionId, participant, addedAt),
+    removeRecordingParticipant: async (sessionId, key) =>
+      removeRecordingParticipant(db, sessionId, key),
     deleteRecordingSession: async (id) => deleteRecordingSession(db, id),
     addRecordingMark: async (mark) => insertRecordingMark(db, mark),
 

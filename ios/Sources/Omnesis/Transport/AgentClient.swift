@@ -369,7 +369,13 @@ public final class AgentClient: Sendable {
     /// streamed events only arrive when the connection closes —
     /// reading bytes directly bypasses that.
     public func events(lastEventId: String? = nil) -> AsyncThrowingStream<AgentStreamItem, Error> {
-        AsyncThrowingStream { continuation in
+        eventSubscription(lastEventId: lastEventId).stream
+    }
+
+    /// A caller that owns the connection can cancel and await its producer and watchdog.
+    public func eventSubscription(lastEventId: String? = nil) -> AgentEventSubscription {
+        let lifetime = AgentEventLifetime()
+        let stream = AsyncThrowingStream<AgentStreamItem, Error> { continuation in
             let activity = ActivityClock()
             let streamTask = Task { [self] in
                 do {
@@ -393,6 +399,7 @@ public final class AgentClient: Sendable {
                     // timeout generous on top of that.
                     request.timeoutInterval = 600
                     let (bytes, response) = try await session.bytes(for: request)
+                    lifetime.install(transport: bytes.task)
                     if let http = response as? HTTPURLResponse, http.statusCode == 401 {
                         throw GatewayClient.Error.unauthorized
                     }
@@ -435,11 +442,10 @@ public final class AgentClient: Sendable {
                     }
                 }
             }
-            continuation.onTermination = { _ in
-                streamTask.cancel()
-                watchdog.cancel()
-            }
+            continuation.onTermination = { _ in lifetime.cancel() }
+            lifetime.install(producer: streamTask, watchdog: watchdog)
         }
+        return AgentEventSubscription(stream: stream, lifetime: lifetime)
     }
 
     // MARK: - Internals

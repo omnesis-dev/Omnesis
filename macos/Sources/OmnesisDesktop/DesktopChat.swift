@@ -393,16 +393,18 @@ final class DesktopChat {
         while accepts(binding) {
             do {
                 let position = cursor
-                let events = try await perform(binding) { api in api.agent.events(lastEventId: position) }
-                for try await item in events {
-                    guard accepts(binding) else { return }
-                    if let id = item.id { cursor = id }
-                    if let sequence = item.id.flatMap(Int.init), let snapshotCursor, sequence <= snapshotCursor { continue }
-                    if case .resync = item.event {
-                        if let id = conversationId ?? sessionId { await open(id) }
-                    } else if item.event.sessionId == sessionId {
-                        await reduce(item.event, binding: binding)
-                    }
+                try await perform(binding) { [self] api in
+                    let subscription = api.agent.eventSubscription(lastEventId: position)
+                    try await withTaskCancellationHandler {
+                        do { try await consume(subscription, binding: binding) }
+                        catch {
+                            subscription.cancel()
+                            await subscription.join()
+                            throw error
+                        }
+                        subscription.cancel()
+                        await subscription.join()
+                    } onCancel: { subscription.cancel() }
                 }
                 guard accepts(binding) else { return }
                 failure = "Reconnecting to your conversation…"
@@ -412,6 +414,19 @@ final class DesktopChat {
                 failure = "Your connection was interrupted. Reconnecting…"
             }
             do { try await Task.sleep(for: .seconds(2)) } catch { return }
+        }
+    }
+
+    private func consume(_ subscription: AgentEventSubscription, binding: Binding) async throws {
+        for try await item in subscription.stream {
+            guard accepts(binding) else { return }
+            if let id = item.id { cursor = id }
+            if let sequence = item.id.flatMap(Int.init), let snapshotCursor, sequence <= snapshotCursor { continue }
+            if case .resync = item.event {
+                if let id = conversationId ?? sessionId { await open(id) }
+            } else if item.event.sessionId == sessionId {
+                await reduce(item.event, binding: binding)
+            }
         }
     }
 

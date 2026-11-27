@@ -2,8 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 // The corpus reads behind a recording's suggestions, against a real database:
-// who a name heard in the transcript is, who a calendar event invited, and the
-// events a recording overlaps through the time index.
+// who a calendar event invited, and the events a recording overlaps through
+// the time index.
 
 import { existsSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
 import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { calendarEventsFrom, type TemporalWindowReader } from "./calendar.js";
-import { eventAttendees, resolveGivenName } from "./suggestion-reads.js";
+import { eventAttendees } from "./suggestion-reads.js";
 import type { TemporalItem, TemporalQueryInput } from "@omnesis/core";
 import type Database from "better-sqlite3";
 
@@ -32,21 +32,11 @@ afterEach(() => {
   }
 });
 
-function person(
-  id: string,
-  name: string,
-  extra: { self?: boolean; mergedInto?: string; aliases?: string[] } = {},
-) {
+function person(id: string, name: string, extra: { self?: boolean } = {}) {
   db.prepare(
-    `INSERT INTO people (id, canonical_name, source, first_seen, last_seen, created_at, updated_at, is_self, merged_into)
-     VALUES (?, ?, 'extracted', '2026-01-01', '2026-01-01', '2026-01-01', '2026-01-01', ?, ?)`,
-  ).run(id, name, extra.self ? 1 : 0, extra.mergedInto ?? null);
-  for (const alias of [name, ...(extra.aliases ?? [])]) {
-    db.prepare(
-      `INSERT INTO person_aliases (id, person_id, alias_type, alias, created_at)
-       VALUES (?, ?, 'name', ?, '2026-01-01')`,
-    ).run(randomUUID(), id, alias);
-  }
+    `INSERT INTO people (id, canonical_name, source, first_seen, last_seen, created_at, updated_at, is_self)
+     VALUES (?, ?, 'extracted', '2026-01-01', '2026-01-01', '2026-01-01', '2026-01-01', ?)`,
+  ).run(id, name, extra.self ? 1 : 0);
 }
 
 function eventDocument(id: string, people: Array<[string, string]>) {
@@ -62,42 +52,6 @@ function eventDocument(id: string, people: Array<[string, string]>) {
     );
   }
 }
-
-describe("resolveGivenName", () => {
-  test("one person going by the name, or starting with it, is that person", () => {
-    person("p-jamie", "Jamie R.");
-    expect(resolveGivenName(db, "Jamie")).toEqual({
-      kind: "person",
-      personId: "p-jamie",
-      name: "Jamie R.",
-    });
-    expect(resolveGivenName(db, "jamie r.")).toMatchObject({ personId: "p-jamie" });
-  });
-
-  test("a longer name that only starts with the same letters is somebody else", () => {
-    person("p-jamieson", "Jamieson H.");
-    expect(resolveGivenName(db, "Jamie")).toEqual({ kind: "name" });
-  });
-
-  test("several people by the name, or nobody, leave the name on its own", () => {
-    person("p-a", "Alex K.");
-    person("p-b", "Alex M.");
-    expect(resolveGivenName(db, "Alex")).toEqual({ kind: "name" });
-    expect(resolveGivenName(db, "Zed")).toEqual({ kind: "name" });
-  });
-
-  test("the owner is never suggested, and a merged person resolves to whom they were merged into", () => {
-    person("p-me", "Robin V.", { self: true });
-    expect(resolveGivenName(db, "Robin")).toEqual({ kind: "name" });
-    person("p-sam", "Sam O.");
-    person("p-sam-old", "Sam O.", { mergedInto: "p-sam" });
-    expect(resolveGivenName(db, "Sam")).toEqual({
-      kind: "person",
-      personId: "p-sam",
-      name: "Sam O.",
-    });
-  });
-});
 
 describe("eventAttendees", () => {
   test("attendees and the organizer, without the owner or anyone merely mentioned", () => {
@@ -188,19 +142,5 @@ describe("calendarEventsFrom", () => {
         attendees: [{ personId: "p-priya", name: "Priya S." }],
       },
     ]);
-  });
-});
-
-describe("the name lookup", () => {
-  test("seeks the lowercased-name index rather than walking every name", () => {
-    const plan = db
-      .prepare(
-        `EXPLAIN QUERY PLAN SELECT person_id FROM person_aliases INDEXED BY idx_person_aliases_name_lower
-          WHERE alias_type = 'name' AND LOWER(alias) >= ? AND LOWER(alias) < ?`,
-      )
-      .all("jamie", "jamie!") as { detail: string }[];
-    expect(plan.map((row) => row.detail).join(" ")).toMatch(
-      /SEARCH person_aliases USING INDEX idx_person_aliases_name_lower \(<expr>>\? AND <expr><\?\)/,
-    );
   });
 });

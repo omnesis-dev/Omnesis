@@ -12,8 +12,8 @@ struct DesktopLibraryConnectionView: View {
     var body: some View {
         let context = store.apiContext
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Text("Your library’s connection").font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
+            VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.large) {
+                Text("Your library’s connection").font(DesktopDesignTokens.Typography.section).accessibilityAddTraits(.isHeader)
                 Text(
                     "This connection lets your other devices reach the library on this Mac. Your local information remains available while the connection is repaired."
                 )
@@ -30,7 +30,7 @@ struct DesktopLibraryConnectionView: View {
                         )
                         if !CloudRelayPresentation.accountLinked(status) {
                             Text("Your library’s account sign-in needs attention. Return to Setup to review it before reconnecting.")
-                                .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                                .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                             Button("Review setup") { store.destination = .setup
                                 store.command("status")
                                 dismiss()
@@ -42,7 +42,7 @@ struct DesktopLibraryConnectionView: View {
                     if flow.working { ProgressView("Checking the library connection…") }
                     if flow.recheckRequested {
                         Text("Reconnection was requested. Setup stays incomplete until Omnesis confirms that your library can be reached.")
-                            .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                            .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                     }
                     HStack {
                         Button("Reconnect") {
@@ -63,7 +63,7 @@ struct DesktopLibraryConnectionView: View {
                 HStack { Spacer()
                     Button("Done") { dismiss() }.buttonStyle(DesktopButtonStyle()).keyboardShortcut(.cancelAction)
                 }
-            }.padding(24)
+            }.padding(DesktopDesignTokens.Space.section)
         }.frame(width: 560).frame(maxHeight: 620)
             .task(id: context?.id) {
                 flow.bind(store.state.mode == "home" ? context : nil)

@@ -33,7 +33,7 @@ struct DesktopSourcesView: View {
         VStack(spacing: 0) {
             if let failure = health.failure {
                 Label(failure, systemImage: "wifi.exclamationmark")
-                    .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                    .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                     .padding().frame(maxWidth: .infinity, alignment: .leading)
             }
             Group {
@@ -47,12 +47,14 @@ struct DesktopSourcesView: View {
                         Section("Your sources") {
                             ForEach(store.sources) { source in
                                 let policy = DesktopSourceActionPolicy(source: source, devices: store.devices)
-                                HStack(alignment: .top, spacing: 20) {
-                                    VStack(alignment: .leading, spacing: 5) {
-                                        Text(store.descriptors.first(where: { $0.id == source.type })?.name ?? source.type).font(.headline)
+                                HStack(alignment: .top, spacing: DesktopDesignTokens.Space.large) {
+                                    VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.xSmall) {
+                                        Text(store.descriptors.first(where: { $0.id == source.type })?.name ?? source.type)
+                                            .font(DesktopDesignTokens.Typography.body.weight(.medium))
                                         Text(source.accountId).foregroundStyle(DesktopTheme.secondary)
                                         ForEach(source.archivedDevices ?? []) { origin in
-                                            Text("History from \(origin.name)").font(.caption).foregroundStyle(DesktopTheme.secondary)
+                                            Text("History from \(origin.name)").font(DesktopDesignTokens.Typography.metadata)
+                                                .foregroundStyle(DesktopTheme.secondary)
                                         }
                                         DesktopSourceHealthView(
                                             source: source, status: health.statuses[source.id],
@@ -114,7 +116,7 @@ struct DesktopSourcesView: View {
                                         }.disabled(!source.enabled && !policy.canResume)
                                     }.menuStyle(.borderlessButton).tint(DesktopTheme.accent).fixedSize()
                                         .accessibilityLabel("Actions for \(source.accountId)")
-                                }.padding(.vertical, 12).listRowSeparator(.visible)
+                                }.padding(.vertical, DesktopDesignTokens.Space.medium).listRowSeparator(.visible)
                             }
                         }
                         if !store.sourceRemovals.isEmpty { Section("Removal in progress") {
@@ -124,9 +126,10 @@ struct DesktopSourcesView: View {
                                     VStack(alignment: .leading) {
                                         Text(store.descriptors.first(where: { $0.id == removal.type })?.name ?? removal.type)
                                         Text(removal.accountId).foregroundStyle(DesktopTheme.secondary)
-                                        Text("Removing managed information…").font(.caption).foregroundStyle(DesktopTheme.secondary)
+                                        Text("Removing managed information…").font(DesktopDesignTokens.Typography.metadata)
+                                            .foregroundStyle(DesktopTheme.secondary)
                                     }
-                                }.padding(.vertical, 8)
+                                }.padding(.vertical, DesktopDesignTokens.Space.small)
                             }
                         } }
                     }.listStyle(.inset)
@@ -138,9 +141,9 @@ struct DesktopSourcesView: View {
                     Task { await store.refresh()
                         healthRevision += 1
                     }
-                }
+                }.help("Refresh sources")
                 Button { showPicker = true } label: {
-                    HStack(spacing: 5) {
+                    HStack(spacing: DesktopDesignTokens.Space.xSmall) {
                         Image(systemName: "plus")
                         Text("Add a source").accessibilityIdentifier("add-source-title")
                     }
@@ -224,9 +227,9 @@ struct SourcePickerView: View {
                     if let api = store
                         .api { SourceSetupView(flow: store.sourceDraft(descriptor, api: api)).environment(store).id(ObjectIdentifier(api)) }
                 } label: {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(descriptor.name).font(.headline)
-                        Text(descriptor.description).font(.callout).foregroundStyle(DesktopTheme.secondary)
+                    VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.xSmall) {
+                        Text(descriptor.name).font(DesktopDesignTokens.Typography.body.weight(.medium))
+                        Text(descriptor.description).font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                     }.padding(.vertical, 6)
                 }
             }.overlay {
@@ -250,7 +253,7 @@ struct SourceSetupView: View {
         let hasSignInRetry = flow.auth?.state == "error" && flow.canRetryAuthentication
         let hasCredentialReview = flow.auth?.state == "error" && flow.descriptor.credentials != nil
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.large) {
                 Text(flow.descriptor.description).foregroundStyle(DesktopTheme.secondary)
                 if !flow.complete, flow.descriptorDeviceId == flow.deviceId, !flow.descriptor.hasCompanionGuide,
                    flow.descriptor.permissionRequirements?.isEmpty != true {
@@ -283,7 +286,7 @@ struct SourceSetupView: View {
                         Text("Added").accessibilityIdentifier("source-setup-added")
                     } icon: {
                         Image(systemName: "checkmark.circle.fill")
-                    }.font(.title2).foregroundStyle(.green)
+                    }.font(DesktopDesignTokens.Typography.section).foregroundStyle(DesktopTheme.success)
                     Text("The source is added to your library. It will sync when the source and its device are available.")
                     if flow
                         .keptPausedAfterMove {
@@ -301,7 +304,7 @@ struct SourceSetupView: View {
                 } else if let auth = flow.auth {
                     authView(auth)
                 } else if !flow.accounts.isEmpty {
-                    Text("Choose the accounts to connect").font(.headline)
+                    Text("Choose the accounts to connect").font(DesktopDesignTokens.Typography.body.weight(.medium))
                     ForEach(flow.accounts, id: \.self) { account in
                         Toggle(account, isOn: Binding(get: { flow.selectedAccounts.contains(account) }, set: { selected in
                             if selected { flow.selectedAccounts.insert(account) } else { flow.selectedAccounts.remove(account) }
@@ -339,8 +342,8 @@ struct SourceSetupView: View {
                         Image(systemName: "exclamationmark.circle").accessibilityHidden(true)
                     }
                     .foregroundStyle(DesktopTheme.ink).textSelection(.enabled)
-                    .padding(14).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(DesktopTheme.raised, in: RoundedRectangle(cornerRadius: 10))
+                    .padding(DesktopDesignTokens.Space.medium).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(DesktopTheme.raised, in: RoundedRectangle(cornerRadius: DesktopDesignTokens.Radius.medium))
                     if flow.auth?.state == "error" {
                         if flow.canRetryAuthentication {
                             Button("Try sign-in again") { Task { await flow.retry() } }
@@ -374,10 +377,10 @@ struct SourceSetupView: View {
                 if flow.auth != nil, flow.error != nil || flow.auth?.state == "error" { cancelSignIn }
                 if flow.busy { ProgressView("Connecting…").accessibilityIdentifier("source-setup-progress") }
                 if !flow.descriptor.hasCompanionGuide {
-                    Button("Open advanced setup") { store.openPortal() }.font(.callout)
+                    Button("Open advanced setup") { store.openPortal() }.font(DesktopDesignTokens.Typography.secondary)
                         .accessibilityIdentifier("source-advanced-setup")
                 }
-            }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
+            }.padding(DesktopDesignTokens.Space.section).frame(maxWidth: .infinity, alignment: .leading)
         }.navigationTitle(flow.descriptor.name).disabled(flow.busy || store.api !== flow.api)
             .onAppear {
                 let context = store.apiContext
@@ -412,14 +415,14 @@ struct SourceSetupView: View {
                 SourceWidgetView(flow: flow, widget: AuthSnapshot.Widget(kind: renderer, payload: payload))
             } else if let pending = auth.pendingChallenge {
                 let challenge = pending.challenge
-                Text(challenge.title).font(.headline)
+                Text(challenge.title).font(DesktopDesignTokens.Typography.body.weight(.medium))
                 if let instructions = challenge.instructions { Text(.init(instructions)) }
                 if challenge.via == "loopback", flow.deviceId != flow.api.connection.collectorDeviceId {
                     Label(
                         "This sign-in finishes on the device hosting this source. You can complete it there, or paste the completed link below.",
                         systemImage: "desktopcomputer"
                     )
-                    .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                    .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                 }
                 if let url = challenge
                     .url { Button("Continue in your browser") { store.openBrowser(url) }.buttonStyle(DesktopButtonStyle(primary: true)) }
@@ -442,7 +445,7 @@ struct SourceSetupView: View {
                     if challenge.kind == "code" || challenge.kind == "redirect" {
                         let answerLabel = challenge.kind == "code" ? "Confirmation code" : "Completed sign-in link"
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(answerLabel).font(.callout)
+                            Text(answerLabel).font(DesktopDesignTokens.Typography.secondary)
                             SecureField(
                                 answerLabel,
                                 text: binding(flow.answer, key: challenge.kind == "code" ? "code" : "url") { flow.answer = $0 }
@@ -459,7 +462,15 @@ struct SourceSetupView: View {
                 if let url = auth.authUrl { Button("Continue in your browser") { store.openBrowser(url) } }
                 if let data = auth.qrData { QRCodeView(payload: data) }
                 if flow.descriptor.acceptsAuthCode == true {
-                    SecureField("Completed sign-in link or confirmation code", text: binding(flow.answer, key: "code") { flow.answer = $0 })
+                    VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.xSmall) {
+                        Text("Completed sign-in link or confirmation code").font(DesktopDesignTokens.Typography.secondary.weight(.medium))
+                            .accessibilityIdentifier("source-legacy-auth-answer-label")
+                        SecureField(
+                            "Completed sign-in link or confirmation code",
+                            text: binding(flow.answer, key: "code") { flow.answer = $0 }
+                        )
+                        .accessibilityIdentifier("source-legacy-auth-answer")
+                    }
                     Button("Continue") { Task { await flow.submitLegacyCode() } }
                 }
                 if flow.error == nil {
@@ -491,23 +502,24 @@ private struct SourceSetupAuthHeading: View {
     var body: some View {
         if hasFailure || state == "error" {
             Text(state == "completed" ? "Connection needs attention" : "Sign-in needs attention")
-                .font(.headline).accessibilityIdentifier("source-auth-attention")
+                .font(DesktopDesignTokens.Typography.body.weight(.medium)).accessibilityIdentifier("source-auth-attention")
         } else if state == "completed" {
-            Text("Sign-in complete").font(.headline).accessibilityIdentifier("source-auth-complete")
+            Text("Sign-in complete").font(DesktopDesignTokens.Typography.body.weight(.medium))
+                .accessibilityIdentifier("source-auth-complete")
         }
     }
 }
 
 #Preview("Source registration needs attention") {
-    SourceSetupAuthHeading(state: "completed", hasFailure: true).padding(28).omnesisTheme()
+    SourceSetupAuthHeading(state: "completed", hasFailure: true).padding(DesktopDesignTokens.Space.section).omnesisTheme()
 }
 
 #Preview("Source sign-in needs attention") {
-    SourceSetupAuthHeading(state: "awaiting-user", hasFailure: true).padding(28).omnesisTheme()
+    SourceSetupAuthHeading(state: "awaiting-user", hasFailure: true).padding(DesktopDesignTokens.Space.section).omnesisTheme()
 }
 
 #Preview("Source sign-in complete") {
-    SourceSetupAuthHeading(state: "completed", hasFailure: false).padding(28).omnesisTheme()
+    SourceSetupAuthHeading(state: "completed", hasFailure: false).padding(DesktopDesignTokens.Space.section).omnesisTheme()
 }
 
 struct SourceParameterField: View {
@@ -537,7 +549,7 @@ struct SourceParameterField: View {
                     }
                 }
             }
-            if let help = param.help { Text(help).font(.caption).foregroundStyle(DesktopTheme.secondary) }
+            if let help = param.help { Text(help).font(DesktopDesignTokens.Typography.metadata).foregroundStyle(DesktopTheme.secondary) }
         }.textFieldStyle(.roundedBorder)
     }
 }

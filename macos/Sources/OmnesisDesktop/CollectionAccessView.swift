@@ -30,48 +30,51 @@ struct DesktopCollectionAccessCard: View {
     var body: some View {
         let context = store.apiContext
         GroupBox {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.medium) {
                 Label(
                     flow.restarting ? "Restarting collection" : title,
                     systemImage: flow.allowsCollection ? "checkmark.shield" : "lock.shield"
                 )
-                .font(.headline)
+                .font(DesktopDesignTokens.Typography.body.weight(.medium))
                 .accessibilityAddTraits(.isHeader)
-                .foregroundStyle(flow.allowsCollection && !flow.memberAccessProblem ? DesktopTheme.teal : DesktopTheme.ink)
-                Text("Computer: \(computer)").font(.callout).foregroundStyle(DesktopTheme.secondary)
+                .foregroundStyle(flow.allowsCollection && !flow.memberAccessProblem ? DesktopTheme.success : DesktopTheme.ink)
+                Text("Computer: \(computer)").font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                 Text(explanation).foregroundStyle(DesktopTheme.secondary)
                 ForEach(declarations) { requirement in
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(requirement.summary).font(.callout.weight(.medium))
-                        Text(requirement.scope).font(.callout).foregroundStyle(DesktopTheme.secondary)
+                    VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.xSmall) {
+                        Text(requirement.summary).font(DesktopDesignTokens.Typography.secondary.weight(.medium))
+                        Text(requirement.scope).font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                     }
                 }
                 if checking { ProgressView("Checking access on \(computer)…").controlSize(.small) }
                 if let failure = flow.failure { Text(failure).foregroundStyle(DesktopTheme.danger) }
-                if let message = flow.navigationMessage { Text(message).font(.callout).foregroundStyle(DesktopTheme.secondary) }
+                if let message = flow
+                    .navigationMessage {
+                    Text(message).font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
+                }
                 if flow.memberAccessProblem {
                     Text(
                         "Collection still needs access to information inside this source. Checking the listed folders does not confirm every file inside; collection must succeed before this step is complete."
                     )
-                    .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                    .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                 }
                 if flow.unresolvedDenial, flow.state != .denied {
                     Text(
                         "The earlier access refusal has not been resolved. Check again after reviewing access; an unavailable check cannot clear that refusal."
                     )
-                    .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                    .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                 }
                 if flow.restartSuggested {
                     Text(
                         "The collection process may need to restart after a permission change. Reopening this window is not proof of access. Keep your source choices, then check again after restarting collection on this computer."
                     )
-                    .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                    .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                 }
                 if flow.observation?.target == "unverified", !flow.allowsCollection, flow.state != .notRequired {
                     Text(
                         "Omnesis has not confirmed which app macOS lists for this access. Do not grant an unrelated app broad access. Only review the files or folders listed above."
                     )
-                    .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                    .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                 }
                 HStack {
                     if hasRepairAction { settingsAction
@@ -101,12 +104,12 @@ struct DesktopCollectionAccessCard: View {
                         Text(
                             "Setup stays incomplete until access is confirmed. Previously indexed information is kept if some information cannot be read."
                         )
-                        .font(.caption).foregroundStyle(DesktopTheme.secondary)
+                        .font(DesktopDesignTokens.Typography.metadata).foregroundStyle(DesktopTheme.secondary)
                     } else {
                         Text(
                             "Update Omnesis on \(computer), then check access again before starting this source. This collection connection has not confirmed that it can safely try unverified access."
                         )
-                        .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                        .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                     }
                 }
             }.frame(maxWidth: .infinity, alignment: .leading)
@@ -223,14 +226,15 @@ struct DesktopAccessCoach: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.large) {
             HStack {
-                Text(store.accessFocus == nil ? "Access on this Mac" : "Collection access").font(.title2.weight(.semibold))
+                Text(store.accessFocus == nil ? "Access on this Mac" : "Collection access").font(DesktopDesignTokens.Typography.section)
+                    .accessibilityAddTraits(.isHeader)
                 Spacer()
                 Button("Done") { dismiss() }.buttonStyle(DesktopButtonStyle()).keyboardShortcut(.cancelAction)
             }
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.large) {
                     Text(
                         "Choose what Omnesis may collect. Reading or asking about a library on another computer does not require access to this Mac’s protected files, screen or other apps."
                     )
@@ -249,15 +253,15 @@ struct DesktopAccessCoach: View {
                         let available = flows.values.filter { $0.allowsCollection && !$0.memberAccessProblem }.count
                         Text(available == targets
                             .count ? "Required file-access checks passed" : available > 0 ? "Some file-access checks still need attention" :
-                            "Review access for your selected sources").font(.headline)
+                            "Review access for your selected sources").font(DesktopDesignTokens.Typography.body.weight(.medium))
                         Text(
                             "Each check covers only the scope listed for that source. Sign-in, collection results and access to nested files are checked separately."
                         )
-                        .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                        .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                         ForEach(targets) { target in
                             if let flow = flows[target.id] {
                                 Text(target.accountId ?? store.descriptors.first(where: { $0.id == target.descriptorId })?
-                                    .name ?? "Selected source").font(.headline)
+                                    .name ?? "Selected source").font(DesktopDesignTokens.Typography.body.weight(.medium))
                                 DesktopCollectionAccessCard(
                                     flow: flow,
                                     requirements: target.deviceId == store.api?.connection.collectorDeviceId ?
@@ -275,29 +279,29 @@ struct DesktopAccessCoach: View {
                         }
                     }
                     Divider()
-                    Text("Choose a source to set up").font(.headline)
+                    Text("Choose a source to set up").font(DesktopDesignTokens.Typography.body.weight(.medium))
                     ForEach(store.descriptors
                         .filter {
                             !$0.hasCompanionGuide && $0.pushBased != true && $0.devices?
                                 .contains(where: { $0.id == store.api?.connection.collectorDeviceId }) == true
                         }) { descriptor in
                             Button { if let api = store.api { draft = store.sourceDraft(descriptor, api: api) } } label: {
-                                VStack(alignment: .leading, spacing: 5) {
-                                    Text(descriptor.name).font(.callout.weight(.medium))
+                                VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.xSmall) {
+                                    Text(descriptor.name).font(DesktopDesignTokens.Typography.secondary.weight(.medium))
                                     Text(descriptor.permissionRequirements?
                                         .isEmpty == true ? "No local file permission required" : descriptor
                                         .permissionRequirements?.first?.summary ?? "Access will be checked before collection")
-                                        .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                                        .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                                 }.frame(maxWidth: .infinity, alignment: .leading)
                             }.buttonStyle(DesktopButtonStyle())
                         }
                     Text(
                         "Source choices stay in this app while you remain connected to this library. Passwords and approval codes are not saved as a setup draft."
                     )
-                    .font(.caption).foregroundStyle(DesktopTheme.secondary)
+                    .font(DesktopDesignTokens.Typography.metadata).foregroundStyle(DesktopTheme.secondary)
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
-        }.padding(28).frame(width: 680, height: 660).omnesisTheme()
+        }.padding(DesktopDesignTokens.Space.section).frame(width: 680, height: 660).omnesisTheme()
             .task(id: context) {
                 for key in ownedFlows {
                     flows[key]?.cancel()

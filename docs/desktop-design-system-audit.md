@@ -1,0 +1,201 @@
+# Desktop design verification audit
+
+Read [the design system](desktop-design-system.md) for the actual component and token conventions.
+
+This ledger separates implemented presentation from measured evidence. A test or
+preview's existence does not establish that its current implementation passed.
+Keep all application behavior, required setup, permission repair, authorization
+and explicit confirmation semantics intact while changing presentation.
+
+## Evidence levels
+
+- Logic tests check token resolution and meaningful behavior without claiming a rendered window.
+- Component rasters check composed content; they do not establish visible native chrome or active controls.
+- Owned window captures require the exact app/window owner, real geometry, current appearance and active-state assertions.
+- External UI and assistive technology checks establish keyboard and VoiceOver behavior separately.
+
+A failed capture remains a failure. Do not replace it with a component raster,
+remove foreground assertions, widen functional deadlines or infer permission or
+session causes from a capture error.
+
+## Acceptance ledger
+
+The rows below distinguish partial component evidence from final acceptance. Update
+individual rows with exact source, test result and inspected artifact evidence;
+do not mark the ledger complete from a passing subset.
+
+| Area                                           | Required evidence                                                      | Useful existing fixture families                                               | Current verification                                                                    |
+| ---------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| 1. Objective                                   | Whole native redesign preserving behavior                              | DesktopTheme; DesktopRenderTests                                               | Implemented; partial component evidence; acceptance open                                |
+| 2. Overall design philosophy                   | Quiet native productivity aesthetic                                    | Native NavigationSplitView/Form/Settings/NSMenu                                | Light/Dark components inspected; native shell open                                      |
+| 3. Scope and implementation constraints        | Inspect/reuse architecture; presentation-only changes                  | Native view and AppKit adapter inventory with shared adaptive foundations      | Source reviewed; full behavioral gate open                                              |
+| 4. Color philosophy                            | Neutral semantic palettes; System default, Light/Dark live updates     | DesktopAppearance, adaptive DesktopTheme and owned-window adapter              | Adaptive palettes and live System transition tests passed; native capture open          |
+| 5. Surface hierarchy and visual depth          | Four restrained surface levels                                         | DesktopCardStyle/DesktopGroupBoxStyle                                          | Component hierarchy inspected; native materials open                                    |
+| 6. Native macOS window integration             | Native chrome/toolbars/materials and native controls                   | DesktopOwnedWindowChrome; minimum-library/settings; hosted sources/resize      | Native geometry exercised; window captures failed                                       |
+| 7. Sidebar design                              | Compact integrated sidebar/neutral selection/modest brand              | DesktopRootView.libraryNavigation; ready-sidebar                               | Source and row presence checked; native painting/selection open                         |
+| 8. Main content layout                         | Content-specific widths and responsive margins                         | Shared reading/form width tokens; onboarding and native settings layouts       | Empty Ask composition passed; full layout matrix open                                   |
+| 9. Typography system                           | System semantic typography, restrained weights, readable metadata      | System fonts throughout; literal-font inventory                                | Terms wrap and three-state heading regression passed; full type matrix open             |
+| 10. Spacing system                             | 4pt spacing + meaningful grouping and density                          | VStack/HStack/Form existing primitives                                         | Representative component spacing inspected; remaining states open                       |
+| 11. Corner radius system                       | Small consistent radii; native shapes                                  | DesktopButtonStyle, grouped sections and shared Radius tokens                  | Component radii inspected; native window and 2× open                                    |
+| 12. Borders, separators and shadows            | Subtle borders/separators/shadows, sharp1x/2x                          | Card stroke1/2; native chrome test framework                                   | Logical focus contrast corrected; complete native focus proof open                      |
+| 13. Iconography                                | SF Symbols/brand asset consistent sizes; labelled icon controls        | BrandAssetTests; MenuBarImageTests; toolbar identifiers/help                   | Brand/components inspected; full native input proof open                                |
+| 14. Buttons                                    | Primary/secondary/ghost/destructive coherent control states            | DesktopButtonStyle; existing action tests                                      | Aqua action subphase observed; full state/appearance proof open                         |
+| 15. Inputs and form controls                   | Native neutral inputs/labels/errors; focus                             | Native TextField/SecureField/Picker/Toggle; SourceSetup/Connections tests      | Onboarding label/action cases passed; complete input state matrix open                  |
+| 16. Composer and large text entry components   | Refined bounded composer; stable multiline/focus/readability           | AskView; ChatLayoutTests; AskState; HostedChatFlow; Intents                    | Empty Ask Light/Dark composition passed; active chat open                               |
+| 17. Empty states                               | Intentional factual empty states                                       | Render ask/search/devices/sources empty; ContentUnavailableView                | Representative empty states inspected; full state matrix open                           |
+| 18. Lists and rows                             | Shared scanable rows; subtle hover vs selection; keyboard actions      | Native List sources/devices/search/history; source policy tests                | Selected source states exercised; keyboard/hover/selection open                         |
+| 19. Cards and grouped content                  | Selective cards/flat settings                                          | GroupBox globally DesktopGroupBoxStyle                                         | Flat sections inspected; native material integration open                               |
+| 20. Settings and configuration interfaces      | Orderly native settings, actual options retained                       | SettingsView7tabs; minimum-settings; prerequisite-order tests                  | Partial General/Storage renders inspected; native tabs/window open                      |
+| 21. Status indicators and feedback             | Compact factual status/errors/progress; important requirements visible | SetupBanner/StoreRefresh/PrerequisiteMonitor/SourceHealth tests                | Representative truthful states inspected; full error/progress matrix open               |
+| 22. Popovers, menus and dialogs                | Native popovers/menus/dialogs, safe defaults                           | omnesisSheet; NSOpenPanel/NSSavePanel; StatusMenuTests; restore/recovery flows | Recovery/removal components inspected; true sheet geometry open                         |
+| 23. Interaction state system                   | Reusable rest/hover/pressed/selected/focus/disabled/loading/error      | DesktopButtonStyle; native List/Form; source actions                           | Aqua action/focus subphase observed; pointer/pressed/full keyboard open                 |
+| 24. Animation and motion                       | Purposeful motion; respect Reduce Motion                               | No explicit animation/withAnimation/scaleEffect in current product inventory   | Source reviewed; native accessibility preferences remain open                           |
+| 25. Responsive desktop layout                  | Resizable desktop, min/typical/wide/fullscreen and scale resilience    | Minimum860x600 library,720x600 settings; Ask resize; source doc sheets         | Partial sizing exercised; full resize/fullscreen/2× matrix open                         |
+| 26. Accessibility                              | AA contrast; VoiceOver/keyboard/system a11y, noncolor state            | desktopContrast env; ask-increased-contrast; AX driver/action tests            | Representative ICC-calibrated helper AA passed; full contrast and assistive checks open |
+| 27. Brand identity                             | Existing brand; limited accent and no visual cliches                   | Vector OmnesisMark/MenuMark BrandAssetTests                                    | Unboxed light/dark template inspected; native sidebar open                              |
+| 28. Design system architecture                 | Simple centralized reusable design primitives                          | Theme/Controls/omnesisSheet/NativeChrome existing seams                        | Shared foundations implemented and source-reviewed                                      |
+| 29. Design system documentation                | Practical implementation-specific docs                                 | macos/README.md and docs/desktop.md                                            | Documentation implemented; final conformance review pending                             |
+| 30. Component previews and visual verification | Development-only previews of needed variants/states                    | DesktopDesignPreviews shared-control variants plus root/source/server previews | Partial component rasters inspected; full verification matrix open                      |
+| 31. Performance and implementation quality     | Responsive native implementation, efficient scroll, no heavy effects   | Native List/LazyVStack; Ask scroll ownership tests; NSViewRepresentable seams  | Source reviewed; full-state responsiveness remains open                                 |
+| 32. Visual anti-patterns to eliminate          | Remove listed visual anti-patterns without hiding functionality        | Theme/Root/Card/Controls/font/color inventory                                  | Neutral components inspected; native shell acceptance open                              |
+| 33. Reference mockup interpretation            | Interpret reference as aesthetic only                                  | Existing destination6/settings7 and real provider metadata                     | Reference used without adding mockup-only features                                      |
+| 34. Implementation approach                    | Audit→foundations→shell→components→all screens→verify→docs             | This baseline inventory and semantic native tests                              | Audit/foundations/shell/screens implemented; verification ongoing                       |
+| 35. Acceptance criteria                        | All acceptance categories fulfilled with honest evidence               | Existing source/test apparatus, current activation diagnosis                   | Not accepted; measured gaps remain                                                      |
+| 36. Design decision-making principles          | Correctness/native/a11y before minimalism                              | Required setup, permission repair, saved artifact/consent tests                | Behavior-preserving source review complete; full gates open                             |
+| 37. Expected final deliverables                | Implemented result and concise final proof/limitations/docs            | Implemented redesign and this scoped evidence ledger                           | Implemented; final delivery pending complete evidence                                   |
+
+## Current source and execution order
+
+Adaptive semantic colors, the System/Light/Dark preference, shared type/spacing/
+radius/control tokens and shell migration are implemented. The independent
+palette oracle uses appearance-specific expected values rather than reading
+expected colors from production tokens. The renderer isolates preferences and
+invokes callbacks exactly twice for explicit light and dark; System transitions
+are separate tests. Scoped results below do not establish whole-app acceptance.
+
+Suggested admitted hosted selectors, in this order:
+
+1. `DesktopDesignSystemTests`: independent palette rejection, role contrast,
+   private preference updates, inherited System transitions and owned control semantics.
+2. `DesktopColorReferenceTests`: native/SwiftUI bitmap and whole-window pipeline
+   calibration, including black/white/ink, alpha and wrong-input rejection.
+3. `DesktopRenderTests`: application shell, welcome/setup, empty Ask, fitted main
+   and settings windows, mandatory repairs and existing error states.
+4. `DesktopSourceSetupTests`, `CollectionAccessFlowTests`,
+   `DesktopConnectionsTests`, `NearbyConnectionTests`: real source/permission/
+   approval/error flows, including provider-owned guide states.
+5. `DesktopHostedChatFlowTests`, `DesktopAskStateTests`,
+   `DesktopSearchDocumentTests`, `DesktopIntentsTests`: populated conversation,
+   scrolling, sources/documents, focus and preserved no-auto-send behavior.
+6. Settings-specific recovery/restore/update/storage/model and status-menu
+   suites, followed by the full affected gate and external UI/assistive checks.
+
+Selectors describe scope, not authorization to bypass admission, prerequisites,
+source freezing or full affected validation. Rendered active-window failures
+remain separate from logic checks and cannot be treated as visual acceptance.
+All required screen families and unperformed preference/display/keyboard/
+VoiceOver checks remain in the ledger even if an early selector passes.
+
+## Measured results and remaining gaps
+
+The app and hosted test bundle compiled for the scoped native runs below.
+`DesktopOnboardingUXTests` passed all ten methods with zero failures in its latest
+selected run. This includes complete terms copy and bounded wrapping, persistent
+labels, required setup and repair actions, and the three distinct Waiting states.
+The Waiting regression retains the exact copy/action/fit contract and compares
+public accessibility text-range geometry, using the already-checked full label
+or value as text authority. Original nine methods remain intact. Inspected
+Light/Dark terms components show the full final sentence. A joined-account
+presentation fixture is robustness coverage, not evidence that production joined
+enrollment uses the home-account consent route.
+
+The latest seven-method `DesktopDesignSystemTests` run passed five methods,
+including both previously failing live preference/System transitions. Two methods
+still failed at native ScreenCaptureKit capture. Thus actual inherited native
+appearance and SwiftUI color-scheme transitions passed their scoped assertions;
+this is not a seven-method pass or complete native interaction qualification.
+The initial focus-contrast and undersized-probe findings were corrected, but
+unperformed keyboard/pointer states remain open.
+
+The earlier 26-method render run passed 18 methods and failed eight, producing
+40 component rasters. Its eight native capture failures remained failures; three
+additional banner assertions misclassified a broad accessibility container as a
+content column. The corrected check uses the actual label/action envelope while
+keeping containment, native-control, action and detail-position assertions.
+Capture reported ScreenCaptureKit error -3811; no permission or session cause was
+established. Additional visibility facts do not change capture behavior.
+
+The visible-window helper caches its component image, runs its validation
+callback, then captures the native window. The first Aqua control-action,
+input-focus and multiline-layout subphases therefore executed before capture
+failed; failure prevented the second appearance and final cumulative assertions.
+These subphases are partial evidence, not a passing test or active-window proof.
+A cached component also precedes state changes made in its callback, so it is not
+an independently reset filled-state screenshot.
+
+The explanatory backup-recovery text was measured in representative component
+images after conversion from each embedded ICC profile to sRGB. Corrected Light
+and Dark normal-text contrast ratios were approximately 6.88:1 and 8.88:1; the
+old Light sample was approximately 2.80:1. Raw device RGB was not a valid WCAG
+measurement. These calibrated results establish those specific text/background
+samples, not every one of the 38 changed explanatory Text sites, control states,
+physical displays or native materials. Native control/disabled styling was not
+repainted by those Text-only substitutions.
+
+The previous affected gate did not pass. Its full unit phase exposed an absent
+ignored, pinned DuckDB extension asset, and the run was cancelled rather than
+reported green. After restoring that exact existing cache artifact without
+changing public source, the focused offline repair suites passed 51 tests with
+four existing skips across two files (55 total outcomes). The earlier separate
+full production typecheck and scoped lint passed; neither proves completion of
+the cancelled affected gate, nor qualifies the newer native follow-ups. A fresh
+authoritative affected gate remains required for the final coherent source.
+
+Representative Light/Dark components were inspected for typography, brand,
+composition, statuses, forms and removal/recovery presentation. Native sidebar
+materials and tabs omitted by component caching establish neither a product
+rendering defect nor successful integration. Actual window captures, remaining
+live appearance/control states, keyboard/VoiceOver, pointer states, real sheet
+geometry and the full size/display-scale matrix remain open. No full native or
+full affected-gate pass is claimed.
+
+## Coverage dimensions
+
+Use supported minimum windows, a typical laptop window and a wide fitted window.
+The main window currently declares an 860 × 600 point minimum; settings declares
+640 × 500 points. Existing 1080 × 740 and 720 × 600 point fixtures are useful
+starting points. Cover fullscreen, expanded/collapsed sidebar, long labels,
+scrollable lists, multiline content, native sheets and default/cancel actions.
+Record actual backing scale for 1× and 2× evidence; resizing a bitmap is not a
+physical display test.
+
+Capture explicit light and dark appearances and separately change the app-local
+System test environment in the same owned window. Use private `UserDefaults`
+stores and local environment overrides; tests must not write the operator's
+appearance or accessibility settings. Record native effective appearance and
+resolved colors, rather than relying on screenshot filenames.
+
+Shared controls need default, hover, pressed, selected, focus, disabled and
+applicable loading/error cases. Require normal text contrast of at least 4.5:1,
+large text at least 3:1, and readable control boundaries/focus. Include Increase
+Contrast, Reduce Motion and Reduce Transparency. Native progress must remain
+truthful and meaningful status must include text or shape, not color alone.
+
+AX action dispatch does not establish keyboard tab order or VoiceOver navigation.
+Check Tab/Shift-Tab, Space, Return, Escape, existing shortcuts, menu navigation,
+labels, roles, values and logical order separately. Never request production
+permissions from a visual fixture.
+
+## Fixture ownership
+
+Existing snapshot callbacks run once per appearance. State-changing callbacks
+must account for each appearance or use independent fixtures. A System transition
+case must not repeat setup, authentication, authorization or destructive actions
+merely to obtain another screenshot. Keep exact action-count and no-auto-send
+assertions.
+
+Start with the full screen-family matrix, then apply environment combinations to
+high-risk shell, long conversation, source list, settings and modal cases. This
+avoids an unnecessary full Cartesian product while retaining every screen's real
+populated, loading, empty, error and required-repair states. Unperformed native
+window or assistive-technology checks remain explicit limitations.

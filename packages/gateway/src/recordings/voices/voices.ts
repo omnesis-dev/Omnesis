@@ -51,14 +51,13 @@ export const MAX_WINDOW_MS = 8_000;
 export const MIN_WINDOW_MS = 1_000;
 /**
  * Two groups of windows at least this similar (mean cosine similarity) are
- * the same speaker. Calibrated for the bundled 3D-Speaker ERes2Net model on
- * two- and three-voice Italian dialogues of 1 to 4 minutes, both clean and
- * degraded to a phone on a table (quiet, reverberant, noisy, AAC at
- * 32 kbit/s): 0.4 found the right number of speakers in all but one case,
- * which it split in two; 0.35 merged two similar voices. A split is the
- * safer error, since the owner can name two speakers as the same person.
+ * the same speaker. Calibrated for the bundled 3D-Speaker ERes2Net model with
+ * `evals/speakers`, which replays the device's chunking (about 18 s a chunk)
+ * on public conversations and meetings of 2 to 4 speakers, together with the
+ * size floor below. A split is the safer error, since the owner can name two
+ * speakers as the same person.
  */
-export const SAME_SPEAKER_SIMILARITY = 0.4;
+export const SAME_SPEAKER_SIMILARITY = 0.425;
 /**
  * A speaker heard for less than this — or for less than
  * `MIN_SPEAKER_SHARE` of the session's voiced time, whichever is smaller —
@@ -67,6 +66,13 @@ export const SAME_SPEAKER_SIMILARITY = 0.4;
  */
 export const MIN_SPEAKER_MS = 8_000;
 export const MIN_SPEAKER_SHARE = 0.15;
+/**
+ * In a long session the floor also grows to this share of the voiced time:
+ * stray windows add up over half an hour, and a flat floor let each pile of
+ * them become a speaker of its own. A participant who says less than this is
+ * folded into someone else.
+ */
+export const LONG_SESSION_SPEAKER_SHARE = 0.05;
 
 /**
  * Cut the stretches a separator found (one voice each) into voice windows:
@@ -96,7 +102,8 @@ export function voiceWindows(
  * Group voice vectors into speakers: average-linkage agglomerative clustering
  * on cosine similarity, stopping below `threshold`. With `durationsMs` (each
  * window's length), speakers too small to be a person are then folded into
- * the most similar larger one (see `MIN_SPEAKER_MS`). Returns a 0-based
+ * the most similar larger one (see `MIN_SPEAKER_MS` and
+ * `LONG_SESSION_SPEAKER_SHARE`). Returns a 0-based
  * speaker index per vector, numbered in order of first appearance.
  *
  * Uses the nearest-neighbour chain, which finds the same merges as the naive
@@ -195,7 +202,10 @@ function absorbSmallSpeakers(
   groups.forEach((g, i) => time.set(g, (time.get(g) ?? 0) + (durationsMs[i] ?? 0)));
   let total = 0;
   for (const t of time.values()) total += t;
-  const floor = Math.min(MIN_SPEAKER_MS, total * MIN_SPEAKER_SHARE);
+  const floor = Math.max(
+    Math.min(MIN_SPEAKER_MS, total * MIN_SPEAKER_SHARE),
+    total * LONG_SESSION_SPEAKER_SHARE,
+  );
   const longest = [...time].reduce((a, b) => (b[1] > a[1] ? b : a))[0];
   const large = [...time].filter(([g, t]) => t >= floor || g === longest).map(([g]) => g);
   if (large.length === time.size) return [...groups];
