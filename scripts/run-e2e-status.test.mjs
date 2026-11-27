@@ -83,18 +83,17 @@ async function spawned(count) {
 const tickets = () => readdirSync(launcher.E2E_HOST_LOCK_DIR);
 
 describe("E2E lifecycle status artifact", () => {
-  test.each([
-    [0, 0, 0],
-    [7, 0, 0],
-    [0, 9, 0],
-    [7, 9, 0],
-    [0, 0, 11],
-    [7, 0, 11],
-    [0, 9, 11],
-    [7, 9, 11],
-  ])(
-    "persists four phases and first failure (initial=%i, account=%i, released=%i), then releases its ticket",
-    async (firstExit, accountExit, releasedExit) => {
+  test.each(
+    [0, 7].flatMap((initial) =>
+      [0, 9].flatMap((account) =>
+        [0, 11].flatMap((collector) =>
+          [0, 13].map((gateway) => [initial, account, collector, gateway]),
+        ),
+      ),
+    ),
+  )(
+    "persists five phases and first failure (initial=%i, account=%i, collector=%i, gateway=%i), then releases its ticket",
+    async (firstExit, accountExit, releasedExit, gatewayExit) => {
       const result = start();
       await spawned(1);
       expect(readStatus()).toMatchObject({
@@ -126,7 +125,15 @@ describe("E2E lifecycle status artifact", () => {
       expect(tickets()).toEqual([`${process.pid}.json`]);
       expect(children[3].listenerCount("exit")).toBe(1);
       children[3].emit("exit", releasedExit, null);
-      const expectedExit = firstExit || accountExit || releasedExit;
+      await spawned(5);
+      expect(readStatus()).toMatchObject({
+        state: "running",
+        phase: "isolated released gateway compatibility",
+      });
+      expect(tickets()).toEqual([`${process.pid}.json`]);
+      expect(children[4].listenerCount("exit")).toBe(1);
+      children[4].emit("exit", gatewayExit, null);
+      const expectedExit = firstExit || accountExit || releasedExit || gatewayExit;
       await expect(result).resolves.toBe(expectedExit);
       expect(readStatus()).toMatchObject({
         state: expectedExit === 0 ? "passed" : "failed",
@@ -139,7 +146,7 @@ describe("E2E lifecycle status artifact", () => {
     },
   );
 
-  test("an unwritable heartbeat warns once and keeps supervising until all four children exit", async () => {
+  test("an unwritable heartbeat warns once and keeps supervising until all five children exit", async () => {
     const result = start();
     let settled = false;
     result.finally(() => {
@@ -181,6 +188,15 @@ describe("E2E lifecycle status artifact", () => {
     expect(tickets()).toEqual([`${process.pid}.json`]);
     expect(children[3].listenerCount("exit")).toBe(1);
     children[3].emit("exit", 0, null);
+    await spawned(5);
+    expect(settled).toBe(false);
+    expect(readStatus()).toMatchObject({
+      state: "running",
+      phase: "isolated released gateway compatibility",
+    });
+    expect(tickets()).toEqual([`${process.pid}.json`]);
+    expect(children[4].listenerCount("exit")).toBe(1);
+    children[4].emit("exit", 0, null);
     await expect(result).resolves.toBe(0);
     expect(readStatus().state).toBe("passed");
     expect(tickets()).toEqual([]);

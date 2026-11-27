@@ -9,8 +9,10 @@ import { request } from "node:https";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { readTokenFile, readCollectorTokenFile } from "@omnesis/core";
+import { runRelayCommand } from "@omnesis/cloud-relay/runtime";
 import { defaultScopesForDeviceKind } from "@omnesis/types";
 import { createTestPki } from "./fixture-pki.js";
 import { e2eGatewayEnv, e2eTsxCommand, gatewayBootBudgetMs } from "./gateway-env.js";
@@ -75,6 +77,7 @@ const markerSchema = z
     image: z.string().regex(/^sha256:[a-f0-9]{64}$/),
     reference: z.string(),
     dependencyAlias: z.string().startsWith("/"),
+    direction: z.enum(["released-collector", "released-gateway"]).default("released-collector"),
   })
   .strict();
 
@@ -151,14 +154,20 @@ export class ReleasedPeerFixture {
   private url = "";
   private readonly cwd = process.cwd();
   private readonly require = createRequire(join(this.cwd, "package.json"));
+  private readonly transports: { close(): Promise<void>; joined?: Promise<void> }[] = [];
+  private certificate = "";
+  private certificateFile = "";
   private stopped = false;
   private failureEvidenceAttempted = false;
   private constructor(
     readonly root: string,
     private readonly dependencyAlias: string,
+    private readonly direction: "released-collector" | "released-gateway",
   ) {}
 
-  static async create(): Promise<ReleasedPeerFixture> {
+  static async create(
+    direction: "released-collector" | "released-gateway" = "released-collector",
+  ): Promise<ReleasedPeerFixture> {
     if (
       process.platform !== "linux" ||
       !process.env.OMNESIS_E2E_RELEASED_PEER ||
@@ -173,6 +182,8 @@ export class ReleasedPeerFixture {
     );
     if (
       marker.nonce !== process.env.OMNESIS_E2E_RELEASED_PEER ||
+      marker.direction !== direction ||
+      (process.env.OMNESIS_E2E_RELEASED_DIRECTION ?? "released-collector") !== direction ||
       hostname() !== `omnesis-released-peer-${marker.nonce}`
     )
       throw Error("Released peer container marker does not match this process");
@@ -181,6 +192,7 @@ export class ReleasedPeerFixture {
     const fixture = new ReleasedPeerFixture(
       await mkdtemp("/tmp/omnesis-c6/cohort-"),
       marker.dependencyAlias,
+      direction,
     );
     try {
       await fixture.start();
@@ -399,26 +411,36 @@ export class ReleasedPeerFixture {
       if (!entry.startsWith(this.cwd + "/packages/"))
         throw Error("Current product module resolved outside copied workspace");
     }
-    for (const name of ["better-sqlite3", "@duckdb/node-api"]) {
-      const local = createRequire(join(this.cwd, "packages/gateway/package.json"));
-      const entry = await realpath(local.resolve(name));
-      if (
-        ![this.cwd + "/", "/run/c6-dependencies/node_modules/", this.dependencyAlias + "/"].some(
-          (root) => entry.startsWith(root),
+    if (this.direction === "released-collector")
+      for (const name of ["better-sqlite3", "@duckdb/node-api"]) {
+        const local = createRequire(join(this.cwd, "packages/gateway/package.json"));
+        const entry = await realpath(local.resolve(name));
+        if (
+          ![this.cwd + "/", "/run/c6-dependencies/node_modules/", this.dependencyAlias + "/"].some(
+            (root) => entry.startsWith(root),
+          )
         )
-      )
-        throw Error("Current native dependency escaped its copied or mounted closure");
-      local(name); // Load current package modules; real gateway startup exercises its stores.
-    }
+          throw Error("Current native dependency escaped its copied or mounted closure");
+        local(name); // Load current package modules; real gateway startup exercises its stores.
+      }
     const old = createRequire("/app/packages/collector/package.json");
     if (!(await realpath(old.resolve("@omnesis/core"))).startsWith("/app/"))
       throw Error("Released product dependency escaped image");
     const oldVersion = z
       .object({ version: z.literal("0.8.1") })
       .parse(JSON.parse(await readFile("/app/packages/collector/package.json", "utf8"))).version;
+    if (this.direction === "released-gateway") {
+      z.object({ version: z.literal("0.8.1") }).parse(
+        JSON.parse(await readFile("/app/packages/gateway/package.json", "utf8")),
+      );
+      if (!(await realpath(old.resolve("@omnesis/gateway"))).startsWith("/app/"))
+        throw Error("Released gateway dependency escaped image");
+    }
     const pki = await createTestPki(join(this.root, "pki"), "cohort");
     const leaf = await pki.leaf("gateway", ["127.0.0.1", "localhost"]);
     this.ca = pki.caCert;
+    this.certificate = leaf.cert;
+    this.certificateFile = leaf.certFile;
     this.fingerprint = new X509Certificate(leaf.cert).fingerprint256
       .replaceAll(":", "")
       .toLowerCase();
@@ -444,15 +466,24 @@ export class ReleasedPeerFixture {
       }),
       { mode: 0o600 },
     );
-    const invocation = e2eTsxCommand("packages/gateway/src/index.ts");
-    await this.startChild("gateway", invocation.command, invocation.args, {
-      ...this.environment(this.gatewayConfig, join(this.root, "gateway-home")),
-      OMNESIS_GATEWAY_PORT: String(port),
-      OMNESIS_DB_PATH: join(this.gatewayConfig, "gateway.db"),
-      OMNESIS_TLS_CERT: leaf.certFile,
-      OMNESIS_TLS_KEY: leaf.keyFile,
-      OMNESIS_TLS_CA: pki.caCertFile,
-    });
+    const invocation =
+      this.direction === "released-gateway"
+        ? { command: process.execPath, args: ["/app/packages/gateway/dist/index.js"] }
+        : e2eTsxCommand("packages/gateway/src/index.ts");
+    await this.startChild(
+      "gateway",
+      invocation.command,
+      invocation.args,
+      {
+        ...this.environment(this.gatewayConfig, join(this.root, "gateway-home")),
+        OMNESIS_GATEWAY_PORT: String(port),
+        OMNESIS_DB_PATH: join(this.gatewayConfig, "gateway.db"),
+        OMNESIS_TLS_CERT: leaf.certFile,
+        OMNESIS_TLS_KEY: leaf.keyFile,
+        OMNESIS_TLS_CA: pki.caCertFile,
+      },
+      this.direction === "released-gateway" ? "/app" : this.cwd,
+    );
     await this.wait(
       async () => {
         this.token = readTokenFile(this.gatewayConfig) ?? "";
@@ -476,6 +507,7 @@ export class ReleasedPeerFixture {
         tmpMount: this.tmpMount,
         abi: process.versions.modules,
         releasedVersion: oldVersion,
+        direction: this.direction,
         currentSourceScope: true,
         currentPackagedNodeQualified: false,
         currentProductResolutionOwned: true,
@@ -622,6 +654,147 @@ export class ReleasedPeerFixture {
     };
   }
 
+  /** Real QR grants prove only role authority; they do not claim account enrollment. */
+  async desktopProtectionRefusal() {
+    if (this.direction !== "released-gateway") throw Error("Released gateway required");
+    const path = await realpath(this.require.resolve("omnesis/src/desktop/remote-protection.ts"));
+    if (path !== join(this.cwd, "packages/cli/src/desktop/remote-protection.ts"))
+      throw Error("Desktop protection reader escaped current source");
+    const module = z
+      .object({
+        readDesktopRemoteProtection: z.custom<
+          (
+            transport: { url: string },
+            pairing: { token: string },
+            signal: AbortSignal,
+          ) => Promise<unknown>
+        >((value) => typeof value === "function"),
+      })
+      .parse(await import(pathToFileURL(path).href));
+    const identities: string[] = [];
+    const outcomes: string[] = [];
+    for (const kind of ["cli", "collector"] as const) {
+      const pending = z.object({ pairingCode: z.string() }).parse(
+        await this.json("/admin/devices/pair", "POST", {
+          kind,
+          name: `Fictional desktop ${kind}`,
+        }),
+      );
+      const redeemed = z
+        .object({
+          token: z.string(),
+          scopes: z.array(z.string()),
+          device: z.object({ id: z.string().uuid(), kind: z.literal(kind) }),
+        })
+        .parse(await this.json("/devices/pair", "POST", { pairingCode: pending.pairingCode }, ""));
+      const identity = z
+        .object({ deviceId: z.string().uuid(), scopes: z.array(z.string()) })
+        .parse(await this.json("/whoami", "GET", undefined, redeemed.token));
+      const scopes = defaultScopesForDeviceKind(kind);
+      if (
+        identity.deviceId !== redeemed.device.id ||
+        JSON.stringify([...identity.scopes].sort()) !== JSON.stringify([...scopes].sort()) ||
+        JSON.stringify([...redeemed.scopes].sort()) !== JSON.stringify([...scopes].sort())
+      )
+        throw Error("Actual desktop role authority differs");
+      identities.push(identity.deviceId);
+      const transport = await runRelayCommand("client", {
+        OMNESIS_CLOUD_RELAY_GATEWAY_URL: this.url,
+        OMNESIS_CLOUD_RELAY_GATEWAY_FINGERPRINT: this.fingerprint,
+        OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE: this.certificateFile,
+        OMNESIS_CLOUD_RELAY_CLIENT_PORT: "0",
+      });
+      if (!transport) throw Error("Real pinned production transport missing");
+      // Retain before the first request; fixture close joins this exact transport too.
+      const owner = {
+        close: () => transport.close(),
+        joined: undefined as Promise<void> | undefined,
+      };
+      this.transports.push(owner);
+      const signal = new AbortController().signal;
+      let failure: unknown;
+      try {
+        const pairedJson = async (path: "/whoami" | "/health") => {
+          const deadline = performance.now() + 15000;
+          const response = await fetch(new URL(path, transport.url), {
+            headers: { authorization: `Bearer ${redeemed.token}` },
+            redirect: "error",
+            signal: AbortSignal.timeout(15000),
+          });
+          if (!response.ok || !response.body) {
+            await response.body?.cancel();
+            throw Error("Pinned role request refused");
+          }
+          const reader = response.body.getReader();
+          const parts: Uint8Array[] = [];
+          let bytes = 0;
+          try {
+            for (;;) {
+              const next = await reader.read();
+              if (next.done) break;
+              bytes += next.value.byteLength;
+              if (bytes > 65536) throw Error("Pinned response exceeds bound");
+              parts.push(next.value);
+            }
+          } finally {
+            await reader.cancel().catch(() => {});
+            reader.releaseLock();
+          }
+          if (performance.now() >= deadline) throw Error("Pinned response deadline expired");
+          return JSON.parse(Buffer.concat(parts).toString("utf8")) as unknown;
+        };
+        const proxied = z
+          .object({ deviceId: z.string().uuid() })
+          .parse(await pairedJson("/whoami"));
+        if (proxied.deviceId !== identity.deviceId) throw Error("Pinned proxy identity changed");
+        const health = z
+          .object({
+            version: z.literal("0.8.1"),
+            compat: z.object({ ws: z.literal(1), pairing: z.literal(4) }),
+          })
+          .passthrough()
+          .parse(await pairedJson("/health"));
+        if (Object.hasOwn(health, "storageProtection"))
+          throw Error("Released protection contract changed");
+        const pairing = {
+          kind,
+          token: redeemed.token,
+          scopes,
+          deviceId: identity.deviceId,
+          gatewayUrl: this.url,
+          gatewayFingerprint: this.fingerprint,
+          gatewayCertificate: this.certificate,
+        };
+        outcomes.push(
+          z
+            .enum(["encrypted", "unprotected", "unavailable"])
+            .parse(await module.readDesktopRemoteProtection(transport, pairing, signal)),
+        );
+        const after = z.object({ deviceId: z.string().uuid() }).parse(await pairedJson("/whoami"));
+        if (after.deviceId !== identity.deviceId)
+          throw Error("Pinned proxy authority changed after observation");
+      } catch (error) {
+        failure = error;
+      }
+      try {
+        owner.joined ??= owner.close();
+        await owner.joined;
+      } catch (cleanupFailure) {
+        throw Object.assign(
+          new AggregateError(
+            [...(failure ? [failure] : []), cleanupFailure],
+            "Pinned observation transport cleanup unconfirmed",
+            { cause: failure ?? cleanupFailure },
+          ),
+          { cleanupFailure },
+        );
+      }
+      if (failure) throw failure;
+    }
+    if (identities[0] === identities[1]) throw Error("Desktop role grants were merged");
+    return { outcomes, independentDesktopGrants: true as const };
+  }
+
   async note(peer: Peer, name: string, text: string) {
     await writeFile(join(peer.vault, name + ".md"), `# ${name}\n\n${text}\n`, { mode: 0o600 });
   }
@@ -714,12 +887,13 @@ export class ReleasedPeerFixture {
 
   async close() {
     if (this.stopped) return;
-    const results = await Promise.allSettled(
-      this.children.map(async (child) => {
+    const results = await Promise.allSettled([
+      ...this.transports.map((owner) => (owner.joined ??= owner.close())),
+      ...this.children.map(async (child) => {
         await killSubprocessGroup(child.process);
         await child.closed;
       }),
-    );
+    ]);
     const failures = results.filter((value) => value.status === "rejected");
     if (failures.length)
       throw Object.assign(

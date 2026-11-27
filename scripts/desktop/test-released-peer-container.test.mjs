@@ -9,6 +9,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { releasedTmpMountFacts } from "../../packages/collector/src/e2e/released-peer-fixture.js";
 import {
   releasedCollector,
+  releasedGateway,
+  releasedDirection,
+  releasedDirectionArgs,
   releasedContainerArguments,
   runReleasedPeerContainer,
   verifyReleasedCollectorImage,
@@ -18,19 +21,27 @@ const roots = [];
 afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, { recursive: true });
 });
-function image(arch = "arm64") {
-  const pin = releasedCollector[arch];
+function image(arch = "arm64", direction = "released-collector") {
+  const pin = (direction === "released-gateway" ? releasedGateway : releasedCollector)[arch];
   return [
     {
       Id: pin.config,
       Os: "linux",
       Architecture: arch === "x64" ? "amd64" : "arm64",
-      RepoDigests: [`ghcr.io/omnesis-dev/omnesis-collector@${pin.manifest}`],
+      RepoDigests: [
+        `ghcr.io/omnesis-dev/omnesis-${direction === "released-gateway" ? "gateway" : "collector"}@${pin.manifest}`,
+      ],
       Config: {
         WorkingDir: "/app",
         User: "10001:10001",
-        Cmd: ["node", "packages/collector/dist/main.js"],
-        Entrypoint: [],
+        Cmd: [
+          "node",
+          direction === "released-gateway"
+            ? "packages/gateway/dist/index.js"
+            : "packages/collector/dist/main.js",
+        ],
+        Entrypoint:
+          direction === "released-gateway" ? ["/app/scripts/seeded-state/entrypoint.sh"] : [],
         Labels: {
           "org.opencontainers.image.revision": releasedCollector.revision,
           "org.opencontainers.image.version": releasedCollector.version,
@@ -43,14 +54,18 @@ function image(arch = "arm64") {
 
 // A real executable and persistent fake-daemon state exercise process/receipt control flow.
 // They do NOT prove any Docker image, actual container, protocol or interoperability outcome.
-async function fake(mode = "success") {
+async function fake(mode = "success", direction = "released-collector") {
   const directory = await realpath(await mkdtemp(join(tmpdir(), "omnesis-c6-docker-test-")));
   roots.push(directory);
   const state = join(directory, "state.json"),
     docker = join(directory, "docker.mjs");
-  await writeFile(state, JSON.stringify({ mode, image: image(process.arch), calls: [] }), {
-    mode: 0o600,
-  });
+  await writeFile(
+    state,
+    JSON.stringify({ mode, direction, image: image(process.arch, direction), calls: [] }),
+    {
+      mode: 0o600,
+    },
+  );
   await writeFile(
     docker,
     `#!${process.execPath}
@@ -85,8 +100,16 @@ else if(args[0]==='start'){
  state.container.State={...state.container.State,StartedAt:'2020-01-01T00:00:00Z',Status:'exited',ExitCode:['cohort-failure','compound-failure'].includes(state.mode)?23:0};
  if(state.mode==='hold'||state.mode==='stop-failure'||state.mode==='compound-failure'){state.container.State.Status='running';state.container.State.Running=true;hold=state.mode==='hold';code=['stop-failure','compound-failure'].includes(state.mode)?1:0}
  if(state.mode==='success'||state.mode==='control-boundary'){
-  writeFileSync(join(state.results,'runtime.json'),JSON.stringify({format:1,node:'v24.22.3',releasedVersion:'0.8.1',currentProductResolutionOwned:true,releasedProductResolutionOwned:true,currentPackagedNodeQualified:false}),{mode:0o600});
-  writeFileSync(join(state.results,'cohort.json'),JSON.stringify({format:1,initialSyncSettled:true,independentDeviceIds:true,realPublishedCollector:true,pauseConsumedBeforeNewFile:true,currentProgressWhilePaused:true,resumedFileIngested:true,stableDocumentIds:true,operatingSystems:1}),{mode:0o600});
+  writeFileSync(join(state.results,'runtime.json'),JSON.stringify({format:1,direction:state.direction,node:'v24.22.3',releasedVersion:'0.8.1',currentProductResolutionOwned:true,releasedProductResolutionOwned:true,currentPackagedNodeQualified:false}),{mode:0o600});
+  writeFileSync(join(state.results,'cohort.json'),JSON.stringify({format:1,initialSyncSettled:true,independentDeviceIds:true,realPublishedCollector:true,realPublishedGateway:true,desktopProtectionUnavailable:true,independentDesktopGrants:true,pauseConsumedBeforeNewFile:true,currentProgressWhilePaused:true,releasedSiblingProgressWhileCurrentPaused:true,resumedFileIngested:true,stableDocumentIds:true,operatingSystems:1}),{mode:0o600});
+  if(state.receiptFault==='missing-protection'){
+    const file=join(state.results,'cohort.json'),receipt=JSON.parse(readFileSync(file,'utf8'));
+    delete receipt.desktopProtectionUnavailable;writeFileSync(file,JSON.stringify(receipt),{mode:0o600});
+  }
+  if(state.receiptFault==='wrong-direction'){
+    const file=join(state.results,'runtime.json'),receipt=JSON.parse(readFileSync(file,'utf8'));
+    receipt.direction='released-collector';writeFileSync(file,JSON.stringify(receipt),{mode:0o600});
+  }
  }
 }else if(args[0]==='stop'){
  if(state.mode==='stop-failure'||state.mode==='compound-failure'){code=1}else{state.container.State.Running=false;state.container.State.Status='exited'}
@@ -533,5 +556,91 @@ describe("own-namespace finite mount observation", () => {
       row() + "\0",
     ])
       expect(releasedTmpMountFacts(text)).toEqual(unknown);
+  });
+});
+
+describe("reverse immutable gateway cohort", () => {
+  it("accepts only the closed explicit direction command without arbitrary test or Docker arguments", () => {
+    expect(releasedDirectionArgs([])).toBe("released-collector");
+    for (const value of ["released-collector", "released-gateway"])
+      expect(releasedDirectionArgs([`--direction=${value}`])).toBe(value);
+    for (const args of [
+      ["--direction="],
+      ["--direction=unknown"],
+      ["--direction", "released-gateway"],
+      ["--privileged"],
+      ["--direction=released-gateway", "extra"],
+    ])
+      expect(() => releasedDirectionArgs(args)).toThrow();
+  });
+
+  it("pins each native gateway including its real seeded-state entrypoint without accepting collector identity", () => {
+    for (const arch of ["arm64", "x64"]) {
+      expect(
+        verifyReleasedCollectorImage(image(arch, "released-gateway"), arch, "released-gateway")
+          .config,
+      ).toBe(releasedGateway[arch].config);
+      expect(() => verifyReleasedCollectorImage(image(arch), arch, "released-gateway")).toThrow();
+      for (const entrypoint of [
+        undefined,
+        null,
+        [],
+        ["node"],
+        "/app/scripts/seeded-state/entrypoint.sh",
+      ]) {
+        const candidate = image(arch, "released-gateway");
+        candidate[0].Config.Entrypoint = entrypoint;
+        expect(() => verifyReleasedCollectorImage(candidate, arch, "released-gateway")).toThrow();
+      }
+      const wrongCommand = image(arch, "released-gateway");
+      wrongCommand[0].Config.Cmd = ["node", "packages/collector/dist/main.js"];
+      expect(() => verifyReleasedCollectorImage(wrongCommand, arch, "released-gateway")).toThrow();
+    }
+    for (const invalid of ["", "gateway", "released-gateway-extra", null])
+      expect(() => releasedDirection(invalid)).toThrow();
+  });
+
+  describe.skipIf(process.platform !== "linux")("reverse fake-Docker lifecycle", () => {
+    it("runs reverse preparation through the same exact-container lifecycle and direction-specific receipts", async () => {
+      const fixture = await fake("success", "released-gateway");
+      const result = await resultOf(
+        runReleasedPeerContainer({ ...options(fixture), direction: "released-gateway" }),
+      );
+      expect(result.error).toBeUndefined();
+      const state = await fixture.read();
+      const create = state.calls.find((args) => args[0] === "create");
+      expect(create).toContain(
+        "ghcr.io/omnesis-dev/omnesis-gateway@" + releasedGateway[process.arch].manifest,
+      );
+      expect(create.at(-1)).toContain("released-gateway-current-collector.e2e.test.ts");
+      expect(create.at(-1)).not.toContain("scripts/run-e2e");
+      expect(create).not.toContain("--entrypoint");
+      expect(create).toContain("OMNESIS_E2E_RELEASED_DIRECTION=released-gateway");
+      expect(state.calls.filter((args) => args[0] === "pull")).toHaveLength(1);
+      expect(state.removed).toBe(true);
+      const receipt = JSON.parse(
+        await readFile(join(result.value.evidenceDirectory, "runner.json"), "utf8"),
+      );
+      expect(receipt).toMatchObject({
+        direction: "released-gateway",
+        index: releasedGateway.index,
+        retired: true,
+        passed: true,
+      });
+    });
+    it.each(["missing-protection", "wrong-direction"])(
+      "rejects incomplete reverse evidence %s while retaining physical cleanup",
+      async (receiptFault) => {
+        const fixture = await fake("success", "released-gateway");
+        const state = await fixture.read();
+        await writeFile(fixture.state, JSON.stringify({ ...state, receiptFault }));
+        const result = await resultOf(
+          runReleasedPeerContainer({ ...options(fixture), direction: "released-gateway" }),
+        );
+        expect(result.error).toBeDefined();
+        expect(result.error.message).toBe("Released cohort evidence incomplete");
+        expect((await fixture.read()).removed).toBe(true);
+      },
+    );
   });
 });

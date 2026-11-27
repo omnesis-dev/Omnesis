@@ -457,7 +457,7 @@ export function accountContainerPhases(phases, args, env = process.env) {
         const filtered = phase.args.filter((arg) => arg !== file);
         if (phase.args.includes(file) && !filtered.some((arg) => arg.endsWith(".e2e.test.ts")))
           return [];
-        return [{ ...phase, args: [...filtered, `--exclude=${file}`] }];
+        return [{ ...phase, args: appendBeforeDoubleDash(filtered, `--exclude=${file}`) }];
       });
   return [
     ...regular,
@@ -478,40 +478,54 @@ export function accountContainerPhases(phases, args, env = process.env) {
 /** Published peers need their pinned image, not a host-side Vitest invocation. */
 export function releasedPeerContainerPhases(phases, args, env = process.env) {
   if (env.OMNESIS_E2E_RELEASED_PEER || requestsVitestInformation(args)) return phases;
-  const file = "packages/collector/src/e2e/released-collector-current-gateway.e2e.test.ts";
+  const cohorts = [
+    {
+      file: "packages/collector/src/e2e/released-collector-current-gateway.e2e.test.ts",
+      label: "isolated released collector compatibility",
+      arguments: [],
+    },
+    {
+      file: "packages/collector/src/e2e/released-gateway-current-collector.e2e.test.ts",
+      label: "isolated released gateway compatibility",
+      arguments: ["--direction=released-gateway"],
+    },
+  ];
   const filters = parseCLI(["vitest", "run", ...args]).filter;
-  const selected = filters.length === 0 || filters.some((filter) => file.includes(filter));
+  const selected = cohorts.filter(
+    ({ file }) => filters.length === 0 || filters.some((filter) => file.includes(filter)),
+  );
   const onlyReleased =
     filters.length > 0 &&
-    filters.every((filter) => filter.includes("released-collector") && file.includes(filter));
+    filters.every(
+      (filter) => filter.includes("released-") && cohorts.some(({ file }) => file.includes(filter)),
+    );
   const regular = phases.flatMap((phase) => {
     // An earlier isolated phase owns its own arguments and preparation.
     if (phase.container) return [phase];
     if (onlyReleased) return [];
-    const filtered = phase.args.filter((arg) => arg !== file);
+    const filtered = phase.args.filter((arg) => !cohorts.some(({ file }) => arg === file));
     if (
-      phase.args.includes(file) &&
+      cohorts.some(({ file }) => phase.args.includes(file)) &&
       !filtered.some((arg) => !arg.startsWith("-") && arg.endsWith(".e2e.test.ts"))
     )
       return [];
-    return [{ ...phase, args: appendBeforeDoubleDash(filtered, `--exclude=${file}`) }];
+    return [
+      {
+        ...phase,
+        args: appendBeforeDoubleDash(filtered, ...cohorts.map(({ file }) => `--exclude=${file}`)),
+      },
+    ];
   });
   return [
     ...regular,
-    ...(selected
-      ? [
-          {
-            label: "isolated released collector compatibility",
-            container: true,
-            args: [
-              join(
-                dirname(fileURLToPath(import.meta.url)),
-                "desktop/test-released-peer-container.mjs",
-              ),
-            ],
-          },
-        ]
-      : []),
+    ...selected.map((cohort) => ({
+      label: cohort.label,
+      container: true,
+      args: [
+        join(dirname(fileURLToPath(import.meta.url)), "desktop/test-released-peer-container.mjs"),
+        ...cohort.arguments,
+      ],
+    })),
   ];
 }
 

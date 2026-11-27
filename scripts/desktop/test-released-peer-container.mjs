@@ -29,16 +29,54 @@ export const releasedCollector = Object.freeze({
     config: "sha256:042910b8f219872f78b4b0ff0e3c280a1ff61e4ef3f82757fef24a9e9bf58b32",
   }),
 });
+export const releasedGateway = Object.freeze({
+  revision: releasedCollector.revision,
+  version: releasedCollector.version,
+  index: "sha256:dbd68dc65235e830d84b97c2a7e065dcdfa1420bf02348c2f5b742308461e55c",
+  arm64: Object.freeze({
+    platform: "linux/arm64",
+    manifest: "sha256:045ca61f4c428e5824a46313c46e0b10d14f5c076523de548310b3708e942a62",
+    config: "sha256:266cc9b17a14a03e0036b5ae877ed0516111ad116266cbee134a7044f424a899",
+  }),
+  x64: Object.freeze({
+    platform: "linux/amd64",
+    manifest: "sha256:ab635b6ccf6d76ccc4cf10894ea5150caa2b5dc979a869ab40dc990fc43b65cd",
+    config: "sha256:133cef6423cc14b8094b89f7dffac20ea549c5b690ae78dd50269596ab84d194",
+  }),
+});
+export function releasedDirection(value = "released-collector") {
+  if (value !== "released-collector" && value !== "released-gateway")
+    throw Error("Released peer direction unsupported");
+  return value;
+}
+export function releasedDirectionArgs(args) {
+  if (args.length > 1 || (args.length === 1 && !args[0].startsWith("--direction=")))
+    throw Error("Use one explicit released peer direction");
+  return releasedDirection(args[0]?.slice("--direction=".length));
+}
+
+function cohortFile(direction) {
+  return direction === "released-gateway"
+    ? "packages/collector/src/e2e/released-gateway-current-collector.e2e.test.ts"
+    : "packages/collector/src/e2e/released-collector-current-gateway.e2e.test.ts";
+}
 const label = "dev.omnesis.test.released-peer";
-const testFile = "packages/collector/src/e2e/released-collector-current-gateway.e2e.test.ts";
-function selected(architecture) {
+function selected(architecture, direction = "released-collector") {
+  releasedDirection(direction);
   if (architecture !== "arm64" && architecture !== "x64")
     throw Error("Native released collector architecture unsupported");
-  const pin = releasedCollector[architecture];
-  return { ...pin, reference: `${repository}@${pin.manifest}` };
+  const release = direction === "released-gateway" ? releasedGateway : releasedCollector;
+  const pin = release[architecture];
+  const imageRepository =
+    direction === "released-gateway" ? "ghcr.io/omnesis-dev/omnesis-gateway" : repository;
+  return { ...pin, reference: `${imageRepository}@${pin.manifest}` };
 }
-export function verifyReleasedCollectorImage(value, architecture) {
-  const pin = selected(architecture);
+export function verifyReleasedCollectorImage(
+  value,
+  architecture,
+  direction = "released-collector",
+) {
+  const pin = selected(architecture, direction);
   if (!Array.isArray(value) || value.length !== 1) throw Error("Released image inspection refused");
   const image = value[0],
     config = image?.Config;
@@ -50,10 +88,19 @@ export function verifyReleasedCollectorImage(value, architecture) {
     !image.RepoDigests.includes(pin.reference) ||
     config?.WorkingDir !== "/app" ||
     config.User !== "10001:10001" ||
-    JSON.stringify(config.Cmd) !== JSON.stringify(["node", "packages/collector/dist/main.js"]) ||
-    (Object.hasOwn(config, "Entrypoint") &&
-      config.Entrypoint !== null &&
-      (!Array.isArray(config.Entrypoint) || config.Entrypoint.length !== 0)) ||
+    JSON.stringify(config.Cmd) !==
+      JSON.stringify([
+        "node",
+        direction === "released-gateway"
+          ? "packages/gateway/dist/index.js"
+          : "packages/collector/dist/main.js",
+      ]) ||
+    (direction === "released-gateway"
+      ? JSON.stringify(config.Entrypoint) !==
+        JSON.stringify(["/app/scripts/seeded-state/entrypoint.sh"])
+      : Object.hasOwn(config, "Entrypoint") &&
+        config.Entrypoint !== null &&
+        (!Array.isArray(config.Entrypoint) || config.Entrypoint.length !== 0)) ||
     config.Labels?.["org.opencontainers.image.revision"] !== releasedCollector.revision ||
     config.Labels?.["org.opencontainers.image.version"] !== releasedCollector.version ||
     config.Labels?.["org.opencontainers.image.source"] !== "https://github.com/omnesis-dev/Omnesis"
@@ -63,7 +110,7 @@ export function verifyReleasedCollectorImage(value, architecture) {
 }
 
 /** Fixed copied-current entry; /app remains the genuine released image closure. */
-const entry = `set -euo pipefail
+const entry = (direction) => `set -euo pipefail
 umask 077
 command -v tar >/dev/null
 command -v openssl >/dev/null
@@ -73,7 +120,7 @@ export USERPROFILE="$HOME"
 tar -C /input --null --verbatim-files-from -T /run/c6-source-files -cf - | tar -C /tmp/omnesis-c6/current -xf -
 cd /tmp/omnesis-c6/current
 node scripts/desktop/container-workspace.mjs
-exec node node_modules/vitest/vitest.mjs run ${testFile} --no-file-parallelism --maxWorkers=1`;
+exec node node_modules/vitest/vitest.mjs run ${cohortFile(direction)} --no-file-parallelism --maxWorkers=1`;
 
 function verifyModuleMount(root, modules, result) {
   if (basename(modules) !== "node_modules" || root === modules || root.startsWith(modules + "/"))
@@ -121,6 +168,7 @@ async function verifyOwnedDirectory(path) {
 
 export function releasedContainerArguments({
   architecture,
+  direction = "released-collector",
   root,
   modules,
   marker,
@@ -133,7 +181,7 @@ export function releasedContainerArguments({
 }) {
   verifyModuleMount(root, modules, result);
   verifyControlMounts(root, modules, control, result, marker, files);
-  const pin = selected(architecture);
+  const pin = selected(architecture, direction);
   const dependencies = "/run/c6-dependencies/node_modules";
   const mounts = [
     [root, "/input", true],
@@ -190,6 +238,7 @@ export function releasedContainerArguments({
       OMNESIS_RUNTIME_MODE: "test",
       OMNESIS_TELEMETRY: "off",
       OMNESIS_E2E_RELEASED_PEER: nonce,
+      OMNESIS_E2E_RELEASED_DIRECTION: releasedDirection(direction),
       OMNESIS_E2E_DISABLE_DEFAULT_RELAY: "1",
       OMNESIS_E2E_DISABLE_RELEASE_CHECK: "1",
       OMNESIS_E2E_DISABLE_ICON_FETCH: "1",
@@ -201,7 +250,7 @@ export function releasedContainerArguments({
     pin.reference,
     "/bin/bash",
     "-c",
-    entry,
+    entry(direction),
   ];
 }
 
@@ -321,10 +370,12 @@ export async function runReleasedPeerContainer({
   root,
   modules,
   architecture = process.arch,
+  direction = "released-collector",
   signal,
   docker = "docker",
   env = process.env,
 }) {
+  direction = releasedDirection(direction);
   if (process.platform !== "linux") throw Error("Released peer container requires Linux");
   if (architecture !== process.arch)
     throw Error("Released peer container refuses architecture emulation");
@@ -339,7 +390,7 @@ export async function runReleasedPeerContainer({
     throw Error("Released runner requires the current admitted checkout");
   modules = await realpath(modules);
   verifyModuleMount(root, modules, "/results");
-  const pin = selected(architecture),
+  const pin = selected(architecture, direction),
     nonce = randomUUID();
   const scratch = await mkdtemp(join(tmpdir(), "omnesis-released-oci-"));
   const dockerConfig = join(scratch, "docker-config"),
@@ -396,11 +447,12 @@ export async function runReleasedPeerContainer({
       architecture === "arm64" ? ["linux/arm64", "linux/aarch64"] : ["linux/amd64", "linux/x86_64"];
     if (!native.includes(daemon))
       throw Error("Released collector requires a matching native Linux Docker daemon");
-    process.stdout.write("Preparing the digest-pinned released collector image.\n");
+    process.stdout.write(`Preparing the digest-pinned ${direction} image.\n`);
     await execute(["pull", "--platform", pin.platform, pin.reference], true, 900000);
     verifyReleasedCollectorImage(
       JSON.parse(await execute(["image", "inspect", pin.reference])),
       architecture,
+      direction,
     );
     const list = await command(
       "git",
@@ -418,12 +470,14 @@ export async function runReleasedPeerContainer({
         image: pin.config,
         reference: pin.reference,
         dependencyAlias: modules,
+        direction,
       }),
       { mode: 0o600, flag: "wx" },
     );
     await writeFile(files, list, { mode: 0o600, flag: "wx" });
     const createArgs = releasedContainerArguments({
       architecture,
+      direction,
       root,
       modules,
       marker,
@@ -480,9 +534,13 @@ export async function runReleasedPeerContainer({
           for (const key of [
             "initialSyncSettled",
             "independentDeviceIds",
-            "realPublishedCollector",
+            ...(direction === "released-gateway"
+              ? ["realPublishedGateway", "desktopProtectionUnavailable", "independentDesktopGrants"]
+              : ["realPublishedCollector"]),
             "pauseConsumedBeforeNewFile",
-            "currentProgressWhilePaused",
+            direction === "released-gateway"
+              ? "releasedSiblingProgressWhileCurrentPaused"
+              : "currentProgressWhilePaused",
             "resumedFileIngested",
             "stableDocumentIds",
           ])
@@ -491,6 +549,7 @@ export async function runReleasedPeerContainer({
             cohort.format !== 1 ||
             cohort.operatingSystems !== 1 ||
             runtime.format !== 1 ||
+            runtime.direction !== direction ||
             runtime.node !== "v24.22.3" ||
             runtime.releasedVersion !== "0.8.1" ||
             runtime.currentProductResolutionOwned !== true ||
@@ -545,7 +604,8 @@ export async function runReleasedPeerContainer({
         format: 1,
         reference: pin.reference,
         config: pin.config,
-        index: releasedCollector.index,
+        index: direction === "released-gateway" ? releasedGateway.index : releasedCollector.index,
+        direction,
         revisionLabel: releasedCollector.revision,
         versionLabel: releasedCollector.version,
         architecture,
@@ -580,6 +640,7 @@ export async function runReleasedPeerContainer({
 if (isEntryScript(import.meta.url)) {
   if (!process.env.OMNESIS_TEST_SCHEDULER_ACTIVE && process.env.CI !== "true")
     throw Error("Use normal E2E admission for the released peer cohort");
+  const direction = releasedDirectionArgs(process.argv.slice(2));
   const require = createRequire(import.meta.url),
     controller = new AbortController();
   const abort = () => controller.abort();
@@ -587,6 +648,7 @@ if (isEntryScript(import.meta.url)) {
   process.on("SIGINT", abort);
   try {
     await runReleasedPeerContainer({
+      direction,
       root: resolve("."),
       modules: dirname(dirname(await realpath(require.resolve("vitest/package.json")))),
       signal: controller.signal,

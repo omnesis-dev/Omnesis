@@ -17,12 +17,42 @@ final class ArtifactRedirectRefusal: NSObject, URLSessionTaskDelegate, @unchecke
     }
 }
 
+/// A local completion fact survives cancellation of the issuing presentation scope.
+final class DesktopArtifactSaveReceipt: @unchecked Sendable {
+    struct Copy: Sendable {
+        let destination: URL
+        let bytes: Int64
+    }
+
+    private let lock = NSLock()
+    private var copy: Copy?
+
+    var committedCopy: Copy? {
+        lock.lock()
+        defer { lock.unlock() }
+        return copy
+    }
+
+    func record(_ copy: Copy) {
+        lock.lock()
+        defer { lock.unlock() }
+        self.copy = copy
+    }
+}
+
 actor DesktopArtifactDownloader {
+    private let beforeCommit: (@Sendable () -> Void)?
+
+    init(beforeCommit: (@Sendable () -> Void)? = nil) {
+        self.beforeCommit = beforeCommit
+    }
+
     func save(
         _ artifact: DesktopArtifact,
         api: DesktopAPI,
         destination: URL,
         readableExport: Bool = false,
+        didCommit: @escaping @Sendable (DesktopArtifactSaveReceipt.Copy) -> Void = { _ in },
         progress: @escaping @Sendable (Int64) -> Void
     ) async throws {
         try Task.checkCancellation()
@@ -84,7 +114,10 @@ actor DesktopArtifactDownloader {
                 throw DesktopAPIError.message("The download was incomplete. No backup was saved.")
             }
             try archive.finish()
+            beforeCommit?()
+            try Task.checkCancellation()
             try file.finish()
+            didCommit(.init(destination: destination, bytes: received))
             progress(received)
         } catch {
             file.discard()

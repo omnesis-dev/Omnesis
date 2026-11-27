@@ -80,7 +80,7 @@ final class RecoveryCopiesCleanupTests: XCTestCase {
         while !condition(), ContinuousClock.now < deadline {
             do { try await Task.sleep(for: .milliseconds(10)) } catch { return false }
         }
-        return condition()
+        return ContinuousClock.now < deadline && condition()
     }
 
     func testActualVersionOneBridgeEnvelopesKeepCleanupRepliesSeparateFromLibraryReadiness() throws {
@@ -169,17 +169,18 @@ final class RecoveryCopiesCleanupTests: XCTestCase {
 
     func testCancellationWaitsForTheOriginalOperationToDrainThenObservesPendingDeletion() async throws {
         let initial = try catalog(list()), preview = try review(), pending = try list(pending: "deleting")
-        var continuation: CheckedContinuation<BridgeValue, Error>?
+        let gate = RecoveryCleanupRequestGate()
         var commands = [String]()
         let flow = DesktopRecoveryCopiesFlow(catalog: initial) { name, _ in
             commands.append(name)
             if name == "recoveryCopyPreview" { return preview }
-            if name == "recoveryCopyRemove" { return try await withCheckedThrowingContinuation { continuation = $0 } }
+            if name == "recoveryCopyRemove" { return try await gate.request() }
             return pending
         }
         await flow.review(selected)
         let work = Task { await flow.removeReviewed() }
-        guard await waitFor({ continuation != nil }) else {
+        guard await waitFor({ gate.hasPendingRequest }) else {
+            gate.close()
             work.cancel()
             await work.value
             return XCTFail("The fixture removal request did not start")
@@ -189,7 +190,7 @@ final class RecoveryCopiesCleanupTests: XCTestCase {
         XCTAssertTrue(flow.busy)
         XCTAssertTrue(flow.stopping)
         XCTAssertFalse(commands.contains("recoveryCopies"))
-        continuation?.resume(throwing: CancellationError())
+        gate.close()
         await work.value
         XCTAssertFalse(flow.busy)
         XCTAssertEqual(commands.last, "recoveryCopies")
@@ -283,12 +284,13 @@ final class RecoveryCopiesCleanupTests: XCTestCase {
     }
 
     func testLoadingReviewRenderShowsItsRealStopControl() async throws {
-        var continuation: CheckedContinuation<BridgeValue, Error>?
+        let gate = RecoveryCleanupRequestGate()
         let flow = try DesktopRecoveryCopiesFlow(catalog: catalog(list())) { _, _ in
-            try await withCheckedThrowingContinuation { continuation = $0 }
+            try await gate.request()
         }
         let work = Task { await flow.review(selected) }
-        guard await waitFor({ continuation != nil }) else {
+        guard await waitFor({ gate.hasPendingRequest }) else {
+            gate.close()
             work.cancel()
             await work.value
             return XCTFail("The fixture review request did not start")
@@ -301,13 +303,32 @@ final class RecoveryCopiesCleanupTests: XCTestCase {
         ) { view in
             XCTAssertTrue(try DesktopAccessibilityDriver.element("stop-recovery-cleanup", in: view).isAccessibilityEnabled())
         } } catch {
-            continuation?.resume(throwing: CancellationError())
+            gate.close()
             await work.value
             throw error
         }
-        continuation?.resume(throwing: CancellationError())
+        gate.close()
         await work.value
         XCTAssertNil(flow.preview)
+    }
+
+    func testClosedFixtureGateRejectsLateAdmissionAndAlwaysJoinsReview() async throws {
+        for cancel in [false, true] {
+            let gate = RecoveryCleanupRequestGate()
+            let flow = try DesktopRecoveryCopiesFlow(catalog: catalog(list())) { _, _ in try await gate.request() }
+            // Model the admission arriving only after timeout cleanup has closed its owner.
+            // Both operations are on the main actor; the task cannot enter until we yield.
+            let work = Task { await flow.review(selected) }
+            gate.close()
+            gate.close()
+            if cancel { work.cancel() }
+            await work.value
+            XCTAssertEqual(gate.admissionCount, 1, "The actual flow must reach the closed request seam")
+            XCTAssertFalse(gate.hasPendingRequest)
+            XCTAssertFalse(flow.busy)
+            XCTAssertNil(flow.preview)
+            XCTAssertEqual(flow.notice, "Review cancelled. No copy was removed.")
+        }
     }
 
     func testConfirmationAndPendingFailureRenderActualChoices() async throws {
@@ -331,5 +352,34 @@ final class RecoveryCopiesCleanupTests: XCTestCase {
             name: "recovery-copy-pending-error",
             size: CGSize(width: 900, height: 900)
         )
+    }
+}
+
+/// One fixture owns its pending request until close, including admission after timeout/cancel.
+@MainActor
+private final class RecoveryCleanupRequestGate {
+    private var closed = false
+    private var continuation: CheckedContinuation<BridgeValue, Error>?
+    private(set) var admissionCount = 0
+    var hasPendingRequest: Bool {
+        continuation != nil
+    }
+
+    func request() async throws -> BridgeValue {
+        admissionCount += 1
+        return try await withCheckedThrowingContinuation { incoming in
+            guard !closed, continuation == nil else {
+                incoming.resume(throwing: CancellationError())
+                return
+            }
+            continuation = incoming
+        }
+    }
+
+    func close() {
+        closed = true
+        let pending = continuation
+        continuation = nil
+        pending?.resume(throwing: CancellationError())
     }
 }

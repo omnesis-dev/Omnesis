@@ -252,6 +252,12 @@ leases. Pending update/restore operations are quiesced without replacing their
 recovery intent. Packaged Finder callbacks, service registration and final Trash
 interaction still require native qualification.
 
+Once a helper has frozen its preparation gate for Trash, restoring the app does
+not reopen that helper. It cancels any pending retirement launch and requests the
+same joined helper shutdown. Opening the restored app and choosing Retry can
+attach a fresh helper; durable retirement and recovery intent remain authoritative.
+The terminal-helper policy does not erase the library or undo an explicit erase.
+
 ## Resource defaults and remediation
 
 Home setup requires current storage-growth admission from the gateway's existing
@@ -480,12 +486,16 @@ load or that macOS accepts the packaged app. Native build success does not
 prove the onboarding or service lifecycle. Each row needs evidence at its own
 scope before the application can be considered complete.
 
-The `desktop-runtime` validation bundle includes an isolated, digest-pinned released
-Linux collector beside a current collector and current source gateway. Its named
-container phase checks real ingestion, independent pause/resume and stable document
-IDs. It does not qualify a released gateway with a current app, a physical Mac/Linux
-fleet, native permissions, or the packaged macOS runtime. Explicit execution requires
-Linux and Docker; unsupported execution fails rather than skipping the cohort.
+The `desktop-runtime` validation bundle includes two isolated, digest-pinned released
+Linux peer cohorts: a released collector beside a current collector and current source
+gateway, and a released gateway with current and released collectors. Their named
+container phases check real pairing, ingestion, independent pause/resume and stable
+document IDs. The reverse cohort also exercises the current production protection
+reader and refuses to infer protection from a released gateway that lacks the required
+capability. These source-runtime checks do not qualify a packaged app connecting to a
+released gateway, a physical Mac/Linux fleet, native permissions, or the packaged macOS
+runtime. Explicit execution requires Linux and Docker; unsupported execution fails
+rather than skipping either cohort.
 
 ### Collector-only permission recovery
 

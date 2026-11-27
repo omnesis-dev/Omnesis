@@ -219,6 +219,10 @@ not request root access. The observer keeps running after a
 daemon exits, preserves ordinary Finder moves, and requests keep-data retirement
 when its application is trashed or deleted. Pending update/restore recovery intent
 is preserved. Packaged Finder and login behavior still need native qualification.
+If the app returns from Trash after the helper has frozen starts, that helper
+finishes its joined shutdown instead of reopening its old preparation gate.
+Open the restored app and choose Retry if its background connection needs to
+restart; a fresh helper respects any durable retirement or recovery intent.
 Stopping Omnesis preserves the library. Removing data is a separate explicit operation.
 Quitting joins the presentation's control connection and prerequisite monitors;
 background collection continues independently. Unconfirmed connection cleanup

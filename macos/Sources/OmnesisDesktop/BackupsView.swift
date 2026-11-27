@@ -177,19 +177,32 @@ struct DesktopBackupsView: View {
         downloadedBytes = 0
         savedURL = nil
         error = nil
+        let receipt = DesktopArtifactSaveReceipt()
         download = context.run { scope in
+            var failure: Error?
             do {
                 try await scope.perform { api in try await downloader.save(
                     artifact,
                     api: api,
                     destination: destination,
-                    readableExport: readableExport
+                    readableExport: readableExport,
+                    didCommit: { receipt.record($0) }
                 ) { count in
                     Task { @MainActor in if scope.isCurrent, downloadID == operationID { downloadedBytes = count } }
                 } }
-                savedURL = destination
-            } catch is CancellationError { error = "Download cancelled. No copy was saved." }
-            catch { self.error = "The copy was not saved. \(error.localizedDescription)" }
+            } catch { failure = error }
+            guard downloadID == operationID else { return }
+            if scope.isCurrent {
+                if let copy = receipt.committedCopy {
+                    savedURL = copy.destination
+                    downloadedBytes = copy.bytes
+                    error = nil
+                } else if failure is CancellationError {
+                    error = "Download cancelled. No copy was saved."
+                } else if let failure {
+                    error = "The copy was not saved. \(failure.localizedDescription)"
+                }
+            }
             saving = nil
             downloadID = nil
             download = nil

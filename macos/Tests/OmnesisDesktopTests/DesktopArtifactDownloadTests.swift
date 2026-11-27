@@ -158,6 +158,95 @@ final class DesktopArtifactDownloadTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
     }
 
+    @MainActor
+    func testCommittedCopySurvivesContextRetirementBeforeResultReturns() async throws {
+        let (api, artifact, destination) = try fixture()
+        let context = DesktopAPIContext(api: api, id: 1)
+        let receipt = DesktopArtifactSaveReceipt()
+        do {
+            try await context.perform { issuingAPI in
+                try await DesktopArtifactDownloader().save(
+                    artifact, api: issuingAPI, destination: destination,
+                    didCommit: { receipt.record($0) }
+                ) { _ in }
+                // The local commit is complete, but its issuing API may no longer present results.
+                context.invalidate()
+            }
+            XCTFail("A retired context must still refuse normal result publication")
+        } catch is CancellationError {}
+        await context.drain()
+        XCTAssertFalse(context.isCurrent)
+        XCTAssertEqual(receipt.committedCopy?.destination, destination)
+        XCTAssertEqual(receipt.committedCopy?.bytes, Int64(ArtifactFixtureProtocol.bytes.count))
+        XCTAssertEqual(try Data(contentsOf: destination), ArtifactFixtureProtocol.bytes)
+    }
+
+    func testCancellationFromFinalProgressPreservesCommittedCopyAndReceipt() async throws {
+        let (api, artifact, destination) = try fixture()
+        let receipt = DesktopArtifactSaveReceipt()
+        let task = Task {
+            try await DesktopArtifactDownloader().save(
+                artifact, api: api, destination: destination,
+                didCommit: { receipt.record($0) }
+            ) { _ in
+                // This small fixture emits progress only after synchronize and close succeed.
+                withUnsafeCurrentTask { $0?.cancel() }
+            }
+            try Task.checkCancellation()
+        }
+        do {
+            try await task.value
+            XCTFail("The caller remains cancelled even though its local copy committed")
+        } catch is CancellationError {}
+        XCTAssertEqual(receipt.committedCopy?.destination, destination)
+        XCTAssertEqual(receipt.committedCopy?.bytes, Int64(ArtifactFixtureProtocol.bytes.count))
+        XCTAssertEqual(try Data(contentsOf: destination), ArtifactFixtureProtocol.bytes)
+    }
+
+    func testCancellationAtCommitBoundaryDiscardsUncommittedCopy() async throws {
+        let (api, artifact, destination) = try fixture()
+        let receipt = DesktopArtifactSaveReceipt()
+        let downloader = DesktopArtifactDownloader(beforeCommit: {
+            withUnsafeCurrentTask { $0?.cancel() }
+        })
+        let task = Task {
+            try await downloader.save(
+                artifact, api: api, destination: destination,
+                didCommit: { receipt.record($0) }
+            ) { _ in XCTFail("An uncommitted small download must not publish final progress") }
+        }
+        do {
+            try await task.value
+            XCTFail("Cancellation before commit must still refuse the copy")
+        } catch is CancellationError {}
+        XCTAssertNil(receipt.committedCopy)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+    }
+
+    func testRefusedInvocationCannotBorrowAnotherDownloadsCommitReceipt() async throws {
+        let (api, artifact, destination) = try fixture()
+        let downloader = DesktopArtifactDownloader()
+        let committed = DesktopArtifactSaveReceipt()
+        try await downloader.save(
+            artifact, api: api, destination: destination,
+            didCommit: { committed.record($0) }
+        ) { _ in }
+        let refused = DesktopArtifactSaveReceipt()
+        let other = destination.deletingLastPathComponent().appendingPathComponent("refused.tar")
+        ArtifactFixtureProtocol.status = 403
+        do {
+            try await downloader.save(
+                artifact, api: api, destination: other,
+                didCommit: { refused.record($0) }
+            ) { _ in }
+            XCTFail("An unrelated refused transfer must not become a committed result")
+        } catch {}
+        XCTAssertNil(refused.committedCopy)
+        XCTAssertEqual(committed.committedCopy?.destination, destination)
+        XCTAssertEqual(try Data(contentsOf: destination), ArtifactFixtureProtocol.bytes)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: other.path))
+    }
+
     func testDownloadDelegateRefusesRedirectWithoutForwardingCredential() throws {
         let (api, _, _) = try fixture()
         let task = try api.session.dataTask(with: XCTUnwrap(URL(string: "https://localhost:17601/admin/artifacts")))

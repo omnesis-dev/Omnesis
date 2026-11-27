@@ -16,6 +16,7 @@ export const bundles = {
       "desktop-runtime.e2e.test.ts",
       "desktop-restore.e2e.test.ts",
       "released-collector-current-gateway.e2e.test.ts",
+      "released-gateway-current-collector.e2e.test.ts",
     ],
   },
   "source-lifecycle": {
@@ -346,7 +347,8 @@ const areas = [
     test: (p) =>
       p.startsWith("scripts/desktop/test-released-peer-container") ||
       p === "packages/collector/src/e2e/released-peer-fixture.ts" ||
-      p === "packages/collector/src/e2e/released-collector-current-gateway.e2e.test.ts",
+      p === "packages/collector/src/e2e/released-collector-current-gateway.e2e.test.ts" ||
+      p === "packages/collector/src/e2e/released-gateway-current-collector.e2e.test.ts",
     bundles: ["desktop-runtime"],
   },
   { test: (p) => p.startsWith("macos/"), bundles: ["macos-logic", "macos-test"] },

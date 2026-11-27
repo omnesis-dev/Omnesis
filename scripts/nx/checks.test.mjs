@@ -66,10 +66,12 @@ describe("Nx change selection", () => {
 
   test("released peer ownership and fixture inputs select the existing desktop runtime bundle", () => {
     const released = "packages/collector/src/e2e/released-collector-current-gateway.e2e.test.ts";
+    const reverse = "packages/collector/src/e2e/released-gateway-current-collector.e2e.test.ts";
     const runtime = "packages/collector/src/e2e/desktop-runtime.e2e.test.ts";
     const restored = "packages/collector/src/e2e/desktop-restore.e2e.test.ts";
     for (const file of [
       released,
+      reverse,
       "packages/collector/src/e2e/released-peer-fixture.ts",
       "scripts/desktop/test-released-peer-container.mjs",
       "scripts/desktop/test-released-peer-container.test.mjs",
@@ -77,10 +79,11 @@ describe("Nx change selection", () => {
     ]) {
       expect(behavioralBundles([file])).toContain("desktop-runtime");
     }
-    expect(bundleTestArgs("desktop-runtime", [runtime, restored, released])).toEqual([
+    expect(bundleTestArgs("desktop-runtime", [runtime, restored, released, reverse])).toEqual([
       runtime,
       restored,
       released,
+      reverse,
     ]);
     expect(behavioralBundles(["scripts/desktop/test-released-peer-container.mjs"])).not.toContain(
       "desktop-account",

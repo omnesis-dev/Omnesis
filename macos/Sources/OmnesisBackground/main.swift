@@ -12,9 +12,8 @@ final class BackgroundDelegate: NSObject, NSApplicationDelegate {
     private var terminating = false
     private var runtime: URL?
     private var retirement: DesktopBackgroundDaemonProcess?
-    private var retirementRequested = false
     private var retirementPreparing = false
-    private var retirementIntent = UUID()
+    private var retirementIntent = DesktopBackgroundRetirementIntent()
     private var retryCount = 0
     func applicationDidFinishLaunching(_ notification: Notification) {
         let mainBundle = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
@@ -40,21 +39,30 @@ final class BackgroundDelegate: NSObject, NSApplicationDelegate {
                 create: false
             ),
                 (try? DesktopBackgroundApplicationOrigin.canonicalTrashContains(location, trash: trash)) == true else {
-                retirementRequested = false
-                retirementIntent = UUID()
+                handleLocation(inTrash: false)
                 return
             }
         }
-        if !retirementRequested { retirementIntent = UUID() }
-        service?.freezeStarts()
-        retirementRequested = true
-        retireOwnedLibrary()
+        handleLocation(inTrash: true)
+    }
+
+    private func handleLocation(inTrash: Bool) {
+        switch retirementIntent.observe(inTrash: inTrash) {
+        case .unchanged: return
+        case .retire:
+            service?.freezeStarts()
+            retireOwnedLibrary()
+        case .shutdown:
+            // A restored app uses a fresh helper on Retry; this frozen owner never reopens admission.
+            // The termination delegate joins its exact daemon, discovery and retirement owners first.
+            NSApp.terminate(nil)
+        }
     }
 
     private func retireOwnedLibrary() {
-        guard retirementRequested, !retirementPreparing, !terminating, retirement == nil, let runtime else { return }
+        guard let intent = retirementIntent.ticket, !retirementPreparing, !terminating,
+              retirement == nil, let runtime else { return }
         retirementPreparing = true
-        let intent = retirementIntent
         let generation = service?.retirementGeneration
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -65,7 +73,7 @@ final class BackgroundDelegate: NSObject, NSApplicationDelegate {
                     retryRetirement()
                     return
                 }
-                guard !terminating, retirementRequested, retirementIntent == intent,
+                guard !terminating, retirementIntent.permits(intent),
                       let generation, service?.canLaunchRetirement(generation: generation) == true,
                       ContinuousClock.now < deadline else { return }
                 let descriptor = try DesktopBackgroundDaemonAuthority.descriptor(
@@ -85,7 +93,7 @@ final class BackgroundDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func retryRetirement() {
-        guard retryCount < 5 else { return }
+        guard retirementIntent.ticket != nil, !terminating, retryCount < 5 else { return }
         retryCount += 1
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in self?.retireOwnedLibrary() }
     }
