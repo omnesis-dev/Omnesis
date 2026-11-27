@@ -22,7 +22,12 @@ final class DataUsageLeaseTests: XCTestCase {
     private var uncertainChildRegistration = false
     private var setupMilliseconds = 0
 
+    private static func phase(_ name: StaticString) {
+        FileHandle.standardError.write(Data("data-fixture:\(name)\n".utf8))
+    }
+
     override func setUpWithError() throws {
+        Self.phase("setup-enter")
         // macOS per-user temporary paths can exceed sockaddr_un.sun_path with a fixture suffix.
         home = URL(fileURLWithPath: "/tmp", isDirectory: true).appendingPathComponent("omnesis-data-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -50,9 +55,11 @@ final class DataUsageLeaseTests: XCTestCase {
             "phase": "configured",
             "processAuthorityVersion": 3,
         ], to: config.appendingPathComponent("desktop-install.json"))
+        Self.phase("setup-returned")
     }
 
     override func tearDown() async throws {
+        Self.phase("teardown-enter")
         var readersRetired = false
         defer {
             if !readersRetired {
@@ -73,6 +80,7 @@ final class DataUsageLeaseTests: XCTestCase {
                 throw error
             }
         }
+        Self.phase("catalog-joined")
         let untrackedSockets = sockets.filter { !physicallyDrained.contains($0) }
         for path in untrackedSockets {
             try? sendExit(path)
@@ -83,12 +91,15 @@ final class DataUsageLeaseTests: XCTestCase {
                     throw TestFailure.diagnostics("Owned process cleanup refused; readers retained")
                 }
             }
+            Self.phase("process-join-enter")
             process.waitUntilExit()
+            Self.phase("process-join-returned")
         }
         try closeCapturedReadersAfterJoin()
         readersRetired = true
         processes.removeAll()
         catalogChildren.removeAll()
+        Self.phase("readers-retired")
         // Untracked commands still use their socket as the legacy exit acknowledgement.
         // Tracked children have stronger physical join/incarnation-gone proof above; TERM can
         // leave their owned Unix entry, which the private home removal retires afterward.
@@ -1258,6 +1269,7 @@ final class DataUsageLeaseTests: XCTestCase {
             let data = reader.availableData
             if data.isEmpty {
                 reader.readabilityHandler = nil
+                DataUsageLeaseTests.phase("reader-eof")
                 eof = true
                 return
             }
@@ -1266,8 +1278,10 @@ final class DataUsageLeaseTests: XCTestCase {
 
         func close(_ reader: FileHandle) throws {
             reader.readabilityHandler = nil
+            DataUsageLeaseTests.phase("reader-disarmed")
             lock.lock()
             defer { lock.unlock() }
+            DataUsageLeaseTests.phase("reader-close-gate-entered")
             stopped = true
             guard !closed else { return }
             try reader.close()
@@ -1346,7 +1360,9 @@ final class DataUsageLeaseTests: XCTestCase {
         // The caller has physically joined all catalog children and launched processes.
         // Capture's gate also joins any already-running file I/O before closing the reader.
         for (reader, capture) in capturedReaders {
+            Self.phase("reader-close-enter")
             try capture.close(reader)
+            Self.phase("reader-close-returned")
         }
         capturedReaders.removeAll()
     }
