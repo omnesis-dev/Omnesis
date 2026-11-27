@@ -97,13 +97,17 @@ final class DataUsageLeaseTests: XCTestCase {
             try? sendExit(path)
         }
         for process in processes {
-            if process.isRunning {
+            let wasRunning = process.isRunning
+            if wasRunning {
                 guard kill(process.processIdentifier, SIGKILL) == 0 || errno == ESRCH else {
                     throw TestFailure.diagnostics("Owned process cleanup refused; readers retained")
                 }
             }
             Self.phase("process-join-enter")
-            process.waitUntilExit()
+            if wasRunning { process.waitUntilExit() }
+            // These exact objects were launched or observed running. Foundation's
+            // termination metadata is their exit receipt once isRunning is false.
+            _ = (status: process.terminationStatus, reason: process.terminationReason)
             Self.phase("process-join-returned")
         }
         try closeCapturedReadersAfterJoin()

@@ -38,7 +38,8 @@ final class RuntimeUsageLeaseTests: XCTestCase {
         guard !readerClosureFailed, !descendantJoins.values.contains(false) else { throw FixtureFailure.busyOwnedChild }
         for parent in launchedParents {
             guard !parent.isRunning else { throw FixtureFailure.busyOwnedChild }
-            parent.waitUntilExit()
+            // Known-launched, already-ended Process: observe Foundation's exit receipt.
+            _ = (status: parent.terminationStatus, reason: parent.terminationReason)
             joinedParents.insert(ObjectIdentifier(parent))
         }
         try retireCapturedReaders()
@@ -420,8 +421,11 @@ final class RuntimeUsageLeaseTests: XCTestCase {
                 XCTFail("Owned fixture stop was refused; exact readers and owner retained")
                 return
             }
+            running.process.waitUntilExit()
         }
-        running.process.waitUntilExit()
+        // stop receives only a successfully launched exact Process; live children
+        // still join above, while already-ended children need no second wait.
+        _ = (status: running.process.terminationStatus, reason: running.process.terminationReason)
         joinedParents.insert(ObjectIdentifier(running.process))
         try? running.input.fileHandleForWriting.close()
         // A tracked descendant can still own the same pipe writers after its parent exits.
