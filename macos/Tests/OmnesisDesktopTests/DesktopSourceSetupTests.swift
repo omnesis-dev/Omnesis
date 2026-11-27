@@ -358,12 +358,90 @@ final class DesktopSourceSetupTests: XCTestCase {
         XCTAssertTrue(fixture.script.operationRequests.isEmpty)
     }
 
-    private func renderSource(_ flow: DesktopSourceFlow, name: String) async throws {
+    func testRenderedSourceFailuresExplainTheReasonBeforeSupportedRecoveryAndCancellation() async throws {
+        let fixture = try fixture { _ in XCTFail("Rendering recovery must not invoke authentication or registration")
+            return "{}"
+        }
+        defer { fixture.close() }
+        let cases: [(String, String, Bool, Bool, [String])] = [
+            ("account", "denied", false, false, ["source-recovery-account"]),
+            (
+                "retry",
+                "temporarily-unavailable",
+                true,
+                false,
+                ["source-recovery-sign-in", "source-recovery-credentials", "source-recovery-account"]
+            ),
+            ("credentials", "denied", true, false, ["source-recovery-credentials", "source-recovery-account"]),
+            ("no-supported-repair", "denied", false, true, []),
+            ("registration", "completed", false, false, ["source-recovery-registration", "source-recovery-account"]),
+        ]
+        let allRepairs = [
+            "source-recovery-sign-in",
+            "source-recovery-credentials",
+            "source-recovery-account",
+            "source-recovery-registration",
+        ]
+        for (name, code, credentials, pinned, repairs) in cases {
+            let descriptor = try basicDescriptor(extra: credentials
+                ? #", "credentials":{"fileKey":"invented-key","required":true,"fields":[{"name":"token","label":"Access key","secret":true}]}"#
+                : "")
+            let flow = DesktopSourceFlow(descriptor: descriptor, api: fixture.api, accountId: pinned ? "fictional-account" : nil)
+            flow.auth = try decode(
+                AuthSnapshot.self,
+                code == "completed"
+                    ? #"{"state":"completed"}"#
+                    : #"{"state":"error","errorDetail":{"code":"\#(code)"}}"#
+            )
+            if code == "completed" {
+                flow.accounts = ["fictional-account"]
+                flow.selectedAccounts = ["fictional-account"]
+            }
+            let reason = "The provider could not finish this step. Review the available recovery actions."
+            flow.error = reason
+            try await renderSource(flow, name: "source-recovery-\(name)") { root in
+                let elements = try DesktopAccessibilityDriver.elements(in: root)
+                let explanation = try DesktopAccessibilityDriver.element("source-setup-error", in: root)
+                XCTAssertTrue(explanation.accessibilityLabel() == reason || explanation.accessibilityTextValue() == reason)
+                let window = try XCTUnwrap(root.window)
+                @MainActor func visibleFrame(_ element: DesktopAccessibilityDriver.Element) -> NSRect {
+                    let frame = element.accessibilityFrame()
+                    XCTAssertTrue([frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite))
+                    XCTAssertGreaterThan(frame.width, 0)
+                    XCTAssertGreaterThan(frame.height, 0)
+                    XCTAssertTrue(window.frame.contains(frame), "Recovery must remain inside its owning window")
+                    return frame
+                }
+                var previous = visibleFrame(explanation)
+                for identifier in allRepairs {
+                    let present = elements.contains { $0.accessibilityIdentifier() == identifier }
+                    XCTAssertEqual(present, repairs.contains(identifier), "Only supported recovery controls may be shown")
+                }
+                for identifier in repairs + ["source-cancel-sign-in", "source-advanced-setup"] {
+                    let control = try DesktopAccessibilityDriver.element(identifier, in: root)
+                    XCTAssertEqual(control.accessibilityRole(), .button)
+                    XCTAssertTrue(control.isAccessibilityEnabled())
+                    let frame = visibleFrame(control)
+                    XCTAssertGreaterThanOrEqual(
+                        previous.minY,
+                        frame.maxY,
+                        "Reason, recovery, cancellation and advanced setup must read in order"
+                    )
+                    previous = frame
+                }
+            }
+        }
+        XCTAssertTrue(fixture.script.operationRequests.isEmpty, "Presentation cannot start, retry or cancel a server operation")
+    }
+
+    private func renderSource(
+        _ flow: DesktopSourceFlow, name: String, validate: ((NSView) throws -> Void)? = nil
+    ) async throws {
         let store = DesktopStore.preview()
         store.api = flow.api
         await flow.prepareSelectedDevice()
         let view = SourceSetupView(flow: flow).environment(store)
-        try await DesktopSnapshotRenderer.render(view, name: name, size: CGSize(width: 680, height: 680))
+        try await DesktopSnapshotRenderer.render(view, name: name, size: CGSize(width: 680, height: 680), validate: validate)
     }
 
     func testCredentialRedirectDefaultUsesAuthenticatedLinkedOriginWhenConfigHasNoPublicAddress() async throws {

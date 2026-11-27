@@ -247,6 +247,8 @@ struct SourceSetupView: View {
     @Environment(\.dismiss) private var dismiss
     @State var flow: DesktopSourceFlow
     var body: some View {
+        let hasSignInRetry = flow.auth?.state == "error" && flow.canRetryAuthentication
+        let hasCredentialReview = flow.auth?.state == "error" && flow.descriptor.credentials != nil
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 Text(flow.descriptor.description).foregroundStyle(DesktopTheme.secondary)
@@ -340,30 +342,48 @@ struct SourceSetupView: View {
                     if let detail = notice.detail { Text(detail).foregroundStyle(DesktopTheme.secondary) }
                 }
                 if let error = flow.error {
-                    Label(error, systemImage: "exclamationmark.circle")
-                        .foregroundStyle(DesktopTheme.ink).textSelection(.enabled)
-                        .padding(14).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(DesktopTheme.raised, in: RoundedRectangle(cornerRadius: 10))
-                    if flow.auth?.state == "error" {
-                        if flow.canRetryAuthentication { Button("Try sign-in again") { Task { await flow.retry() } } }
-                        if flow.descriptor
-                            .credentials != nil { Button("Review account access") { Task { await flow.reviewCredentials() } } }
+                    Label {
+                        Text(error).accessibilityIdentifier("source-setup-error")
+                    } icon: {
+                        Image(systemName: "exclamationmark.circle").accessibilityHidden(true)
                     }
-                    if flow.offersAnotherAccountAfterFailure {
-                        Button("Choose another account") { Task { await flow.authenticateAnotherAccount() } }
+                    .foregroundStyle(DesktopTheme.ink).textSelection(.enabled)
+                    .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(DesktopTheme.raised, in: RoundedRectangle(cornerRadius: 10))
+                    if flow.auth?.state == "error" {
+                        if flow.canRetryAuthentication {
+                            Button("Try sign-in again") { Task { await flow.retry() } }
+                                .buttonStyle(DesktopButtonStyle(primary: !flow.needsDescriptorReview))
+                                .accessibilityIdentifier("source-recovery-sign-in")
+                        }
+                        if flow.descriptor
+                            .credentials != nil {
+                            Button("Review account access") { Task { await flow.reviewCredentials() } }
+                                .buttonStyle(DesktopButtonStyle(primary: !flow.needsDescriptorReview && !hasSignInRetry))
+                                .accessibilityIdentifier("source-recovery-credentials")
+                        }
                     }
                     if flow.offersRegistrationRetry {
                         Button("Try connecting again") { Task { await flow.add()
                             await store.refresh()
                         } }.buttonStyle(DesktopButtonStyle(primary: true))
+                            .accessibilityIdentifier("source-recovery-registration")
+                    }
+                    if flow.offersAnotherAccountAfterFailure {
+                        Button("Choose another account") { Task { await flow.authenticateAnotherAccount() } }
+                            .buttonStyle(DesktopButtonStyle(primary: !flow.needsDescriptorReview && !hasSignInRetry &&
+                                    !hasCredentialReview && !flow.offersRegistrationRetry))
+                            .accessibilityIdentifier("source-recovery-account")
                     }
                 }
                 if flow.needsDescriptorReview {
                     Button("Review updated source settings") { Task { await flow.reviewUpdatedSettings() } }
                         .buttonStyle(DesktopButtonStyle(primary: true)).accessibilityIdentifier("source-review-updated-settings")
                 }
+                if flow.auth != nil, flow.error != nil || flow.auth?.state == "error" { cancelSignIn }
                 if flow.busy { ProgressView("Connecting…") }
                 Button("Open advanced setup") { store.openPortal() }.font(.callout)
+                    .accessibilityIdentifier("source-advanced-setup")
             }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
         }.navigationTitle(flow.descriptor.name).disabled(flow.busy || store.api !== flow.api)
             .onAppear {
@@ -444,7 +464,13 @@ struct SourceSetupView: View {
             if let message = auth.message { Text(message).foregroundStyle(DesktopTheme.secondary) }
             ProgressView("Waiting for confirmation…")
         }
+        if auth.state != "error", flow.error == nil { cancelSignIn }
+    }
+
+    private var cancelSignIn: some View {
         Button("Cancel sign-in") { Task { await flow.cancel() } }
+            .buttonStyle(DesktopButtonStyle())
+            .accessibilityIdentifier("source-cancel-sign-in")
     }
 
     private func binding(_ values: [String: String], key: String, update: @escaping ([String: String]) -> Void) -> Binding<String> {
