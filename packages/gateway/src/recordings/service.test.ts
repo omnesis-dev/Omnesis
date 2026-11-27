@@ -1272,9 +1272,9 @@ describe("RecordingTranscriptionService recognising the owner's voice", () => {
     separator = {
       name: replay.name,
       model: replay.model,
-      separate: async (audio, mimeType) => {
+      separate: async (audio) => {
         await new Promise<void>((resolve) => waiting.push(resolve));
-        return replay.separate(audio, mimeType);
+        return replay.separate(audio);
       },
       group: (vectors, durations) => replay.group(vectors, durations),
       dispose: async () => {},

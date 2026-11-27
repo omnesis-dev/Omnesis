@@ -516,9 +516,9 @@ describe("recordings routes", () => {
     separator = {
       name: voices.name,
       model: voices.model,
-      separate: async (audio, mimeType) => {
+      separate: async (audio) => {
         await new Promise<void>((resolve) => waiting.push(resolve));
-        return voices.separate(audio, mimeType);
+        return voices.separate(audio);
       },
       group: (vectors, durations) => voices.group(vectors, durations),
       dispose: async () => {},
