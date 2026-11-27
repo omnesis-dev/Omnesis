@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { ConfigStore } from "../config-store.js";
+import { InsufficientStorageError } from "../http/errors.js";
 import { StorageRuntime } from "./runtime.js";
 import type { PeriodicTask } from "../scheduler/types.js";
 import type { Scheduler } from "../scheduler/scheduler.js";
@@ -486,4 +487,35 @@ test("a failed capacity measurement is measured again on the next tick, not afte
   await tick(f.tasks.get("storage.capacity.tick")!);
   expect(() => f.runtime.pressure.assertCanGrow()).not.toThrow();
   expect(f.indexer.setStoragePressure.mock.lastCall?.[0]).toBe(false);
+});
+
+test("startup opens after the bound when the first measurement never lands, with writes still refused", async () => {
+  const f = await fixture();
+  footprint.next.push(() => new Promise<void>(() => {}));
+  const warn = vi.spyOn(console, "warn");
+  f.runtime.start();
+  await expect(f.runtime.waitForFirstMeasurement(20)).resolves.toBe(false);
+  let refusal: unknown;
+  try {
+    f.runtime.pressure.assertCanGrow();
+  } catch (error) {
+    refusal = error;
+  }
+  expect(refusal).toBeInstanceOf(InsufficientStorageError);
+  expect((refusal as InsufficientStorageError).status).toBe(507);
+  expect(
+    warn.mock.calls.filter(([line]) => String(line).includes("before storage capacity is known")),
+  ).toHaveLength(1);
+  warn.mockRestore();
+});
+
+test("startup waits for a first measurement that lands within the bound", async () => {
+  const f = await fixture();
+  const walk = deferred<void>();
+  footprint.next.push(() => walk.promise);
+  f.runtime.start();
+  const opened = f.runtime.waitForFirstMeasurement(60_000);
+  walk.resolve();
+  await expect(opened).resolves.toBe(true);
+  expect(() => f.runtime.pressure.assertCanGrow()).not.toThrow();
 });

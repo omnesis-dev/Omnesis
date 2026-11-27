@@ -24,6 +24,14 @@ import type {
 } from "./allocation-reader.js";
 const log = createLogger("gateway:storage");
 const ACCOUNTING_FRESH_MS = 30_000;
+/**
+ * The longest startup waits for the first capacity measurement before opening
+ * anyway. The measurement walks the config dir at about 20 µs per file, so
+ * 50,000 files take about a second; the bound leaves room for ten times that
+ * or a heavily contended startup, while a hung filesystem under the config dir
+ * cannot keep search, the portal and reads unreachable.
+ */
+export const STARTUP_CAPACITY_WAIT_MS = 10_000;
 export interface StorageRuntimeDeps {
   layout: DiskUsageLayout;
   configStore: ConfigStore;
@@ -51,6 +59,7 @@ export class StorageRuntime {
   private accountingAttemptAt = 0;
   private accountingError: string | null = null;
   private disposed = false;
+  private firstMeasurement: Promise<void> = Promise.resolve();
   private closing: Promise<void> | null = null;
   private allocationInFlight: Promise<void> | null = null;
   private allocationAttemptAt = 0;
@@ -119,9 +128,9 @@ export class StorageRuntime {
   /**
    * Schedules the storage jobs and starts the first capacity measurement.
    * Resolves once that measurement has settled: until then capacity is
-   * unverified and every write is refused, so the gateway opens for requests
-   * only after this resolves. A failed measurement settles it too, leaving
-   * growth paused until a later measurement succeeds.
+   * unverified and every write is refused. A failed measurement settles it
+   * too, leaving growth paused until a later measurement succeeds. Startup
+   * waits for it through {@link waitForFirstMeasurement}.
    */
   start(): Promise<void> {
     if (this.disposed) return Promise.resolve();
@@ -183,7 +192,9 @@ export class StorageRuntime {
     this.deps.scheduler.schedule(accounting);
     this.deps.scheduler.schedule(retention);
     if (this.deps.allocations) this.deps.scheduler.schedule(allocations);
-    const measured = this.pressure.refresh().then(() => this.publishPressure());
+    const measured = (this.firstMeasurement = this.pressure
+      .refresh()
+      .then(() => this.publishPressure()));
     this.deps.configStore.onChange((_before, _after, paths) => {
       if (paths.some((path) => path === "/gateway" || path.startsWith("/gateway/"))) {
         this.publishPressure();
@@ -191,6 +202,32 @@ export class StorageRuntime {
       }
     });
     return measured;
+  }
+
+  /**
+   * Waits for the first capacity measurement for at most `boundMs`, so the
+   * gateway can open with writes admitted. True when it settled in time; on
+   * timeout the gateway opens anyway, writes stay refused until a measurement
+   * succeeds, and that is logged once.
+   */
+  async waitForFirstMeasurement(boundMs = STARTUP_CAPACITY_WAIT_MS): Promise<boolean> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), boundMs);
+    });
+    try {
+      const settled = await Promise.race([
+        this.firstMeasurement.then(() => true as const),
+        timedOut,
+      ]);
+      if (!settled)
+        log.warn(
+          `Opening before storage capacity is known: the first measurement is still running after ${boundMs} ms. Writes are refused until it completes.`,
+        );
+      return settled;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /** An explicit portal refresh shares ongoing accounting rather than starting a second scan. */
