@@ -8,6 +8,14 @@ import Foundation
 import XCTest
 
 final class RuntimeUsageLeaseTests: XCTestCase {
+    private static let retentionLock = NSLock()
+    private static var retainedFixtures: [RuntimeUsageLeaseTests] = []
+    private var capturedReaders: [(reader: FileHandle, capture: Capture, parent: Process?)] = []
+    private var launchedParents: [Process] = []
+    private var joinedParents = Set<ObjectIdentifier>()
+    private var descendantJoins: [ObjectIdentifier: Bool] = [:]
+    private var trackedChildren: [ObjectIdentifier: CatalogFixtureChild] = [:]
+    private var readerClosureFailed = false
     private var home: URL!
     private var startedEpochs = Set<String>()
     private var cleanupSockets: [String] = []
@@ -23,6 +31,17 @@ final class RuntimeUsageLeaseTests: XCTestCase {
     }
 
     override func tearDownWithError() throws {
+        var retired = false
+        defer {
+            if !retired { Self.retentionLock.withLock { Self.retainedFixtures.append(self) } }
+        }
+        guard !readerClosureFailed, !descendantJoins.values.contains(false) else { throw FixtureFailure.busyOwnedChild }
+        for parent in launchedParents {
+            guard !parent.isRunning else { throw FixtureFailure.busyOwnedChild }
+            parent.waitUntilExit()
+            joinedParents.insert(ObjectIdentifier(parent))
+        }
+        try retireCapturedReaders()
         for path in cleanupSockets {
             _ = sendExit(path)
         }
@@ -47,6 +66,49 @@ final class RuntimeUsageLeaseTests: XCTestCase {
             try? FileManager.default.removeItem(atPath: path)
         }
         try FileManager.default.removeItem(at: home)
+        launchedParents.removeAll()
+        trackedChildren.removeAll()
+        retired = true
+    }
+
+    func testOwnedRuntimePipeFinalBytesAndEOFDisarmBeforeReaderRetirement() async throws {
+        let pipe = Pipe(), capture = Capture()
+        installCapture(capture, on: pipe.fileHandleForReading)
+        defer { try? pipe.fileHandleForWriting.close() }
+        let text = String(repeating: "x", count: 12000) + "final-ready"
+        try pipe.fileHandleForWriting.write(contentsOf: Data(text.utf8))
+        try pipe.fileHandleForWriting.close()
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while !capture.reachedEOF, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        guard capture.reachedEOF, ContinuousClock.now < deadline else {
+            XCTFail("The exact owned pipe must observe final bytes and EOF before its deadline")
+            return
+        }
+        XCTAssertNil(pipe.fileHandleForReading.readabilityHandler)
+        XCTAssertEqual(capture.text, String(text.suffix(8192)))
+        XCTAssertTrue(capture.ready)
+        XCTAssertFalse(capture.readerClosed)
+        try retireCapturedReaders()
+        XCTAssertTrue(capture.readerClosed)
+        // Repeating owner retirement has no entries to close or descriptors to inspect.
+        try retireCapturedReaders()
+        XCTAssertEqual(capture.text, String(text.suffix(8192)))
+    }
+
+    func testFailedRuntimeLaunchRetainsExactReadersUntilKnownNoChildRetirement() throws {
+        XCTAssertThrowsError(try start(runtime: home.appendingPathComponent("missing-runtime"), arguments: []))
+        XCTAssertTrue(launchedParents.isEmpty)
+        XCTAssertEqual(capturedReaders.count, 2)
+        let retained = capturedReaders
+        XCTAssertTrue(retained.allSatisfy { !$0.capture.readerClosed })
+        try retireCapturedReaders()
+        XCTAssertTrue(capturedReaders.isEmpty)
+        for entry in retained {
+            XCTAssertNil(entry.reader.readabilityHandler)
+            XCTAssertTrue(entry.capture.readerClosed)
+        }
     }
 
     private func builtTool() throws -> URL {
@@ -142,11 +204,34 @@ final class RuntimeUsageLeaseTests: XCTestCase {
         private let lock = NSLock()
         private var value = ""
         private var ended = false
-        func append(_ data: Data) {
+        private var stopped = false
+        private var closed = false
+
+        func receive(_ reader: FileHandle) {
             lock.lock()
             defer { lock.unlock() }
-            if data.isEmpty { ended = true }
+            guard !stopped, !ended else { return }
+            let data = reader.availableData
+            if data.isEmpty {
+                reader.readabilityHandler = nil
+                ended = true
+                return
+            }
             value = String((value + (String(data: data, encoding: .utf8) ?? "")).suffix(8192))
+        }
+
+        func close(_ reader: FileHandle) throws {
+            reader.readabilityHandler = nil
+            lock.lock()
+            defer { lock.unlock() }
+            stopped = true
+            guard !closed else { return }
+            try reader.close()
+            closed = true
+        }
+
+        var readerClosed: Bool {
+            lock.withLock { closed }
         }
 
         var text: String {
@@ -190,10 +275,15 @@ final class RuntimeUsageLeaseTests: XCTestCase {
         process.standardInput = input
         process.standardOutput = output
         process.standardError = errors
-        output.fileHandleForReading.readabilityHandler = { capture.append($0.availableData) }
-        errors.fileHandleForReading.readabilityHandler = { diagnostics.append($0.availableData) }
+        installCapture(capture, on: output.fileHandleForReading, parent: process)
+        installCapture(diagnostics, on: errors.fileHandleForReading, parent: process)
         let bootstrapDeadline = FixtureReadiness.bootstrapDeadline()
-        try process.run()
+        do { try process.run() }
+        catch {
+            if process.isRunning { launchedParents.append(process) }
+            throw error
+        }
+        launchedParents.append(process)
         startedEpochs.insert(runtime.lastPathComponent)
         return Running(
             process: process,
@@ -302,15 +392,46 @@ final class RuntimeUsageLeaseTests: XCTestCase {
         }
     }
 
-    private func stop(_ running: Running) {
-        running.output.fileHandleForReading.readabilityHandler = nil
-        running.errors.fileHandleForReading.readabilityHandler = nil
-        if running.process.isRunning { kill(running.process.processIdentifier, SIGKILL)
-            running.process.waitUntilExit()
+    private func installCapture(_ capture: Capture, on reader: FileHandle, parent: Process? = nil) {
+        capturedReaders.append((reader, capture, parent))
+        reader.readabilityHandler = { capture.receive($0) }
+    }
+
+    private func canRetire(_ parent: Process?) -> Bool {
+        guard let parent else { return true }
+        let id = ObjectIdentifier(parent)
+        return !parent.isRunning && descendantJoins[id] != false &&
+            (!launchedParents.contains(where: { $0 === parent }) || joinedParents.contains(id))
+    }
+
+    private func retireCapturedReaders(for parent: Process? = nil) throws {
+        let selected = capturedReaders.filter { parent == nil || $0.parent === parent }
+        guard selected.allSatisfy({ canRetire($0.parent) }) else { throw FixtureFailure.busyOwnedChild }
+        for entry in selected {
+            try entry.capture.close(entry.reader)
         }
+        capturedReaders.removeAll { parent == nil || $0.parent === parent }
+    }
+
+    private func stop(_ running: Running) {
+        if running.process.isRunning {
+            guard kill(running.process.processIdentifier, SIGKILL) == 0 || errno == ESRCH else {
+                readerClosureFailed = true
+                XCTFail("Owned fixture stop was refused; exact readers and owner retained")
+                return
+            }
+        }
+        running.process.waitUntilExit()
+        joinedParents.insert(ObjectIdentifier(running.process))
         try? running.input.fileHandleForWriting.close()
-        try? running.output.fileHandleForReading.close()
-        try? running.errors.fileHandleForReading.close()
+        // A tracked descendant can still own the same pipe writers after its parent exits.
+        // Existing async child teardown must confirm that cohort before reader retirement.
+        guard canRetire(running.process) else { return }
+        do { try retireCapturedReaders(for: running.process) }
+        catch {
+            readerClosureFailed = true
+            XCTFail("Owned reader closure is unconfirmed; exact fixture retained")
+        }
     }
 
     private func probe(from runtime: URL, target: URL) async throws -> Int32 {
@@ -465,13 +586,19 @@ final class RuntimeUsageLeaseTests: XCTestCase {
     }
 
     private func trackForkChild(_ parent: Running, runtime: URL, receipt: URL) throws -> CatalogFixtureChild {
+        let parentID = ObjectIdentifier(parent.process)
+        descendantJoins[parentID] = false
         let child = try CatalogFixtureChild(
             parent: parent.process, receipt: receipt,
             images: [runtime.appendingPathComponent("runtime-exec").path, runtime.appendingPathComponent("node").path],
             node: runtime.appendingPathComponent("node"),
             joined: { parent.diagnostics.text.contains("fixture-stage:fork-child-joined") }
         )
-        addTeardownBlock { try await child.cleanup(sendExit: {}) }
+        trackedChildren[parentID] = child
+        addTeardownBlock {
+            try await child.cleanup(sendExit: {})
+            self.descendantJoins[parentID] = true
+        }
         return child
     }
 
