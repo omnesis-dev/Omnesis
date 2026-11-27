@@ -102,6 +102,7 @@ final class DesktopStatusMenu: NSObject, NSMenuDelegate {
 
     private func add(_ title: String, _ command: Command) {
         let item = NSMenuItem(title: title, action: #selector(invoke(_:)), keyEquivalent: "")
+        item.setAccessibilityLabel(title)
         item.target = self
         item.tag = command.rawValue
         commands[command] = item

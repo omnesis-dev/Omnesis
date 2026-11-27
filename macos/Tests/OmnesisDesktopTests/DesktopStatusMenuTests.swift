@@ -19,7 +19,7 @@ private final class StatusMenuMetadataProtocol: URLProtocol, @unchecked Sendable
     override func startLoading() {
         guard let url = request.url, url.host == "status.example.test", request.httpMethod == "GET",
               request.value(forHTTPHeaderField: "Authorization") == "Bearer invented-menu-token",
-              ["/admin/sources", "/admin/devices", "/admin/sources/descriptors"].contains(url.path),
+              ["/admin/sources", "/admin/devices", "/admin/source-descriptors"].contains(url.path),
               let response = HTTPURLResponse(
                   url: url,
                   statusCode: 200,
@@ -94,6 +94,21 @@ final class DesktopStatusMenuTests: XCTestCase {
         XCTAssertNil(item.menu)
         controller.install()
         XCTAssertNil(controller.statusItem, "An invalidated owner cannot recreate its status item")
+    }
+
+    func testNativeCommandTitlesAndAccessibilityLabelsMatch() throws {
+        let controller = DesktopStatusMenu(store: .preview(), actions: Probe().actions)
+        controller.install()
+        defer { controller.invalidate() }
+        for title in ["Ask Omnesis", "Search", "Sources", "Review setup", "Open Omnesis", "Settings…", "Quit Omnesis"] {
+            let matches = controller.menu.items.filter { $0.title == title }
+            XCTAssertEqual(matches.count, 1)
+            let item = try XCTUnwrap(matches.first)
+            XCTAssertEqual(item.title, title)
+            XCTAssertEqual(item.accessibilityLabel(), title)
+            XCTAssertNotNil(item.action)
+            XCTAssertTrue(item.target === controller)
+        }
     }
 
     func testMenuOpeningProjectsCurrentReadinessWithoutAWindowOrAnOSGrant() async throws {

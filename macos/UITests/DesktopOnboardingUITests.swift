@@ -82,8 +82,12 @@ final class DesktopOnboardingUITests: XCTestCase {
         let settings = app.windows.containing(.any, identifier: "settings-prerequisite-startup")
         for _ in 0 ..< 2 {
             status.click()
-            let action = app.menuItems["Settings…"]
-            guard action.waitForExistence(timeout: 5) else { return XCTFail("The native menu must offer Settings") }
+            let actions = status.menuItems.matching(identifier: "Settings…")
+            let uniqueAction = XCTNSPredicateExpectation(predicate: NSPredicate(format: "count == 1"), object: actions)
+            guard XCTWaiter.wait(for: [uniqueAction], timeout: 5) == .completed else {
+                return XCTFail("The owned status menu must offer exactly one Settings action")
+            }
+            let action = actions.element
             XCTAssertEqual(action.label, "Settings…")
             XCTAssertTrue(action.isEnabled)
             XCTAssertTrue(action.isHittable)
