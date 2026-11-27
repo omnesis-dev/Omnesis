@@ -24,6 +24,7 @@ const api = vi.hoisted(() => ({
   getSelfVoice: vi.fn(),
   listRecordings: vi.fn(),
   removeRecordingParticipant: vi.fn(),
+  setRecordingConversationTitle: vi.fn(),
   setRecordingSpeaker: vi.fn(),
   setRecordingTitle: vi.fn(),
 }));
@@ -523,6 +524,77 @@ describe("Recordings page", () => {
       expect(host.querySelector("h1")?.textContent).toBe("Planning the move");
       expect(host.querySelector(".recording-suggestions")).toBeNull();
       expect(host.querySelector(".privacy-banner.error")).toBeNull();
+    });
+  });
+
+  describe("an all-day recording split into conversations", () => {
+    const conversation = (n: number, overrides: Record<string, unknown> = {}) => ({
+      n,
+      title: `Conversation ${n}`,
+      titled: false,
+      startedAt: n === 1 ? START : "2026-03-02T09:03:00.000Z",
+      endedAt: n === 1 ? "2026-03-02T09:00:07.000Z" : "2026-03-02T09:03:14.000Z",
+      documentId: `doc-${n}`,
+      ...overrides,
+    });
+    const split = (overrides: Record<string, unknown> = {}) =>
+      recording({
+        state: "recording",
+        documentId: "doc-1",
+        conversations: [conversation(1), conversation(2)],
+        ...overrides,
+      });
+    const section = (n: number) =>
+      host.querySelector(`.recording-conversation[data-conversation="${n}"]`) as HTMLElement;
+
+    beforeEach(() => {
+      api.getRecordingChunks.mockResolvedValue({ recording: split(), chunks: CHUNKS });
+      api.getRecordingSpeakers.mockResolvedValue({
+        speakers: [
+          speaker(1, { conversation: 1 }),
+          speaker(2, { conversation: 1 }),
+          speaker(3, { conversation: 2 }),
+        ],
+      });
+    });
+
+    test("each conversation has its own section, transcript and speakers", async () => {
+      await mount({ recordingId: ID });
+      expect([...host.querySelectorAll(".recording-conversation h2")].map((h) => h.textContent)).toEqual([
+        "Conversation 1",
+        "Conversation 2",
+      ]);
+      expect([...section(1).querySelectorAll(".recording-speaker")].map((r) => r.getAttribute("data-speaker"))).toEqual(["1", "2"]);
+      expect([...section(2).querySelectorAll(".recording-speaker")].map((r) => r.getAttribute("data-speaker"))).toEqual(["3"]);
+      expect(section(2).querySelector("a")?.getAttribute("href")).toBe("/portal/doc/doc-2");
+      expect(section(1).querySelector(".recording-conversation-span")?.textContent).toContain("· 7 s");
+      // No transcript for the whole recording: each conversation has its own.
+      expect(host.querySelector(".recording-detail > .recording-actions a")).toBeNull();
+      expect(text()).toContain("The conversation going on now is written once it has been quiet for a while.");
+      expect(api.getRecordingSuggestions).toHaveBeenCalledWith(ID, 1);
+      expect(api.getRecordingSuggestions).toHaveBeenCalledWith(ID, 2);
+    });
+
+    test("a conversation takes the calendar's title for its own time", async () => {
+      const title = { key: "c2:title:doc-9", kind: "title", source: "calendar", title: "Facilities sync", documentId: "doc-9" };
+      api.getRecordingSuggestions.mockImplementation(async (_id: string, n?: number) => ({
+        suggestions: n === 2 ? [title] : [],
+      }));
+      api.setRecordingConversationTitle.mockResolvedValue(
+        split({ conversations: [conversation(1), conversation(2, { title: "Facilities sync", titled: true })] }),
+      );
+      await mount({ recordingId: ID });
+      expect(section(1).querySelector(".recording-title-suggestion")).toBeNull();
+      await click(within(section(2), "Use this title"));
+      expect(api.setRecordingConversationTitle).toHaveBeenCalledWith(ID, 2, "Facilities sync");
+      expect(section(2).querySelector("h2")?.textContent).toBe("Facilities sync");
+      expect(section(2).querySelector(".recording-title-suggestion")).toBeNull();
+    });
+
+    test("the list says how many conversations a recording became", async () => {
+      api.listRecordings.mockResolvedValue({ recordings: [split()] });
+      await mount();
+      expect(text()).toContain("2 conversations");
     });
   });
 });

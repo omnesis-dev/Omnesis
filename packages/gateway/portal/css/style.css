@@ -6901,8 +6901,13 @@ p.devices-pair-expiry {
 .recording-speaker-who.is-unnamed,
 .recording-speaker-talk,
 .recording-speaker-hint,
-.recording-chunk-until {
+.recording-chunk-until,
+.recording-conversation-span {
   color: var(--text-muted);
+}
+.recording-conversation-span {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .recording-speaker-samples {

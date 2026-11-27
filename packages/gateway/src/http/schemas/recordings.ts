@@ -125,6 +125,11 @@ export const setRecordingTitleBody = z
   .object({ title: z.string().trim().max(200).nullable() })
   .strict();
 
+// GET /recordings/:id/suggestions?conversation=n — one conversation of a split session.
+export const recordingSuggestionsQuery = z
+  .object({ conversation: recordingSpeakerNumber.optional() })
+  .strict();
+
 // POST /recordings/:id/suggestions/dismiss
 export const dismissRecordingSuggestionBody = z
   .object({ key: z.string().min(1).max(300) })

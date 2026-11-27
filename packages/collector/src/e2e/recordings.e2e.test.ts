@@ -7,7 +7,9 @@
  *
  * A phone opens a session, uploads numbered chunks while it records (in any
  * order, retried, some silent), and finishes it; the gateway transcribes the
- * chunks as they arrive and writes one searchable document per session. The
+ * chunks as they arrive and writes one searchable document per session — or,
+ * for an all-day session, one per conversation as soon as a long silence ends
+ * it. The
  * synthetic transcriber decodes each chunk's bytes as UTF-8, so no Whisper
  * model is needed; the replay voice separator reads the same scripted chunks
  * to tell speakers apart. The routes exist only in experimental mode. With
@@ -401,6 +403,116 @@ describe("recorded conversation speakers in experimental mode (E2E)", () => {
     expect(
       (await harness.gatewayJson<{ profile: unknown }>("/recordings/self-voice")).profile,
     ).toBeNull();
+  }, 90_000);
+});
+
+describe("an all-day recording split into conversations (E2E)", () => {
+  let harness: SyntheticE2EHarness;
+
+  beforeAll(async () => {
+    harness = new SyntheticE2EHarness({
+      gatewayMode: "experimental",
+      transcriberBackend: "replay",
+      extraGatewayConfig: { inference: { recordings: { speakers: "replay" } } },
+    });
+    await harness.start();
+    await harness.gatewayJson("/admin/lab/recordings", {
+      method: "PUT",
+      body: JSON.stringify({ enabled: true }),
+    });
+  }, 60_000);
+
+  afterAll(async () => {
+    await harness.destroy();
+  });
+
+  const script = (lines: Array<[number, number, string, string]>) =>
+    JSON.stringify({
+      segments: lines.map(([startMs, endMs, voice, text]) => ({ startMs, endMs, voice, text })),
+    });
+  /** The recording documents a word is found in. */
+  async function hits(word: string): Promise<string[]> {
+    const search = await harness.gatewayJson<{
+      results?: Array<{ id: string; source_id: string }>;
+    }>(`/documents/search?q=${encodeURIComponent(word)}&limit=10`);
+    return (search.results ?? [])
+      .filter((r) => r.source_id === "omnesis-recordings")
+      .map((r) => r.id);
+  }
+
+  test("a conversation is searchable with its speakers before the day's recording ends", async () => {
+    const id = randomUUID();
+    const start = await harness.gatewayFetch("/recordings", {
+      method: "POST",
+      body: JSON.stringify({ id, origin: "ambient", startedAt: START, language: "en-GB" }),
+    });
+    expect(start.status).toBe(201);
+    await putChunk(
+      harness,
+      id,
+      0,
+      script([
+        [0, 3_000, "guest", "The aquarium tickets are on the desk."],
+        [4_000, 6_000, "owner", "Thanks, I will pick them up."],
+      ]),
+    );
+    await putChunk(harness, id, 1, null);
+    await putChunk(harness, id, 2, null);
+    await putChunk(
+      harness,
+      id,
+      3,
+      script([[0, 4_000, "courier", "Parcel for the harbour office."]]),
+    );
+
+    // Two minutes of silence closed the first conversation while the
+    // recording goes on: written, searchable, its speakers told apart.
+    await vi.waitFor(
+      async () => {
+        expect(await hits("aquarium")).toHaveLength(1);
+      },
+      { timeout: 20_000, interval: 250 },
+    );
+    expect(await harness.gatewayJson<RecordingStatus>(`/recordings/${id}`)).toMatchObject({
+      state: "recording",
+    });
+    const { speakers } = await harness.gatewayJson<{
+      speakers: Array<{ speaker: number; conversation: number | null }>;
+    }>(`/recordings/${id}/speakers`);
+    expect(speakers.map((s) => [s.speaker, s.conversation])).toEqual([
+      [1, 1],
+      [2, 1],
+    ]);
+    expect(await hits("harbour")).toEqual([]);
+
+    const finished = await harness.gatewayFetch(`/recordings/${id}/finish`, {
+      method: "POST",
+      body: JSON.stringify({ chunkCount: 4, endedAt: "2026-03-02T09:04:00.000Z" }),
+    });
+    expect(finished.status).toBe(200);
+    await vi.waitFor(
+      async () => {
+        expect(await harness.gatewayJson<RecordingStatus>(`/recordings/${id}`)).toMatchObject({
+          state: "done",
+        });
+        expect(await hits("harbour")).toHaveLength(1);
+      },
+      { timeout: 20_000, interval: 250 },
+    );
+    const [second] = await hits("harbour");
+    const { content } = await harness.gatewayJson<{ content: string }>(`/documents/${second}`);
+    expect(content).toContain("[00:00:00] Speaker 3: Parcel for the harbour office.");
+    expect(content).not.toContain("aquarium");
+
+    const deleted = await harness.gatewayFetch(`/recordings/${id}`, { method: "DELETE" });
+    expect(deleted.status).toBe(204);
+    await vi.waitFor(
+      async () => {
+        expect(await hits("aquarium")).toEqual([]);
+        expect(await hits("harbour")).toEqual([]);
+      },
+      { timeout: 20_000, interval: 250 },
+    );
   }, 90_000);
 });
 

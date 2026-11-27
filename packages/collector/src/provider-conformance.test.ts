@@ -223,6 +223,12 @@ const current: Record<string, unknown> = {
     lastSnapshotAt: timestamp,
     snapshot: { ids: { documents: ["3", "7", "9"] } },
   },
+  "omatel-calls": { render: 1, groups: { "2026-01-02": "0a1b2c3d4e5f6a7b" } },
+  "omatel-messages": {
+    render: 1,
+    groups: { "+12025550141:2026-01-02": "0a1b2c3d4e5f6a7b" },
+    dirty: true,
+  },
   plaid: { phase: "transactions", transactionsCursor: "page-2", lastSnapshotDate: "2026-01-02" },
   "plaud-recordings": {
     known: { "rec-1": "0a1b2c3d4e5f6a7b" },
@@ -356,6 +362,9 @@ const incompatible: Record<string, unknown> = {
   "paperless-documents": { phase: "snapshot", watermark: timestamp, pending: [7, 3] },
   // A presence ledger without the sweep it belongs to would vouch for a stale listing.
   "plaud-recordings": { known: {}, snapshot: { ids: { recordings: ["rec-1"] } } },
+  // A fingerprint that is not a string cannot be compared with a rendered group.
+  "omatel-calls": { render: 1, groups: { "2026-01-02": 7 } },
+  "omatel-messages": { render: 1, groups: { "+12025550141:2026-01-02": 7 } },
 };
 
 function options(id: string, version?: number): SourceConformanceOptions {

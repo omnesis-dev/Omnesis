@@ -249,6 +249,45 @@ describe("recordings routes", () => {
     expect((await startRecording(randomUUID(), { origin: "always" })).status).toBe(400);
   });
 
+  test("an all-day session is written conversation by conversation while it goes on", async () => {
+    const id = randomUUID();
+    await startRecording(id, { origin: "ambient" });
+    await request("PUT", `/recordings/${id}/chunks/0`, chunkForm(0, "Coffee before the stand-up?"));
+    await request("PUT", `/recordings/${id}/chunks/1`, chunkForm(1, null));
+    await request("PUT", `/recordings/${id}/chunks/2`, chunkForm(2, null));
+
+    await vi.waitFor(() => {
+      expect(documentContent(id)).toContain("Coffee before the stand-up?");
+    });
+    const detail = await (await request("GET", `/recordings/${id}/chunks`)).json();
+    expect(detail.recording).toMatchObject({
+      state: "recording",
+      conversations: [
+        expect.objectContaining({ n: 1, titled: false, documentId: expect.any(String) }),
+      ],
+    });
+    expect(detail.recording.documentId).toBe(detail.recording.conversations[0].documentId);
+
+    const titled = await request("PUT", `/recordings/${id}/conversations/1/title`, {
+      title: "Coffee",
+    });
+    expect(titled.status).toBe(200);
+    expect((await titled.json()).conversations[0]).toMatchObject({ title: "Coffee", titled: true });
+    await vi.waitFor(() => {
+      expect(documentContent(id)).toContain("# Coffee");
+    });
+    expect(
+      (await request("PUT", `/recordings/${id}/conversations/9/title`, { title: "x" })).status,
+    ).toBe(404);
+    expect(
+      (await request("PUT", `/recordings/${id}/conversations/0/title`, { title: "x" })).status,
+    ).toBe(404);
+
+    expect((await request("GET", `/recordings/${id}/suggestions?conversation=1`)).status).toBe(200);
+    expect((await request("GET", `/recordings/${id}/suggestions?conversation=9`)).status).toBe(404);
+    expect((await request("GET", `/recordings/${id}/suggestions?conversation=x`)).status).toBe(400);
+  });
+
   test("a session's speakers are listed, named, and their names written into the document", async () => {
     const id = randomUUID();
     await startRecording(id);

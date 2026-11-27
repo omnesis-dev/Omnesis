@@ -553,6 +553,10 @@ import {
   type RecordingChunkSettling,
   markRecordingSessionProjected,
   assignRecordingVoices,
+  closeRecordingConversations,
+  setRecordingConversationTitle,
+  markRecordingConversationProjected,
+  type ClosedRecordingConversation,
   setRecordingSpeaker,
   setRecordingVoiceProfile,
   deleteRecordingVoiceProfile,
@@ -2141,6 +2145,24 @@ export const writerHandlers = {
   "recordings.setVoiceProfile": (db: Db, profile: RecordingVoiceProfile) =>
     setRecordingVoiceProfile(db, profile),
   "recordings.deleteVoiceProfile": (db: Db): boolean => deleteRecordingVoiceProfile(db),
+  "recordings.closeConversations": (
+    db: Db,
+    sessionId: string,
+    spans: ClosedRecordingConversation[],
+    closedAt: string,
+  ): number => closeRecordingConversations(db, sessionId, spans, closedAt),
+  "recordings.setConversationTitle": (
+    db: Db,
+    sessionId: string,
+    n: number,
+    title: string | null,
+  ): boolean => setRecordingConversationTitle(db, sessionId, n, title),
+  "recordings.markConversationProjected": (
+    db: Db,
+    sessionId: string,
+    n: number,
+    contentHash: string | null,
+  ) => markRecordingConversationProjected(db, sessionId, n, contentHash),
   "recordings.setSpeaker": (
     db: Db,
     sessionId: string,

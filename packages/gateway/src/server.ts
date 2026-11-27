@@ -101,7 +101,10 @@ import { mountTranscriptionVocabularyRoutes } from "./http/routes/transcription-
 import { mountVoiceNoteRoutes } from "./http/routes/voice-notes.js";
 import { VoiceNoteService, pendingVoiceNoteIds } from "./voice-notes/index.js";
 import { mountRecordingRoutes } from "./http/routes/recordings.js";
-import { RecordingTranscriptionService } from "./recordings/index.js";
+import {
+  DEFAULT_CONVERSATION_GAP_SECONDS,
+  RecordingTranscriptionService,
+} from "./recordings/index.js";
 import { calendarEventsFrom } from "./recordings/calendar.js";
 import { TemporalQueryService } from "./enrichment/temporal/temporal-query-service.js";
 import {
@@ -2340,6 +2343,9 @@ export function createServer(
       keepAudioDays: () => opts.configStore?.get().inference?.recordings?.keepAudioDays ?? 0,
       // Read on every pass too: turning it off deletes the enrolled voice.
       selfVoice: () => opts.configStore?.get().inference?.recordings?.selfVoice ?? "off",
+      conversationGapMs: () =>
+        (opts.configStore?.get().inference?.recordings?.conversationGapSeconds ??
+          DEFAULT_CONVERSATION_GAP_SECONDS) * 1000,
       // Suggestions read the owner's calendars through the same time index
       // the portal's Calendar and the agent read.
       calendarEvents: calendarEventsFrom(

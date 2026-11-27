@@ -3801,13 +3801,15 @@ const dictationSettings = z
 
 // Recorded conversations (experimental). `speakers` tells the voices of one
 // recording apart so the owner can say who each speaker is: `local` runs
-// sherpa-onnx on the gateway (its two models, about 32 MB, are downloaded
+// sherpa-onnx on the gateway (its two models, about 46 MB, are downloaded
 // into the models directory on first use), `replay` is the test double.
 // `keepAudioDays` keeps each chunk's audio that long after it is transcribed,
 // for the portal to play; 0, the default, deletes it at once.
 // `selfVoice: "match"` recognises the owner's enrolled voice among each
 // recording's speakers and maps that speaker as the owner; `off`, the
 // default, also deletes the enrolled voice.
+// `conversationGapSeconds` splits an all-day session into conversations at
+// silences that long, each written as soon as it ends; 0 never splits.
 const recordingsSettings = z
   .object({
     speakers: z
@@ -3829,6 +3831,15 @@ const recordingsSettings = z
       .max(365)
       .describe(
         "Days the gateway keeps a recorded conversation's audio after each piece is transcribed (experimental), so the owner can listen to it in the portal. Default 0: the audio is deleted as soon as its transcript is written. Lowering it deletes what is now older at once; deleting a recording deletes its audio.",
+      )
+      .optional(),
+    conversationGapSeconds: z
+      .number()
+      .int()
+      .min(0)
+      .max(3600)
+      .describe(
+        "Seconds without speech after which the gateway closes a conversation of an all-day recording (experimental) and writes it, with its speakers, while the recording goes on. Recordings the owner starts by hand are never split. Default 90; 0 keeps each all-day recording as one document.",
       )
       .optional(),
   })
