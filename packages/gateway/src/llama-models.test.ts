@@ -40,7 +40,7 @@ async function freshModule() {
 
 beforeEach(() => {
   llama.loadModel.mockReset();
-  llama.loadModel.mockImplementation(async () => fakeModel());
+  llama.loadModel.mockImplementation(() => Promise.resolve(fakeModel()));
   warn.mockReset();
 });
 
