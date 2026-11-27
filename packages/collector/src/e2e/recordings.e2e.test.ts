@@ -12,7 +12,9 @@
  * it. The
  * synthetic transcriber decodes each chunk's bytes as UTF-8, so no Whisper
  * model is needed; the replay voice separator reads the same scripted chunks
- * to tell speakers apart. The routes exist only in experimental mode.
+ * to tell speakers apart. The routes exist only in experimental mode. With
+ * the owner's voice enrolled from a scripted read-aloud clip, the replay
+ * separator's vector for that voice is recognised in later recordings.
  */
 
 import "./synth-env.js";
@@ -182,7 +184,9 @@ describe("recorded conversation speakers in experimental mode (E2E)", () => {
     harness = new SyntheticE2EHarness({
       gatewayMode: "experimental",
       transcriberBackend: "replay",
-      extraGatewayConfig: { inference: { recordings: { speakers: "replay" } } },
+      extraGatewayConfig: {
+        inference: { recordings: { speakers: "replay", selfVoice: "match" } },
+      },
     });
     await harness.start();
     // Experimental mode alone takes no recording: Recordings is its own Lab opt-in.
@@ -316,6 +320,89 @@ describe("recorded conversation speakers in experimental mode (E2E)", () => {
       },
       { timeout: 40_000, interval: 500 },
     );
+  }, 90_000);
+
+  test("the owner's enrolled voice is named in a later recording with no tap", async () => {
+    // A read-aloud clip: half a minute of the owner alone, in eight-second windows.
+    const segments = Array.from({ length: 4 }, (_, i) => ({
+      startMs: i * 8_000,
+      endMs: (i + 1) * 8_000,
+      voice: "owner",
+      text: "",
+    }));
+    const form = new FormData();
+    form.set(
+      "audio",
+      new Blob([new TextEncoder().encode(JSON.stringify({ segments }))], { type: "audio/webm" }),
+      "voice.webm",
+    );
+    const encoded = new Response(form);
+    const enrolled = await harness.gatewayFetch("/recordings/self-voice", {
+      method: "PUT",
+      headers: { "Content-Type": encoded.headers.get("content-type")! },
+      body: await encoded.arrayBuffer(),
+    });
+    expect(enrolled.status).toBe(200);
+    expect(await enrolled.json()).toMatchObject({
+      setting: "match",
+      profile: { speechMs: 32_000, current: true },
+    });
+
+    const id = randomUUID();
+    await harness.gatewayFetch("/recordings", {
+      method: "POST",
+      body: JSON.stringify({ id, title: "Budget review", startedAt: START, language: "en-GB" }),
+    });
+    const script = JSON.stringify({
+      segments: [
+        { startMs: 0, endMs: 3_000, voice: "guest", text: "The forecast needs another pass." },
+        { startMs: 4_000, endMs: 6_000, voice: "owner", text: "I will revise the totals." },
+      ],
+    });
+    expect((await putChunk(harness, id, 0, script)).status).toBe(200);
+    await harness.gatewayFetch(`/recordings/${id}/finish`, {
+      method: "POST",
+      body: JSON.stringify({ chunkCount: 1, endedAt: "2026-03-02T09:01:00.000Z" }),
+    });
+    await vi.waitFor(
+      async () => {
+        expect(await harness.gatewayJson<RecordingStatus>(`/recordings/${id}`)).toMatchObject({
+          state: "done",
+        });
+      },
+      { timeout: 20_000, interval: 250 },
+    );
+    const { speakers } = await harness.gatewayJson<{
+      speakers: Array<{ speaker: number; isSelf: boolean; selfMatched: boolean }>;
+    }>(`/recordings/${id}/speakers`);
+    expect(speakers.map((s) => [s.speaker, s.isSelf, s.selfMatched])).toEqual([
+      [1, false, false],
+      [2, true, true],
+    ]);
+    await vi.waitFor(
+      async () => {
+        const search = await harness.gatewayJson<{
+          results?: Array<{ id: string; source_id: string }>;
+        }>(`/documents/search?q=${encodeURIComponent("forecast")}&limit=10`);
+        const hit = (search.results ?? []).find((r) => r.source_id === "omnesis-recordings")!;
+        const { content } = await harness.gatewayJson<{ content: string }>(`/documents/${hit.id}`);
+        expect(content).toContain("You: I will revise the totals.");
+      },
+      { timeout: 40_000, interval: 500 },
+    );
+
+    // Undone by the owner, it stays undone; the voice can then be deleted.
+    const cleared = await harness.gatewayFetch(`/recordings/${id}/speakers/2`, {
+      method: "PUT",
+      body: JSON.stringify({ clear: true }),
+    });
+    expect(cleared.status).toBe(200);
+    expect(
+      (await harness.gatewayFetch("/recordings/self-voice", { method: "DELETE" })).status,
+    ).toBe(204);
+    expect(
+      (await harness.gatewayJson<{ profile: unknown }>("/recordings/self-voice")).profile,
+    ).toBeNull();
   }, 90_000);
 });
 

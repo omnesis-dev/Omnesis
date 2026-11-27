@@ -664,6 +664,9 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "recordings.markConversationProjected", priority: "background" },
   { name: "recordings.setConversationTitle", priority: "user" },
   { name: "recordings.setSpeaker", priority: "user" },
+  // The owner's enrolled voice: one row, one vector.
+  { name: "recordings.setVoiceProfile", priority: "user" },
+  { name: "recordings.deleteVoiceProfile", priority: "user" },
   { name: "recordings.setTitle", priority: "user" },
   { name: "recordings.dismissSuggestion", priority: "user" },
   { name: "recordings.addParticipant", priority: "user" },

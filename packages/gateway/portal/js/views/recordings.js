@@ -17,6 +17,11 @@
  * overlaps — are offered beside what they would change, and only applied
  * when the owner accepts one.
  *
+ * While the operator lets the gateway recognise the owner's voice
+ * (`inference.recordings.selfVoice`), the list also offers to enrol it: the
+ * owner reads a passage aloud here, or sends a clip, and the speaker who sounds
+ * like them is named as them in each recording, marked as recognised.
+ *
  * An all-day recording the gateway split into conversations shows one section
  * per conversation — its title, transcript, speakers and suggestions — each
  * written as soon as the conversation ended.
@@ -28,12 +33,15 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import {
   addRecordingParticipant,
   deleteRecording,
+  deleteSelfVoice,
   dismissRecordingSuggestion,
+  enrollSelfVoice,
   getPeople,
   getRecordingChunkAudio,
   getRecordingChunks,
   getRecordingSpeakers,
   getRecordingSuggestions,
+  getSelfVoice,
   listRecordings,
   removeRecordingParticipant,
   setRecordingConversationTitle,
@@ -189,6 +197,255 @@ function RecordingList({ recordings }) {
   </ul>`;
 }
 
+// ── the owner's voice ─────────────────────────────────────────────────
+
+/** What the owner reads aloud to enrol their voice: any text will do, this is long enough. */
+export const ENROLMENT_PASSAGE =
+  "The morning started grey, but by ten the clouds had thinned and the light came back over the " +
+  "rooftops. I walked to the market with a short list: bread, a few lemons, something green for " +
+  "dinner. The stalls were busy, and people talked over each other about the weather, the trains " +
+  "and the price of coffee. On the way home I stopped by the river, where the water was high and " +
+  "fast after the week's rain, and I counted the bridges I could see from one bank to the other.";
+
+/** Whether this browser can record from a microphone. */
+function canRecord() {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.MediaRecorder === "function" &&
+    typeof navigator !== "undefined" &&
+    typeof navigator.mediaDevices?.getUserMedia === "function"
+  );
+}
+
+/** Record from the microphone until stopped; resolves the clip. */
+function useMicrophone() {
+  const recorder = useRef(null);
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const [recording, setRecording] = useState(false);
+  const timer = useRef(null);
+
+  useEffect(
+    () => () => {
+      if (timer.current) clearInterval(timer.current);
+      recorder.current?.stream?.getTracks().forEach((t) => t.stop());
+    },
+    [],
+  );
+
+  async function start() {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const parts = [];
+    const r = new window.MediaRecorder(stream);
+    r.ondataavailable = (event) => {
+      if (event.data?.size > 0) parts.push(event.data);
+    };
+    const done = new Promise((resolve) => {
+      r.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        resolve(new Blob(parts, { type: r.mimeType || "audio/webm" }));
+      };
+    });
+    recorder.current = { recorder: r, stream, done };
+    const started = Date.now();
+    setElapsedMs(0);
+    timer.current = setInterval(() => setElapsedMs(Date.now() - started), 250);
+    r.start();
+    setRecording(true);
+  }
+
+  async function stop() {
+    const current = recorder.current;
+    if (!current) return null;
+    if (timer.current) clearInterval(timer.current);
+    timer.current = null;
+    current.recorder.stop();
+    setRecording(false);
+    recorder.current = null;
+    return current.done;
+  }
+
+  return { start, stop, recording, elapsedMs };
+}
+
+function selfVoiceError(err) {
+  if (err?.code === "SELF_VOICE_TOO_SHORT") {
+    return `${errorText(err)} Read the whole passage at an even pace.`;
+  }
+  return errorText(err);
+}
+
+/**
+ * Enrol, re-enrol or delete the owner's voice. Shown only while the operator
+ * lets the gateway recognise it; hidden where the status cannot be read.
+ */
+export function SelfVoicePanel() {
+  const [status, setStatus] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [enrolling, setEnrolling] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const mic = useMicrophone();
+  const fileInput = useRef(null);
+
+  useEffect(() => {
+    let live = true;
+    getSelfVoice()
+      .then((next) => {
+        if (live) setStatus(next ?? null);
+      })
+      .catch(() => {
+        if (live) setStatus(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  if (!status || status.setting !== "match") return null;
+
+  async function send(blob, filename) {
+    setBusy(true);
+    setError(null);
+    try {
+      setStatus(await enrollSelfVoice(blob, filename));
+      setEnrolling(false);
+    } catch (err) {
+      setError(selfVoiceError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function startRecording() {
+    setError(null);
+    try {
+      await mic.start();
+    } catch (err) {
+      setError(`The microphone could not be opened: ${errorText(err)}`);
+    }
+  }
+
+  async function stopRecording() {
+    const clip = await mic.stop();
+    if (clip) await send(clip, "voice.webm");
+  }
+
+  async function remove() {
+    setBusy(true);
+    setError(null);
+    try {
+      await deleteSelfVoice();
+      setStatus({ ...status, profile: null });
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setBusy(false);
+      setConfirmDelete(false);
+    }
+  }
+
+  const { profile } = status;
+  const minSeconds = Math.round((status.minSpeechMs ?? 20_000) / 1000);
+  const showEnrolment = enrolling || !profile;
+
+  return html`<section class="privacy-section recording-self-voice">
+    <div class="privacy-section-head">
+      <h2>Your voice</h2>
+    </div>
+    ${!status.ready
+      ? html`<p class="privacy-empty">
+          Voices cannot be told apart yet: speakers are off on this gateway, or its voice models are
+          still downloading.
+        </p>`
+      : null}
+    ${profile
+      ? html`<p class="recording-self-voice-state">
+          ${profile.current
+            ? html`Enrolled ${formatPrivacyDate(Date.parse(profile.enrolledAt))} from
+                ${" "}${formatRecordedTime(profile.speechMs)} of speech. The speaker who sounds like
+                you is named as you in each new recording.`
+            : html`<strong>Enrol again:</strong> your voice was enrolled with another voice model,
+                so it is not used.`}
+        </p>`
+      : html`<p class="recording-self-voice-state">
+          Enrol your voice and the speaker who sounds like you is named as you in each new
+          recording. Only a summary of your voice is kept on this gateway, never the audio, and
+          nobody else's voice is kept.
+        </p>`}
+    ${showEnrolment && status.ready
+      ? html`<div class="recording-self-voice-enrol">
+          <p>
+            Somewhere quiet, read this aloud at your usual pace — at least ${minSeconds} seconds of
+            speech:
+          </p>
+          <blockquote class="recording-self-voice-passage">${ENROLMENT_PASSAGE}</blockquote>
+          <div class="recording-speaker-actions">
+            ${canRecord()
+              ? mic.recording
+                ? html`<button type="button" class="btn-tiny" onClick=${stopRecording}>
+                      Stop and enrol
+                    </button>
+                    <span class="recording-speaker-talk" aria-live="polite">
+                      Recording · ${formatRecordedTime(mic.elapsedMs)}
+                    </span>`
+                : html`<button type="button" class="btn-tiny" disabled=${busy} onClick=${startRecording}>
+                    ${busy ? "Enrolling…" : "Record"}
+                  </button>`
+              : null}
+            ${mic.recording
+              ? null
+              : html`<button
+                    type="button"
+                    class="btn-tiny"
+                    disabled=${busy}
+                    onClick=${() => fileInput.current?.click()}
+                  >
+                    Send a recording…
+                  </button>
+                  <input
+                    ref=${fileInput}
+                    type="file"
+                    accept="audio/*"
+                    hidden
+                    onChange=${(event) => {
+                      const file = event.currentTarget.files?.[0];
+                      event.currentTarget.value = "";
+                      if (file) send(file, file.name);
+                    }}
+                  />`}
+            ${profile && !mic.recording
+              ? html`<button type="button" class="btn-tiny" disabled=${busy} onClick=${() => setEnrolling(false)}>
+                  Cancel
+                </button>`
+              : null}
+          </div>
+        </div>`
+      : null}
+    ${profile && !showEnrolment
+      ? html`<div class="recording-speaker-actions">
+          <button type="button" class="btn-tiny" disabled=${busy} onClick=${() => setEnrolling(true)}>
+            Enrol again
+          </button>
+          <button type="button" class="btn-tiny" disabled=${busy} onClick=${() => setConfirmDelete(true)}>
+            Delete my voice
+          </button>
+        </div>`
+      : null}
+    ${error ? html`<div class="privacy-banner error" role="alert">${error}</div>` : null}
+    <${ConfirmModal}
+      open=${confirmDelete}
+      title="Delete your voice?"
+      body="Recordings already made keep their speakers. New recordings will not recognise you until you enrol again."
+      confirmLabel=${busy ? "Deleting…" : "Delete"}
+      destructive=${true}
+      confirmDisabled=${busy}
+      cancelDisabled=${busy}
+      onConfirm=${remove}
+      onCancel=${() => setConfirmDelete(false)}
+    />
+  </section>`;
+}
+
 function RecordingsDashboard() {
   const [recordings, setRecordings] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -231,7 +488,7 @@ function RecordingsDashboard() {
         ? html`<${Unavailable} />`
         : error
           ? null
-          : html`<${RecordingList} recordings=${recordings} />`}
+          : html`<${SelfVoicePanel} /><${RecordingList} recordings=${recordings} />`}
   </div>`;
 }
 
@@ -384,7 +641,9 @@ function SpeakerRow({ recordingId, speaker, suggestions = [], onSpeakers, onDism
   }
 
   const who = speaker.isSelf
-    ? "You"
+    ? speaker.selfMatched
+      ? "You · recognised by your voice"
+      : "You"
     : speaker.personId
       ? `${speaker.name ?? speaker.personId}, from People`
       : speaker.name

@@ -2341,6 +2341,8 @@ export function createServer(
       ...(opts.voiceSeparator ? { voices: opts.voiceSeparator } : {}),
       // Read on every pass, so a changed retention applies without a restart.
       keepAudioDays: () => opts.configStore?.get().inference?.recordings?.keepAudioDays ?? 0,
+      // Read on every pass too: turning it off deletes the enrolled voice.
+      selfVoice: () => opts.configStore?.get().inference?.recordings?.selfVoice ?? "off",
       conversationGapMs: () =>
         (opts.configStore?.get().inference?.recordings?.conversationGapSeconds ??
           DEFAULT_CONVERSATION_GAP_SECONDS) * 1000,
@@ -2355,6 +2357,20 @@ export function createServer(
       ),
     });
     recordings.start();
+    // Switching recognition off also refuses enrolments under way, even if it
+    // is switched on again before they finish; a pass alone could miss that.
+    // Told as the change takes effect, not when an `onChange` listener would
+    // be reached, which can be after it was switched on again.
+    opts.configStore?.onCommit((before, after) => {
+      const setting = after.inference?.recordings?.selfVoice ?? "off";
+      if (before.inference?.recordings?.selfVoice !== after.inference?.recordings?.selfVoice) {
+        recordings.selfVoiceSettingChanged(setting).catch((err: unknown) => {
+          log.warn(
+            `Deleting the owner's voice failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+      }
+    });
 
     const getDictationStatus = opts.getDictationStatus;
     mountVoiceNoteRoutes(app, {

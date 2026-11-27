@@ -579,7 +579,10 @@ import {
   markRecordingConversationProjected,
   type ClosedRecordingConversation,
   setRecordingSpeaker,
+  setRecordingVoiceProfile,
+  deleteRecordingVoiceProfile,
   type RecordingSpeakerMapping,
+  type RecordingVoiceProfile,
   addRecordingParticipant,
   removeRecordingParticipant,
   type NewRecordingParticipant,
@@ -2365,11 +2368,19 @@ export interface WriteGate extends KnowledgeWriteGate {
   dismissRecordingSuggestion(sessionId: string, key: string, dismissedAt: string): Promise<boolean>;
   /** Stamp when a session's document was last written. */
   markRecordingSessionProjected(id: string, revision: number): Promise<void>;
-  /** Record a session's grouped speakers and delete its voice vectors. */
+  /**
+   * Record a session's grouped speakers and delete its voice vectors; the
+   * new speakers in `selfSpeakers` are mapped as the owner, recognised by voice.
+   */
   assignRecordingVoices(
     sessionId: string,
     chunks: Array<{ seq: number; windows: VoiceWindow[] }>,
+    selfSpeakers?: number[],
   ): Promise<void>;
+  /** Keep the owner's enrolled voice, replacing any before. */
+  setRecordingVoiceProfile(profile: RecordingVoiceProfile): Promise<void>;
+  /** Delete the owner's enrolled voice; false when there was none. */
+  deleteRecordingVoiceProfile(): Promise<boolean>;
   /** Record conversations closed in a session; how many were recorded or extended. */
   closeRecordingConversations(
     sessionId: string,
@@ -3148,8 +3159,10 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
       call("recordings.dismissSuggestion", [sessionId, key, dismissedAt]),
     markRecordingSessionProjected: (id, revision) =>
       call("recordings.markProjected", [id, revision]),
-    assignRecordingVoices: (sessionId, chunks) =>
-      call("recordings.assignVoices", [sessionId, chunks]),
+    assignRecordingVoices: (sessionId, chunks, selfSpeakers) =>
+      call("recordings.assignVoices", [sessionId, chunks, selfSpeakers ?? []]),
+    setRecordingVoiceProfile: (profile) => call("recordings.setVoiceProfile", [profile]),
+    deleteRecordingVoiceProfile: () => call("recordings.deleteVoiceProfile", []),
     closeRecordingConversations: (sessionId, spans, closedAt) =>
       call("recordings.closeConversations", [sessionId, spans, closedAt]),
     setRecordingConversationTitle: (sessionId, n, title) =>
@@ -3920,8 +3933,10 @@ export function directWriteGate(db: Db): WriteGate {
       dismissRecordingSuggestion(db, sessionId, key, dismissedAt),
     markRecordingSessionProjected: async (id, revision) =>
       markRecordingSessionProjected(db, id, revision),
-    assignRecordingVoices: async (sessionId, chunks) =>
-      assignRecordingVoices(db, sessionId, chunks),
+    assignRecordingVoices: async (sessionId, chunks, selfSpeakers) =>
+      assignRecordingVoices(db, sessionId, chunks, selfSpeakers),
+    setRecordingVoiceProfile: async (profile) => setRecordingVoiceProfile(db, profile),
+    deleteRecordingVoiceProfile: async () => deleteRecordingVoiceProfile(db),
     closeRecordingConversations: async (sessionId, spans, closedAt) =>
       closeRecordingConversations(db, sessionId, spans, closedAt),
     setRecordingConversationTitle: async (sessionId, n, title) =>

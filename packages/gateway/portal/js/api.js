@@ -269,7 +269,8 @@ async function request(method, path, opts = {}) {
             ...(opts.csrf && _csrfToken ? { "X-Omnesis-CSRF": _csrfToken } : {}),
           }
         : undefined,
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+    // A FormData body sets its own multipart Content-Type, boundary included.
+    body: opts.form ?? (opts.body !== undefined ? JSON.stringify(opts.body) : undefined),
   };
   let url = path;
   if (opts.query) {
@@ -1918,6 +1919,22 @@ export const dismissRecordingSuggestion = (id, key) =>
 /** Give a recording the owner's title; null goes back to the date-based one. Answers its summary. */
 export const setRecordingTitle = (id, title) =>
   request("PUT", `${recordingPath(id)}/title`, { body: { title } });
+
+/**
+ * The owner's enrolled voice: `{ setting, ready, minSpeechMs, profile }`,
+ * `profile` null until one is enrolled.
+ */
+export const getSelfVoice = () => request("GET", "/recordings/self-voice", { cache: "no-store" });
+
+/** Enrol the owner's voice from a clip of them reading aloud; answers the new status. */
+export function enrollSelfVoice(audio, filename = "voice") {
+  const form = new FormData();
+  form.set("audio", audio, filename);
+  return request("PUT", "/recordings/self-voice", { form });
+}
+
+/** Delete the owner's enrolled voice. */
+export const deleteSelfVoice = () => request("DELETE", "/recordings/self-voice");
 
 /**
  * Give conversation `n` of a split all-day recording the owner's title; null

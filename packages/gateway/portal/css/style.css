@@ -6979,6 +6979,33 @@ p.devices-pair-expiry {
   max-width: 320px;
 }
 
+.recording-self-voice-enrol {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.recording-self-voice-state {
+  margin: 0 0 12px;
+}
+
+.recording-self-voice-enrol {
+  margin-bottom: 4px;
+}
+
+.recording-self-voice-enrol p {
+  margin: 0;
+}
+
+.recording-self-voice-passage {
+  margin: 0;
+  padding: 10px 14px;
+  border-left: 3px solid var(--border-light);
+  color: var(--text-secondary);
+  line-height: 1.6;
+  max-width: 68ch;
+}
+
 .recording-chunk {
   display: flex;
   flex-wrap: wrap;

@@ -31,6 +31,7 @@ import { parseArgs } from "node:util";
 
 import {
   EMBEDDING_MODEL,
+  EMBEDDING_MODEL_ID,
   SEGMENTATION_MODEL,
 } from "@omnesis/gateway/src/recordings/voices/loader.js";
 import { LocalVoiceSeparator } from "@omnesis/gateway/src/recordings/voices/local-voice-separator.js";
@@ -318,6 +319,7 @@ async function main(): Promise<void> {
     Array.from({ length: Math.min(lanes, todo.length) }, async () => {
       const separator = new LocalVoiceSeparator({
         models,
+        model: EMBEDDING_MODEL_ID,
         // Chunks are handed over already decoded: 16 kHz mono float PCM.
         decodeAudio: (bytes) =>
           Promise.resolve(

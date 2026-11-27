@@ -12,7 +12,7 @@ import { existsSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { directWriteGate } from "../write-gate.js";
@@ -21,11 +21,12 @@ import { findOrCreatePerson } from "../people.js";
 import {
   ABANDONED_AFTER_MS,
   MAX_ATTEMPTS,
+  MIN_ENROLMENT_SPEECH_MS,
   MISSING_GRACE_MS,
   RecordingTranscriptionService,
   type RecordingChunkInput,
 } from "./service.js";
-import { getRecordingChunk, readRecordingChunkAudio } from "./storage.js";
+import { getRecordingChunk, getRecordingVoiceProfile, readRecordingChunkAudio } from "./storage.js";
 import { ReplayVoiceSeparator } from "./voices/replay-voice-separator.js";
 import type { VoiceSeparator } from "./voices/voices.js";
 import type { CalendarEventCandidate } from "./suggestions.js";
@@ -58,10 +59,14 @@ let separator: VoiceSeparator | null;
 let release: () => void;
 /** The operator's `inference.recordings.keepAudioDays`. */
 let keepDays: number;
+/** The operator's `inference.recordings.selfVoice`. */
+let selfVoice: "off" | "match";
 /** The operator's `inference.recordings.conversationGapSeconds`, in ms; 0 never splits. */
 let gapMs: number;
 /** What the owner's calendar holds for any window; a function to see the window asked for. */
 let calendar: (from: string, to: string) => CalendarEventCandidate[];
+/** While set, storing the owner's voice waits for `until`; `reached` once it does. */
+let voiceWrite: { until: Promise<void>; reached: boolean } | null;
 
 const START = "2026-03-02T09:00:00.000Z";
 const at = (offsetMs: number) => new Date(Date.parse(START) + offsetMs).toISOString();
@@ -127,10 +132,22 @@ beforeEach(() => {
   held = null;
   separator = null;
   keepDays = 0;
+  selfVoice = "off";
   gapMs = 0;
   calendar = () => [];
+  voiceWrite = null;
+  const writeGate = directWriteGate(db);
   service = new RecordingTranscriptionService({
-    writeGate: directWriteGate(db),
+    writeGate: {
+      ...writeGate,
+      setRecordingVoiceProfile: async (profile) => {
+        if (voiceWrite) {
+          voiceWrite.reached = true;
+          await voiceWrite.until;
+        }
+        return writeGate.setRecordingVoiceProfile(profile);
+      },
+    },
     readDb: db,
     transcribe: async (_audio, mimeType, opts) => {
       calls.push({ mimeType, opts });
@@ -154,6 +171,7 @@ beforeEach(() => {
     buildDocument: buildRecordingDocument,
     voices: () => separator,
     keepAudioDays: () => keepDays,
+    selfVoice: () => selfVoice,
     conversationGapMs: () => gapMs,
     calendarEvents: async (from, to) => calendar(from, to),
     now: () => now,
@@ -851,6 +869,7 @@ describe("RecordingTranscriptionService speakers", () => {
 
     separator = {
       name: "broken",
+      model: "broken",
       separate: () => Promise.reject(new Error("model crashed")),
       group: () => Promise.reject(new Error("model crashed")),
       dispose: async () => {},
@@ -863,6 +882,7 @@ describe("RecordingTranscriptionService speakers", () => {
     const replay = new ReplayVoiceSeparator();
     separator = {
       name: "flaky",
+      model: "flaky",
       separate: (audio) => replay.separate(audio),
       group: () => Promise.reject(new Error("worker died")),
       dispose: async () => {},
@@ -1296,5 +1316,366 @@ describe("RecordingTranscriptionService participants without a turn", () => {
       )
       .get(id)!.n;
     expect(left).toBe(0);
+  });
+});
+
+describe("RecordingTranscriptionService recognising the owner's voice", () => {
+  type Line = { startMs: number; endMs: number; text: string; voice: string };
+  const encode = (lines: Line[]) => new TextEncoder().encode(JSON.stringify({ segments: lines }));
+  function spoken(sessionId: string, seq: number, lines: Line[]) {
+    transcripts.push({
+      text: lines.map((l) => l.text).join(" "),
+      segments: lines.map(({ startMs, endMs, text }) => ({ startMs, endMs, text })),
+    });
+    return chunk(sessionId, seq, { audio: encode(lines) });
+  }
+  /** A read-aloud clip: `seconds` of one voice, in eight-second windows. */
+  function clip(voice: string, seconds: number, other?: { voice: string; seconds: number }) {
+    const lines: Line[] = [];
+    let t = 0;
+    const add = (v: string, s: number) => {
+      for (let left = s * 1000; left > 0; left -= 8_000) {
+        const len = Math.min(8_000, left);
+        lines.push({ startMs: t, endMs: t + len, text: "", voice: v });
+        t += len;
+      }
+    };
+    add(voice, seconds);
+    if (other) add(other.voice, other.seconds);
+    return encode(lines);
+  }
+  const conversation: Line[] = [
+    { startMs: 0, endMs: 3_000, text: "Shall we look at the budget?", voice: "maya" },
+    { startMs: 4_000, endMs: 7_000, text: "Yes, travel first.", voice: "owner" },
+  ];
+
+  async function recorded(lines: Line[] = conversation): Promise<string> {
+    const id = await start();
+    await service.addChunk(spoken(id, 0, lines));
+    await service.finish(id, 1, at(60_000));
+    await service.idle();
+    return id;
+  }
+
+  beforeEach(() => {
+    separator = new ReplayVoiceSeparator();
+    selfVoice = "match";
+  });
+
+  test("enrols the owner from a read-aloud clip, keeping one mean vector and no audio", async () => {
+    const outcome = await service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    expect(outcome).toEqual({
+      kind: "enrolled",
+      status: {
+        setting: "match",
+        ready: true,
+        minSpeechMs: MIN_ENROLMENT_SPEECH_MS,
+        profile: { enrolledAt: now.toISOString(), speechMs: 24_000, current: true },
+      },
+    });
+    const profile = getRecordingVoiceProfile(db)!;
+    expect(profile.model).toBe("replay");
+    expect(Math.hypot(...profile.vector)).toBeCloseTo(1, 6);
+    // Nothing of the clip is stored as a recording.
+    expect(service.recent(10)).toEqual([]);
+  });
+
+  test("refuses a clip it cannot enrol, and enrols nothing while it cannot", async () => {
+    expect(await service.enrollSelfVoice(clip("owner", 12), "audio/webm")).toEqual({
+      kind: "too-short",
+      speechMs: 12_000,
+    });
+    expect(await service.enrollSelfVoice(new Uint8Array([1, 2]), "audio/webm")).toEqual({
+      kind: "too-short",
+      speechMs: 0,
+    });
+    expect(
+      await service.enrollSelfVoice(
+        clip("owner", 16, { voice: "maya", seconds: 16 }),
+        "audio/webm",
+      ),
+    ).toEqual({ kind: "several-voices" });
+
+    separator = null;
+    expect(await service.enrollSelfVoice(clip("owner", 24), "audio/webm")).toEqual({
+      kind: "unavailable",
+    });
+    separator = {
+      name: "broken",
+      model: "broken",
+      separate: () => Promise.reject(new Error("ffmpeg could not decode")),
+      group: () => Promise.reject(new Error("unused")),
+      dispose: async () => {},
+    };
+    expect(await service.enrollSelfVoice(clip("owner", 24), "audio/webm")).toEqual({
+      kind: "unreadable",
+    });
+    const replay = new ReplayVoiceSeparator();
+    separator = {
+      name: "flaky",
+      model: "flaky",
+      separate: (audio) => replay.separate(audio),
+      group: () => Promise.reject(new Error("worker died")),
+      dispose: async () => {},
+    };
+    expect(await service.enrollSelfVoice(clip("owner", 24), "audio/webm")).toEqual({
+      kind: "unavailable",
+    });
+    selfVoice = "off";
+    separator = new ReplayVoiceSeparator();
+    expect(await service.enrollSelfVoice(clip("owner", 24), "audio/webm")).toEqual({ kind: "off" });
+    expect(getRecordingVoiceProfile(db)).toBeNull();
+  });
+
+  test("a stray voice in the clip is left out of the enrolled voice", async () => {
+    const outcome = await service.enrollSelfVoice(
+      clip("owner", 40, { voice: "maya", seconds: 8 }),
+      "audio/webm",
+    );
+    expect(outcome).toMatchObject({ kind: "enrolled", status: { profile: { speechMs: 40_000 } } });
+    // Enrolled from the owner alone: Maya is never taken for the owner.
+    const id = await recorded();
+    expect(service.speakers(id)!.map((s) => [s.speaker, s.isSelf])).toEqual([
+      [1, false],
+      [2, true],
+    ]);
+  });
+
+  test("names the owner in a new recording with no tap, marked as recognised", async () => {
+    await service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    const id = await recorded();
+
+    expect(service.speakers(id)!.map((s) => [s.speaker, s.isSelf, s.selfMatched])).toEqual([
+      [1, false, false],
+      [2, true, true],
+    ]);
+    expect(docs.get(id)!.content).toContain("[00:00:04] You: Yes, travel first.");
+    expect(docs.get(id)!.metadata.people).toEqual([
+      { name: "You", role: "participant", isSelf: true },
+    ]);
+    expect(service.recent(1)[0]).toMatchObject({ speakers: 2, namedSpeakers: 1 });
+
+    // Confirming it makes it the owner's own mapping.
+    expect(await service.setSpeaker(id, 2, { kind: "self" })).toBe("set");
+    expect(service.speakers(id)![1]).toMatchObject({ isSelf: true, selfMatched: false });
+  });
+
+  test("a recording without the owner's voice names nobody", async () => {
+    await service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    const id = await recorded([
+      { startMs: 0, endMs: 3_000, text: "Shall we look at the budget?", voice: "maya" },
+      { startMs: 4_000, endMs: 7_000, text: "Yes, travel first.", voice: "guest" },
+    ]);
+    expect(service.speakers(id)!.every((s) => !s.isSelf)).toBe(true);
+  });
+
+  /** A recording the gateway finished, then a chunk from its device after it. */
+  async function withLateChunk(undo: boolean): Promise<string> {
+    const id = await start();
+    await service.addChunk(spoken(id, 0, conversation));
+    advance(ABANDONED_AFTER_MS);
+    await pass();
+    expect(service.speakers(id)![1]).toMatchObject({ speaker: 2, isSelf: true });
+    if (undo) expect(await service.setSpeaker(id, 2, { kind: "clear" })).toBe("set");
+    await service.addChunk(
+      spoken(id, 1, [{ startMs: 0, endMs: 4_000, text: "Agreed, then.", voice: "owner" }]),
+    );
+    await service.finish(id, 2, at(120_000));
+    await service.idle();
+    return id;
+  }
+
+  test("a late chunk's owner is recognised, unless the owner undid it in that session", async () => {
+    await service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    const kept = await withLateChunk(false);
+    // The late voice cannot be compared with deleted vectors, but it is the owner's.
+    expect(service.speakers(kept)!.map((s) => [s.speaker, s.isSelf])).toEqual([
+      [1, false],
+      [2, true],
+      [3, true],
+    ]);
+
+    const undone = await withLateChunk(true);
+    expect(service.speakers(undone)!.map((s) => [s.speaker, s.isSelf])).toEqual([
+      [1, false],
+      [2, false],
+      [3, false],
+    ]);
+    expect(docs.get(undone)!.content).not.toContain("You:");
+  });
+
+  test("in an all-day session the owner is recognised in each conversation, as it closes", async () => {
+    gapMs = 90_000;
+    await service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    const id = await start(undefined, undefined, "ambient");
+    await service.addChunk(spoken(id, 0, conversation));
+    for (const seq of [1, 2]) {
+      await service.addChunk(chunk(id, seq, { silent: true, audio: null, mimeType: null }));
+    }
+    await service.addChunk(
+      spoken(id, 3, [
+        { startMs: 0, endMs: 3_000, text: "Is the projector free?", voice: "jamie" },
+        { startMs: 4_000, endMs: 6_000, text: "It is now.", voice: "owner" },
+      ]),
+    );
+    await service.idle();
+    // The first conversation is written while the session goes on, the owner named.
+    expect(service.status(id)!.state).toBe("recording");
+    expect(docs.get(id)!.content).toContain("[00:00:04] You: Yes, travel first.");
+
+    await service.finish(id, 4, at(4 * 60_000));
+    await service.idle();
+    // The second groups its own voices, numbered on, and finds the owner again.
+    expect(
+      service.speakers(id)!.map((s) => [s.speaker, s.conversation, s.isSelf, s.selfMatched]),
+    ).toEqual([
+      [1, 1, false, false],
+      [2, 1, true, true],
+      [3, 2, false, false],
+      [4, 2, true, true],
+    ]);
+    const second = docs.get(`${id}:2`)!;
+    expect(second.content).toContain("[00:00:04] You: It is now.");
+    expect(second.metadata.people).toEqual([{ name: "You", role: "participant", isSelf: true }]);
+  });
+
+  test("a voice enrolled with another model is not used, and says so", async () => {
+    await service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    const other = new ReplayVoiceSeparator();
+    Object.defineProperty(other, "model", { value: "replay-v2" });
+    separator = other;
+    expect(service.selfVoiceStatus().profile).toMatchObject({ current: false });
+    const id = await recorded();
+    expect(service.speakers(id)!.some((s) => s.isSelf)).toBe(false);
+  });
+
+  test("with the setting off nobody is recognised and the enrolled voice is deleted", async () => {
+    await service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    selfVoice = "off";
+    const id = await recorded();
+    expect(service.speakers(id)!.some((s) => s.isSelf)).toBe(false);
+    expect(getRecordingVoiceProfile(db)).toBeNull();
+    expect(service.selfVoiceStatus()).toMatchObject({ setting: "off", profile: null });
+  });
+
+  test("the owner can delete the enrolled voice", async () => {
+    await service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    expect(await service.deleteSelfVoice()).toBe(true);
+    expect(await service.deleteSelfVoice()).toBe(false);
+    const id = await recorded();
+    expect(service.speakers(id)!.some((s) => s.isSelf)).toBe(false);
+  });
+
+  /**
+   * A separator that reads each clip only when the test lets it: `read(n)`
+   * lets the n-th clip it was given (from 0) be read, and resolves once
+   * `started` clips are waiting.
+   */
+  function deferredSeparator() {
+    const replay = new ReplayVoiceSeparator();
+    const waiting: (() => void)[] = [];
+    separator = {
+      name: replay.name,
+      model: replay.model,
+      separate: async (audio) => {
+        await new Promise<void>((resolve) => waiting.push(resolve));
+        return replay.separate(audio);
+      },
+      group: (vectors, durations) => replay.group(vectors, durations),
+      dispose: async () => {},
+    };
+    return {
+      started: (n: number) => vi.waitFor(() => expect(waiting).toHaveLength(n)),
+      read: (n: number) => waiting[n]!(),
+    };
+  }
+
+  test("an enrolment under way when the owner deletes the voice stores nothing", async () => {
+    await service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    const clips = deferredSeparator();
+    const again = service.enrollSelfVoice(clip("owner", 32), "audio/webm");
+    await clips.started(1);
+
+    expect(await service.deleteSelfVoice()).toBe(true);
+    expect(getRecordingVoiceProfile(db)).toBeNull();
+    clips.read(0);
+    expect(await again).toEqual({ kind: "superseded" });
+    expect(getRecordingVoiceProfile(db)).toBeNull();
+
+    // Enrolling again after the deletion works.
+    const next = service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    await clips.started(2);
+    clips.read(1);
+    expect(await next).toMatchObject({ kind: "enrolled" });
+    expect(getRecordingVoiceProfile(db)).toMatchObject({ speechMs: 24_000 });
+  });
+
+  test("a deletion asked for while the voice is being stored lands after it", async () => {
+    let store!: () => void;
+    voiceWrite = { until: new Promise((resolve) => (store = resolve)), reached: false };
+    const enrolment = service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    // Past its last check, at the writer.
+    await vi.waitFor(() => expect(voiceWrite!.reached).toBe(true));
+    const deletion = service.deleteSelfVoice();
+    store();
+    expect(await enrolment).toMatchObject({ kind: "enrolled" });
+    expect(await deletion).toBe(true);
+    expect(getRecordingVoiceProfile(db)).toBeNull();
+  });
+
+  test("switching recognition off refuses an enrolment under way, even once on again", async () => {
+    const clips = deferredSeparator();
+    const whileOff = service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    await clips.started(1);
+    selfVoice = "off";
+    await service.selfVoiceSettingChanged(selfVoice);
+    clips.read(0);
+    expect(await whileOff).toEqual({ kind: "off" });
+    expect(getRecordingVoiceProfile(db)).toBeNull();
+
+    selfVoice = "match";
+    await service.selfVoiceSettingChanged(selfVoice);
+    const offAndOn = service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    await clips.started(2);
+    selfVoice = "off";
+    await service.selfVoiceSettingChanged(selfVoice);
+    selfVoice = "match";
+    await service.selfVoiceSettingChanged(selfVoice);
+    clips.read(1);
+    expect(await offAndOn).toEqual({ kind: "superseded" });
+    expect(getRecordingVoiceProfile(db)).toBeNull();
+
+    // Off with no change heard yet: the write reads the setting itself.
+    const unheard = service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    await clips.started(3);
+    selfVoice = "off";
+    clips.read(2);
+    expect(await unheard).toEqual({ kind: "off" });
+    expect(getRecordingVoiceProfile(db)).toBeNull();
+  });
+
+  test("of two enrolments under way, the one started later is the voice kept", async () => {
+    const clips = deferredSeparator();
+    // The later one is read first: the earlier, finishing after it, stores nothing.
+    const older = service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    await clips.started(1);
+    const newer = service.enrollSelfVoice(clip("owner", 32), "audio/webm");
+    await clips.started(2);
+    clips.read(1);
+    expect(await newer).toMatchObject({ kind: "enrolled" });
+    clips.read(0);
+    expect(await older).toEqual({ kind: "superseded" });
+    expect(getRecordingVoiceProfile(db)).toMatchObject({ speechMs: 32_000 });
+
+    // Read in the order they started, the later one replaces the earlier.
+    const first = service.enrollSelfVoice(clip("owner", 40), "audio/webm");
+    await clips.started(3);
+    const last = service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    await clips.started(4);
+    clips.read(2);
+    expect(await first).toMatchObject({ kind: "enrolled" });
+    clips.read(3);
+    expect(await last).toMatchObject({ kind: "enrolled" });
+    expect(getRecordingVoiceProfile(db)).toMatchObject({ speechMs: 24_000 });
   });
 });

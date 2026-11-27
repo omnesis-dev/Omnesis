@@ -11,8 +11,10 @@
  * each window gets a voice vector (an embedding of how it sounds). When the
  * session's document is written, the windows of every chunk are grouped by
  * similarity into the session's speakers, and the vectors are deleted: they
- * never outlive the session's processing, and nothing recognises a voice
- * across sessions.
+ * never outlive the session's processing. The one voice recognised across
+ * sessions is the owner's, and only once they enrol it: a short read-aloud
+ * clip becomes one mean vector (`meanVoice`), and each session's new speakers
+ * are compared with it while their vectors still exist (`matchSelf`).
  *
  * Pure: window cutting and grouping, shared by the worker subprocess and the
  * in-process replay separator.
@@ -35,6 +37,12 @@ export interface SeparatedVoices {
 /** Separates voices on one chunk's audio and groups vectors into speakers. */
 export interface VoiceSeparator {
   readonly name: string;
+  /**
+   * The embedding model the vectors come from. Vectors of different models
+   * cannot be compared, so the owner's voice profile records it and is not
+   * used with another.
+   */
+  readonly model: string;
   /** The chunk's voice windows and their vectors; empty when nobody spoke. */
   separate(audio: Uint8Array, mimeType: string): Promise<SeparatedVoices>;
   /**
@@ -73,6 +81,19 @@ export const MIN_SPEAKER_SHARE = 0.15;
  * folded into someone else.
  */
 export const LONG_SESSION_SPEAKER_SHARE = 0.05;
+
+/**
+ * A speaker whose mean vector is at least this similar to the owner's
+ * enrolled voice is the owner. Calibrated with `evals/speakers` (RESULTS.md,
+ * "Owner profile"): the owner's own speaker scored 0.80 or more and everybody
+ * else 0.63 or less, and at 0.5 someone else was named owner in 17 % of
+ * sessions the owner was not in, against none from 0.6 to 0.7. It sits at the
+ * low end of that gap because an enrolment recorded on another device or in
+ * another room scores lower than the eval's same-room profiles. The errors are
+ * not symmetric: a missed match leaves the speaker for the owner to name, as
+ * before, while a false one names somebody else as the owner.
+ */
+export const SELF_VOICE_SIMILARITY = 0.6;
 
 /**
  * Cut the stretches a separator found (one voice each) into voice windows:
@@ -225,6 +246,42 @@ function absorbSmallSpeakers(
     }
     return best;
   });
+}
+
+/** The unit-length mean of unit-length vectors: one voice, summarised. */
+export function meanVoice(vectors: readonly Float32Array[]): Float32Array {
+  if (vectors.length === 0) return new Float32Array(0);
+  const sum = new Float32Array(vectors[0]!.length);
+  for (const v of vectors) normalize(v).forEach((x, j) => (sum[j]! += x));
+  return normalize(sum);
+}
+
+/**
+ * Which of a grouping's speakers is the owner: the label whose mean vector is
+ * most similar to `profile`, when that similarity reaches `threshold`; null
+ * when none does, or when the profile has another dimension.
+ */
+export function matchSelf(
+  vectors: readonly Float32Array[],
+  labels: readonly number[],
+  profile: Float32Array,
+  threshold: number = SELF_VOICE_SIMILARITY,
+): { label: number; similarity: number } | null {
+  const byLabel = new Map<number, Float32Array[]>();
+  labels.forEach((label, i) => {
+    const v = vectors[i];
+    if (!v || v.length !== profile.length) return;
+    byLabel.set(label, [...(byLabel.get(label) ?? []), v]);
+  });
+  const unit = normalize(profile);
+  let best: { label: number; similarity: number } | null = null;
+  for (const [label, group] of byLabel) {
+    const similarity = dot(meanVoice(group), unit);
+    if (similarity >= threshold && (!best || similarity > best.similarity)) {
+      best = { label, similarity };
+    }
+  }
+  return best;
 }
 
 function normalize(v: Float32Array): Float32Array {
