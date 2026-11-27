@@ -22,10 +22,12 @@
  *   embed{id,texts} → embedResult{id,vectors} | embedError{id,error}
  *   embedQuery{id,text} → embedQueryResult{id,vector} | embedQueryError{id,error}
  *   shutdown → drain calls → dispose model → shutdownComplete → close port
+ *   (a thread holding a model this host cannot free stays open; see llama-models.ts)
  */
 
 import { parentPort } from "node:worker_threads";
 import { LlamaCppEmbedder } from "../indexer/embedder.js";
+import { holdsUnfreeableLlamaModels } from "../llama-models.js";
 import type {
   BuildEmbedderInit,
   BuildEmbedderToMain,
@@ -137,8 +139,17 @@ async function handleShutdown(): Promise<void> {
     }
     embedder = null;
   }
-  post({ type: "shutdownComplete" });
-  parentPort!.close();
+  acknowledgeShutdown();
+}
+
+/**
+ * Acknowledge shutdown. A thread holding a local model this host cannot free
+ * stays alive, since ending it would free the model (see `llama-models.ts`).
+ */
+function acknowledgeShutdown(): void {
+  const keepThread = holdsUnfreeableLlamaModels();
+  post({ type: "shutdownComplete", ...(keepThread ? { keepThread } : {}) });
+  if (!keepThread) parentPort!.close();
 }
 
 parentPort.on("message", (msg: MainToBuildEmbedder) => {

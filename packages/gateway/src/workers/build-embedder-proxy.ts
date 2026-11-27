@@ -218,7 +218,7 @@ export class BuildWorkerEmbedder implements Embedder {
         break;
       }
       case "shutdownComplete":
-        // shutdownWorker joins the actual thread exit.
+        // shutdownWorker joins the actual thread exit, or keeps the thread.
         break;
     }
   }

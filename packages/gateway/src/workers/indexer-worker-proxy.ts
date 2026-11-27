@@ -845,7 +845,7 @@ export class IndexerWorkerProxy implements Embedder {
         this.handleJobUpdate(msg);
         break;
       case "shutdownComplete":
-        // shutdownWorker joins the actual exit after native cleanup.
+        // shutdownWorker joins the actual exit after native cleanup, or keeps the thread.
         break;
       default:
         assertNever(msg);
