@@ -48,6 +48,7 @@ import {
 } from "../errors.js";
 import {
   AgentError,
+  clampConversationLimit,
   paginateVisibleConversationMessages,
   type AgentService,
 } from "../../agent/service.js";
@@ -69,6 +70,12 @@ import {
   annotateUnread,
   type ConversationReadStatePort,
 } from "../../agent/conversation-read-state-service.js";
+import {
+  MAX_CONVERSATION_QUERY_LENGTH,
+  rankConversationMatches,
+  type ConversationSearch,
+  type ConversationSearchHit,
+} from "../../agent/conversation-search.js";
 import type { CorpusAuthorization } from "../../access/corpus-authorization.js";
 import type { DeviceAnswerScope } from "../../access/device-answer-scope.js";
 import type { ToolCaller } from "@omnesis/agent";
@@ -202,6 +209,12 @@ export interface AgentRoutesDeps {
   deviceAnswerScope?: (deviceId: string, tokenId: string) => DeviceAnswerScope;
   /** Durable conversation reads remain available when inference is unavailable. */
   conversationReader?: ConversationReader;
+  /**
+   * Text search over conversations, backing `GET /agent/conversations?q=`.
+   * Absent where the gateway has no search index; a query then matches
+   * conversation titles only.
+   */
+  conversationSearch?: ConversationSearch;
   /**
    * What a morning brief in the Morning brief conversation was based on.
    * Supplied where the Brain runs; absent, a brief reads as based on nothing.
@@ -585,7 +598,24 @@ export function mountAgentRoutes(app: RouteApp, deps: AgentRoutesDeps): void {
     // Ensure the caller really is admin-scope and has a token id —
     // callerOf throws BadRequest if not — but the listing is global.
     callerOf(c);
+    const query = parseConversationQuery(c.req.query("q"));
     try {
+      if (query !== undefined) {
+        // One page holds every match: the search ranks a bounded set of
+        // passages, so there is no older page to ask for.
+        const limit = clampConversationLimit(parseConversationLimit(c.req.query("limit")));
+        const [summaries, hits] = await Promise.all([
+          service.listConversations(),
+          searchConversationText(deps.conversationSearch, query),
+        ]);
+        const matches = rankConversationMatches(summaries, hits, query);
+        return c.json(
+          annotateUnread(
+            { conversations: matches.slice(0, limit), nextCursor: null },
+            deps.conversationReadState,
+          ),
+        );
+      }
       const page = await service.listConversationPage({
         limit: parseConversationLimit(c.req.query("limit")),
         cursor: c.req.query("cursor"),
@@ -1008,6 +1038,37 @@ function parseLastEventId(raw: string | undefined): number | undefined {
   const n = Number(raw);
   if (!Number.isFinite(n) || n < 0) return undefined;
   return Math.floor(n);
+}
+
+/**
+ * The index's hits for a conversation search. Without an index, or when the
+ * search fails, the list still answers: titles alone match.
+ */
+async function searchConversationText(
+  search: ConversationSearch | undefined,
+  query: string,
+): Promise<ConversationSearchHit[]> {
+  if (!search) return [];
+  try {
+    return await search(query);
+  } catch (err) {
+    log.warn(
+      `Conversation search failed, matching titles only: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return [];
+  }
+}
+
+/** A trimmed, non-empty search query, or undefined for the plain list. */
+function parseConversationQuery(raw: string | undefined): string | undefined {
+  const query = raw?.trim();
+  if (!query) return undefined;
+  if (query.length > MAX_CONVERSATION_QUERY_LENGTH) {
+    throw new BadRequestError(
+      `conversation search query must be at most ${MAX_CONVERSATION_QUERY_LENGTH} characters`,
+    );
+  }
+  return query;
 }
 
 function parseConversationLimit(raw: string | undefined): number | undefined {

@@ -232,6 +232,27 @@ describe("omnesis-chat source — end-to-end (Part 1)", () => {
     }, 10_000);
     expect(searchHit, "conversation doc not found in /documents/search").toBeTruthy();
 
+    // ── Ask list search ──────────────────────────────────────────
+    // The conversation list finds it by what was said in it, through the
+    // index this source keeps, with the passage that matched.
+    const searchConversations = async (q: string) => {
+      const res = await fetch(
+        `${harness.gatewayUrl}/agent/conversations?q=${encodeURIComponent(q)}`,
+        { headers: { Authorization: `Bearer ${harness.apiKey}` } },
+      );
+      expect(res.status).toBe(200);
+      return (await res.json()) as {
+        conversations: Array<{ id: string; title: string; match?: { snippet: string } }>;
+      };
+    };
+    const listed = await pollUntil(async () => {
+      const body = await searchConversations("second message about the launch");
+      return body.conversations.find((c) => c.id === sessionId) ?? null;
+    }, 10_000);
+    expect(listed, "conversation not found by GET /agent/conversations?q=").toBeTruthy();
+    expect(listed!.title.toLowerCase()).not.toContain("launch");
+    expect(listed!.match?.snippet.toLowerCase()).toContain("launch");
+
     // ── DELETE cascade ────────────────────────────────────────────
     const delRes = await fetch(`${harness.gatewayUrl}/agent/conversations/${sessionId}`, {
       method: "DELETE",
@@ -250,6 +271,8 @@ describe("omnesis-chat source — end-to-end (Part 1)", () => {
       )
       .get(convId);
     expect(edgesAfter?.c ?? -1).toBe(0);
+    const afterDelete = await searchConversations("second message about the launch");
+    expect(afterDelete.conversations.map((c) => c.id)).not.toContain(sessionId);
   });
 });
 
