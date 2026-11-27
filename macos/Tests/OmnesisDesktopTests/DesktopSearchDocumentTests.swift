@@ -55,31 +55,78 @@ final class DesktopSearchDocumentTests: XCTestCase {
         XCTAssertEqual(status.unauthorized, 0)
         let documentWindow = try XCTUnwrap(window.attachedSheet, "The full document must open in the actual native sheet")
         let output = URL(fileURLWithPath: "/tmp/omnesis-macos-snapshots")
+        try DesktopNativeColorReference.validateLogicalCanvas(NSColor(DesktopTheme.canvas))
+        let reference = try await DesktopNativeColorReference.capture(for: documentWindow, output: output)
         try await DesktopSnapshotRenderer.captureOwnedWindow(
             documentWindow,
             output: output,
             name: "search-full-indexed-document",
-            appearance: .darkAqua
+            appearance: .darkAqua,
+            requireActive: true
         )
         let bitmap = try XCTUnwrap(NSBitmapImageRep(data: Data(contentsOf: output.appendingPathComponent(
             "search-full-indexed-document-window-NSAppearanceNameDarkAqua.png"
         ))))
-        guard bitmap.bitsPerSample == 8, bitmap.samplesPerPixel == 4 else {
-            XCTFail("The own-window capture must use the expected 8-bit RGBA representation")
-            return
+        try DesktopNativeColorReference.validatePipeline(bitmap, window: documentWindow, reference: reference)
+        let background = try DesktopNativeColorReference.pixel(bitmap, x: bitmap.pixelsWide - 40, y: bitmap.pixelsHigh - 40)
+        let content = try XCTUnwrap(documentWindow.contentView)
+        let elements = try DesktopAccessibilityDriver.elements(in: content)
+        @MainActor func textElement(_ text: String) throws -> DesktopAccessibilityDriver.Element {
+            try XCTUnwrap(elements.filter {
+                $0.accessibilityLabel() == text || $0.accessibilityTextValue() == text
+            }.filter { $0.accessibilityFrame().width > 0 && $0.accessibilityFrame().height > 0 }.min {
+                $0.accessibilityFrame().width * $0.accessibilityFrame().height < $1.accessibilityFrame().width * $1.accessibilityFrame()
+                    .height
+            })
         }
-        var channels = [Int](repeating: 0, count: bitmap.samplesPerPixel)
-        bitmap.getPixel(&channels, atX: bitmap.pixelsWide - 40, y: bitmap.pixelsHigh - 40)
-        let rgb = bitmap.bitmapFormat.contains(.alphaFirst) ? Array(channels.dropFirst()) : Array(channels.prefix(3))
-        let expected = try XCTUnwrap(NSColor(DesktopTheme.canvas).usingColorSpace(.sRGB))
-        XCTAssertEqual(Double(rgb[0]) / 255, expected.redComponent, accuracy: 0.01)
-        XCTAssertEqual(Double(rgb[1]) / 255, expected.greenComponent, accuracy: 0.01)
-        XCTAssertEqual(
-            Double(rgb[2]) / 255,
-            expected.blueComponent,
-            accuracy: 0.01,
-            "The real presentation must use the shared opaque canvas, not inherited window material"
+        let title = try textElement("Fictional project outline")
+        let paragraph = "This is the full indexed document, read through the authenticated library connection. The planning session will confirm the schedule and the first draft owner."
+        let bodyText = try textElement(paragraph)
+        let body = try DesktopAccessibilityDriver.element("chat-document-content", in: content)
+        let done = try DesktopAccessibilityDriver.element("chat-document-done", in: content)
+        XCTAssertTrue(done.isAccessibilityEnabled())
+        XCTAssertTrue(try DesktopAccessibilityDriver.contains(paragraph, in: content))
+        XCTAssertTrue(
+            body.accessibilityFrame().contains(bodyText.accessibilityFrame()),
+            "The actual paragraph must remain inside the document viewport"
         )
+        let screen = try XCTUnwrap(documentWindow.screen)
+        let frames = [title.accessibilityFrame(), bodyText.accessibilityFrame(), done.accessibilityFrame(), body.accessibilityFrame()]
+        func rectangle(_ rect: NSRect) -> [String: CGFloat] {
+            ["x": rect.minX, "y": rect.minY, "width": rect.width, "height": rect.height]
+        }
+        let receiptPath = output.appendingPathComponent("search-full-indexed-document-color-comparison.json")
+        var receipt: [String: Any] = [
+            "format": 1, "comparison": "same-invocation-native-brush-not-absolute-display-calibration",
+            "backgroundRGBA": background.channels, "referenceRGBA": reference.canvas.channels,
+            "referenceInkRGBA": reference.ink.channels, "semanticFramesInScreen": frames.map(rectangle),
+            "effectiveAppearance": documentWindow.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])?.rawValue ?? "unknown",
+            "windowFrame": rectangle(documentWindow.frame), "screenVisibleFrame": rectangle(screen.visibleFrame),
+        ]
+        try JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys]).write(to: receiptPath, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: receiptPath.path)
+        let mapped = try frames.map { frame -> NSRect in
+            guard frame.width > 0, frame.height > 0, documentWindow.frame.contains(frame), screen.visibleFrame.contains(frame) else {
+                throw DesktopNativeColorReference.Failure.mapping
+            }
+            return try DesktopNativeColorReference.mappedRect(
+                documentWindow.convertFromScreen(frame),
+                bitmap: bitmap,
+                extent: documentWindow.frame.size
+            )
+        }
+        receipt["semanticPixelRects"] = mapped.map(rectangle)
+        try JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys]).write(to: receiptPath, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: receiptPath.path)
+        XCTAssertEqual(background.channels[3], 1, accuracy: 0.01)
+        XCTAssertTrue(
+            background.matches(reference.canvas),
+            "The real sheet must match an independent opaque native canvas through the same capture pipeline"
+        )
+        // AX copy alone cannot certify that the captured title/body actually painted.
+        try DesktopNativeColorReference.requireInk(bitmap, rect: mapped[0], ink: reference.ink)
+        try DesktopNativeColorReference.requireInk(bitmap, rect: mapped[1], ink: reference.ink)
         try DesktopAccessibilityDriver.press("chat-document-done", in: hosting)
+        try await wait { window.attachedSheet == nil }
     }
 }
