@@ -219,11 +219,22 @@ export function createRecordingTables(db: Db): void {
       PRIMARY KEY (session_id, speaker)
     );
   `);
-  const chunkColumns = db
-    .prepare("SELECT name FROM pragma_table_info('recording_chunks')")
-    .all() as Array<{ name: string }>;
-  if (!chunkColumns.some((column) => column.name === "settled_at")) {
-    db.exec("ALTER TABLE recording_chunks ADD COLUMN settled_at TEXT");
+  // Columns added after the table first shipped: a gateway that already has
+  // the table gets them here, since CREATE TABLE IF NOT EXISTS leaves it as is.
+  const chunkColumns = new Set(
+    (
+      db.prepare("SELECT name FROM pragma_table_info('recording_chunks')").all() as Array<{
+        name: string;
+      }>
+    ).map((column) => column.name),
+  );
+  for (const [name, type] of [
+    ["segments", "TEXT"],
+    ["voices", "TEXT"],
+    ["voice_vectors", "BLOB"],
+    ["settled_at", "TEXT"],
+  ] as const) {
+    if (!chunkColumns.has(name)) db.exec(`ALTER TABLE recording_chunks ADD COLUMN ${name} ${type}`);
   }
   // Suggestions the owner dismissed for a session (calendar attendees, names
   // heard in the transcript, a calendar title), so they are not offered again.
