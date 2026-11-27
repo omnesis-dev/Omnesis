@@ -2,6 +2,7 @@
   "references": [
     { "path": "evals/briefs" },
     { "path": "evals/search" },
+    { "path": "evals/speakers" },
     { "path": "extension" },
     { "path": "packages/platform" },
     { "path": "packages/types" },

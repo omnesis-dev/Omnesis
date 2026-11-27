@@ -66,6 +66,26 @@ describe("groupVoices", () => {
     expect(groupVoices(vectors, 0.9, [2_000, 2_000, 2_000])).toEqual([0, 1, 0]);
   });
 
+  test("in a long session, folds stray windows that add up past the flat floor", () => {
+    // Two voices of 15 min each, and 40 s of stray windows the model kept apart:
+    // more than 8 s, but less than 5% of the half hour.
+    const stray = new Float32Array(16);
+    stray[3] = 0.4;
+    stray[11] = 1;
+    const vectors: Float32Array[] = [];
+    const durations: number[] = [];
+    for (let i = 0; i < 90; i += 1) {
+      vectors.push(voice(3, 0.1), voice(5, 0.1));
+      durations.push(10_000, 10_000);
+    }
+    for (let i = 0; i < 10; i += 1) {
+      vectors.push(stray);
+      durations.push(4_000);
+    }
+    expect(groupVoices(vectors, 0.9).includes(2)).toBe(true);
+    expect(new Set(groupVoices(vectors, 0.9, durations))).toEqual(new Set([0, 1]));
+  });
+
   test("keeps the longest speaker when every speaker is below the floor", () => {
     const vectors = [voice(3, 0.1), voice(5, 0.1), voice(9, 0.1)];
     expect(groupVoices(vectors, 0.9, [500, 100, 100])).toEqual([0, 0, 0]);
