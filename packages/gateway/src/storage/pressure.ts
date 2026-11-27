@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { createLogger } from "@omnesis/core";
 import { InsufficientStorageError } from "../http/errors.js";
 import type { GatewayStoragePolicySettings } from "@omnesis/config";
+
+const log = createLogger("gateway:storage:capacity");
 
 export interface StoragePolicy {
   maxBytes: number | null;
@@ -88,11 +91,16 @@ export class StoragePressureManager {
           ...measurement,
           volumes: measurement.volumes.map((volume) => ({ ...volume })),
         };
+        if (this.measurementFailed) log.info("Storage capacity measurement recovered");
         this.measurementFailed = false;
         this.snapshot();
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         // An unreadable filesystem is unknown, never zero bytes or infinite capacity.
+        if (!this.measurementFailed)
+          log.warn(
+            `Storage capacity measurement failed; growth is paused until it recovers: ${error instanceof Error ? error.message : String(error)}`,
+          );
         this.measurementFailed = true;
       })
       .finally(() => {

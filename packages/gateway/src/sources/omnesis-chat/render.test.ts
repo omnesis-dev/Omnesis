@@ -3,7 +3,7 @@
 
 import { describe, test, expect } from "vitest";
 
-import { conversationEvidenceStart, renderConversation } from "./render.js";
+import { conversationEvidenceStart, renderConversation, stripDialogueMarkup } from "./render.js";
 import type { ConversationRecord } from "../../agent/conversation-store.js";
 
 function makeRecord(overrides: Partial<ConversationRecord> = {}): ConversationRecord {
@@ -405,5 +405,23 @@ describe("conversationEvidenceStart", () => {
       conversationEvidenceStart(makeRecord({ origin: { ...watch, seedMessageCount: 2 } })),
     ).toBe(2);
     expect(conversationEvidenceStart(makeRecord({ origin: watch }))).toBeNull();
+  });
+});
+
+describe("stripDialogueMarkup", () => {
+  test("leaves only what was said in a rendered conversation", () => {
+    const { body } = renderConversation(
+      makeRecord({
+        title: "Marathon entry",
+        messages: [
+          { role: "user", parts: [{ kind: "text", text: "When is the race?" }] },
+          { role: "assistant", parts: [{ kind: "text", text: "On **Sunday**." }] },
+          { role: "user", parts: [{ kind: "text", text: "Thanks" }] },
+        ],
+      }),
+    );
+    expect(stripDialogueMarkup(body).replace(/\s+/g, " ").trim()).toBe(
+      "When is the race? On **Sunday**. Thanks",
+    );
   });
 });

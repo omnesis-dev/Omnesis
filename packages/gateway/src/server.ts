@@ -217,6 +217,7 @@ import {
   portalCsrfToken,
   sessionCookieName,
 } from "./http/cookies.js";
+import { createConversationSearch } from "./sources/omnesis-chat/search.js";
 import type { StorageAccounting } from "./storage/accounting.js";
 import type { StoragePressureManager } from "./storage/pressure.js";
 import type { SemanticSearchStatus } from "@omnesis/source-sdk";
@@ -2111,6 +2112,12 @@ export function createServer(
   // An injected `deviceAnswerScope` (a test double) takes precedence.
   agentDeps.deviceAnswerScope ??= (deviceId, tokenId) =>
     resolveDeviceAnswerScope(db, deviceId, tokenId);
+  if (opts?.searchPipeline) {
+    agentDeps.conversationSearch ??= createConversationSearch({
+      pipeline: opts.searchPipeline,
+      db,
+    });
+  }
   mountAgentRoutes(app, agentDeps);
   const mcpHttpRuntime = mountMcpStreamableRoutes(app, {
     notesRuntime: () => getOmnesisNotesRuntime(),

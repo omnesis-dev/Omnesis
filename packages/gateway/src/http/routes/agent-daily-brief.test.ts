@@ -53,6 +53,7 @@ const PLAIN: ConversationRecord = {
 function reader(): ConversationReader {
   const records = new Map([BRIEF_THREAD, PLAIN].map((r) => [r.id, r]));
   return {
+    listConversations: () => Promise.resolve([]),
     listConversationPage: () =>
       Promise.resolve({ conversations: [], pageInfo: { hasMore: false } }) as never,
     loadConversation: (id) => Promise.resolve(records.get(id) ?? null),

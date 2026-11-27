@@ -743,7 +743,7 @@ describe("RecordingTranscriptionService speakers", () => {
     ]);
   });
 
-  test("suggests the overlapping event's title and attendees, and who was addressed", async () => {
+  test("suggests the overlapping event's title and attendees, never a name heard in the transcript", async () => {
     separator = new ReplayVoiceSeparator();
     const jamie = findOrCreatePerson(
       db,
@@ -801,15 +801,6 @@ describe("RecordingTranscriptionService speakers", () => {
         documentId: "doc-sync",
       },
       {
-        key: `mention:2:${jamie}`,
-        kind: "person",
-        source: "mention",
-        speaker: 2,
-        personId: jamie,
-        name: "Jamie R.",
-        evidence: "Thanks, Jamie.",
-      },
-      {
         key: "person:p-priya",
         kind: "person",
         source: "calendar",
@@ -836,7 +827,7 @@ describe("RecordingTranscriptionService speakers", () => {
     ]);
   });
 
-  test("a calendar that cannot be read leaves the mentions; an unknown recording has none", async () => {
+  test("a calendar that cannot be read leaves nothing to suggest; an unknown recording has none", async () => {
     separator = new ReplayVoiceSeparator();
     calendar = () => {
       throw new Error("analytics offline");
@@ -850,9 +841,7 @@ describe("RecordingTranscriptionService speakers", () => {
     );
     await service.finish(id, 1, at(60_000));
     await service.idle();
-    expect((await service.suggestions(id))?.suggestions).toMatchObject([
-      { key: "mention:2:alex", speaker: 2, personId: null, name: "Alex" },
-    ]);
+    expect((await service.suggestions(id))?.suggestions).toEqual([]);
     expect(await service.suggestions(randomUUID())).toBeNull();
     expect(await service.dismissSuggestion(randomUUID(), "x")).toBe(false);
     expect(await service.setTitle(randomUUID(), "x")).toBe(false);

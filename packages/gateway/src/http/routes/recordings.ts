@@ -33,8 +33,7 @@
  *     written again.
  *   - `GET /recordings/:id/suggestions` offers who likely took part and what
  *     the recording was: attendees and the title of calendar events it
- *     overlaps, and names addressed in the transcript, each for the speaker
- *     who answered. Nothing is applied: the owner accepts one through the
+ *     overlaps. Nothing is applied: the owner accepts one through the
  *     speaker and title routes, or dismisses it with
  *     `POST /recordings/:id/suggestions/dismiss` (`{key}`).
  *   - `GET /recordings/:id/speakers` lists a session's speakers with how long
