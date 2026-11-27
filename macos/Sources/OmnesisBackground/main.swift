@@ -6,6 +6,7 @@ import DesktopCore
 
 /// The registered login item owns only the desktop daemon. Runtime lifecycle
 /// and its single-instance lock remain in the portable desktop package.
+@MainActor
 final class BackgroundDelegate: NSObject, NSApplicationDelegate {
     private var service: BackgroundService?
     private var terminating = false
