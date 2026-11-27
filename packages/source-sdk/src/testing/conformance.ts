@@ -348,6 +348,17 @@ export async function runSourceConformance<
         );
       }
 
+      // The collector routes a sync to syncStructured() only when the live
+      // instance carries a schema array: one without it is synced through
+      // sync() instead, and its structured pages are never fetched.
+      ran();
+      if (hasStructured && !Array.isArray(instance.analyticsSchemas)) {
+        fail(
+          "capability.structured-routing",
+          "the instance implements syncStructured() but carries no analyticsSchemas array, so the collector syncs it through sync() and never calls syncStructured(). Return the declared schemas (an empty array when there are none) on the instance too.",
+        );
+      }
+
       ran();
       if (def.historyImport && typeof instance.importHistory !== "function") {
         fail(

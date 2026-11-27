@@ -61,3 +61,6 @@ packages/watch/eval-runs/
 # time; only their pinned manifest is tracked.
 packages/gateway/duckdb-extensions/*
 !packages/gateway/duckdb-extensions/manifest.json
+
+# Content-bound provenance for git-less official Docker build contexts.
+/packages/gateway/telemetry-build.json

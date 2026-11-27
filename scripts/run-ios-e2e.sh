@@ -29,6 +29,9 @@
 
 set -euo pipefail
 
+export OMNESIS_RUNTIME_MODE=test
+export OMNESIS_TELEMETRY=off
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # Preserve setup-node's selected binary (and caller tool shims).

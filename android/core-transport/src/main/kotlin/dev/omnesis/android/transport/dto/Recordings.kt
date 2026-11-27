@@ -135,8 +135,61 @@ data class RecordingSpeakerDto(
     val mapped: Boolean get() = isSelf || personId != null || name != null
 }
 
+/**
+ * `GET /recordings/:id/speakers`: the speakers, and the people present without
+ * a speaking turn of their own (absent from gateways before they could be added).
+ */
 @Serializable
-data class RecordingSpeakersResponse(val speakers: List<RecordingSpeakerDto> = emptyList())
+data class RecordingSpeakersResponse(
+    val speakers: List<RecordingSpeakerDto> = emptyList(),
+    val participants: List<RecordingParticipantDto> = emptyList(),
+)
+
+/**
+ * Someone present without a speaking turn — the gateway's `ParticipantIdentity`
+ * (`packages/gateway/src/sources/omnesis-recordings/index.ts`):
+ *
+ * ```ts
+ * interface ParticipantIdentity {
+ *   key: string;              // "person:<id>" | "name:<lowercased name>"; what removes it
+ *   personId: string | null;
+ *   name: string | null;      // the person's name, or the name given
+ * }
+ * ```
+ */
+@Serializable
+data class RecordingParticipantDto(
+    val key: String,
+    val personId: String? = null,
+    val name: String? = null,
+)
+
+@Serializable
+data class RecordingParticipantsResponse(val participants: List<RecordingParticipantDto> = emptyList())
+
+/**
+ * Who the owner adds as present, the body of `POST /recordings/:id/participants`:
+ * exactly one of `{personId}` or `{name}` (1..120 characters, trimmed by the
+ * gateway; the gateway's `addRecordingParticipantBody`).
+ */
+sealed interface NewParticipant {
+    data class Person(val personId: String) : NewParticipant
+    data class Name(val name: String) : NewParticipant
+
+    /** The key the gateway files it under, so a change can show before it answers. */
+    val key: String
+        get() = when (this) {
+            is Person -> "person:$personId"
+            is Name -> "name:${name.trim().lowercase()}"
+        }
+
+    fun toJson(): JsonObject = buildJsonObject {
+        when (val participant = this@NewParticipant) {
+            is Person -> put("personId", participant.personId)
+            is Name -> put("name", participant.name)
+        }
+    }
+}
 
 /**
  * Who one speaker is, the body of `PUT /recordings/:id/speakers/:n`: exactly

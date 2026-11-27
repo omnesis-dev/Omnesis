@@ -200,6 +200,8 @@ omnesis_env+=(
   HOME="$HOME_DIR"
   PATH="$PATH"
   SHELL=/bin/bash
+  OMNESIS_RUNTIME_MODE=test
+  OMNESIS_TELEMETRY=off
   OMNESIS_IMAGE_REPO="$IMAGE_REPO"
   OMNESIS_GATEWAY_WAIT_SECONDS=240
   # This host never completes an OAuth flow, and the callback ports it would

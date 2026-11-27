@@ -9,6 +9,14 @@ import { describe, expect, test } from "vitest";
 import { e2eGatewayEnv, e2eTsxCommand } from "./gateway-env.js";
 
 describe("e2eGatewayEnv", () => {
+  test("never inherits production telemetry authority", () => {
+    expect(
+      e2eGatewayEnv({ OMNESIS_RUNTIME_MODE: "production", OMNESIS_TELEMETRY: "on" }),
+    ).toMatchObject({
+      OMNESIS_RUNTIME_MODE: "test",
+      OMNESIS_TELEMETRY: "off",
+    });
+  });
   test("uses small pools for synthetic gateway processes", () => {
     const env = e2eGatewayEnv({});
 

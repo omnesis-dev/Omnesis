@@ -9,7 +9,8 @@
 # What it does, in order:
 #   1. Detect OS/arch (macOS + Linux; everything else gets an honest refusal).
 #   2. Ensure Node >= 24; source builds need >=24.16 <25 or >=26.1.
-#      Uses Homebrew on macOS or NodeSource via apt/dnf on Linux.
+#      Uses Homebrew on macOS, NodeSource via apt/dnf on Linux, or the
+#      distro's own Node 24 LTS package via pacman on Arch Linux.
 #   3. Install the `omnesis` CLI from the newest stable source tag. `--method
 #      package` installs the published npm package instead, and `--method auto`
 #      prefers the package when the registry serves it.
@@ -773,6 +774,13 @@ apt_get() {
   run_privileged env DEBIAN_FRONTEND=noninteractive apt-get "$@"
 }
 
+# Arch Linux and Arch Linux ARM. No -y: refreshing the package databases
+# without a full upgrade is a partial upgrade, which Arch does not support.
+# A stale database makes the install fail, and the message says to upgrade.
+pacman_install() {
+  run_privileged pacman -S --needed --noconfirm "$@"
+}
+
 configure_network_budget() {
   GIT_HTTP_LOW_SPEED_LIMIT="${GIT_HTTP_LOW_SPEED_LIMIT:-1}"
   GIT_HTTP_LOW_SPEED_TIME="${GIT_HTTP_LOW_SPEED_TIME:-$NETWORK_TIMEOUT_SECONDS}"
@@ -808,6 +816,9 @@ ensure_git() {
   elif command -v dnf >/dev/null 2>&1; then
     info "Installing git (dnf)..."
     set -x; run_privileged dnf install -y git; set +x
+  elif command -v pacman >/dev/null 2>&1; then
+    info "Installing git (pacman)..."
+    set -x; pacman_install git || { set +x; fail "Could not install git. Run 'sudo pacman -Syu git' and re-run."; }; set +x
   else
     fail "git is required. Install it for your distro and re-run."
   fi
@@ -835,6 +846,10 @@ ensure_source_build_tools() {
     info "Installing source build tools (dnf)..."
     run_privileged dnf install -y gcc-c++ make python3 || \
       fail "Could not install C/C++ compilers, make, and Python 3. Install them for your distro and re-run."
+  elif command -v pacman >/dev/null 2>&1; then
+    info "Installing source build tools (pacman)..."
+    pacman_install base-devel python || \
+      fail "Could not install base-devel and Python 3. Run 'sudo pacman -Syu base-devel python' and re-run."
   else
     fail "A source build needs make, C/C++ compilers, and Python 3. Install them for your distro and re-run."
   fi
@@ -923,6 +938,10 @@ ensure_node() {
       info "Installing Node 24 via NodeSource (dnf)... commands shown as they run"
       run_nodesource_setup https://rpm.nodesource.com/setup_24.x
       set -x; run_privileged dnf install -y nodejs; set +x
+    elif command -v pacman >/dev/null 2>&1; then
+      # Arch packages Node 24 LTS itself; NodeSource has no pacman repository.
+      info "Installing Node 24 LTS (pacman)... commands shown as they run"
+      set -x; pacman_install nodejs-lts-krypton npm || { set +x; fail "Could not install Node 24 (nodejs-lts-krypton). Run 'sudo pacman -Syu nodejs-lts-krypton npm' (it replaces an older nodejs package) and re-run."; }; set +x
     else
       fail "Node $NODE_INSTALL_RANGE is required. Install it for your distro (https://nodejs.org) and re-run. (Immutable/declarative distros: add nodejs_24 to your system config.)"
     fi
@@ -1932,6 +1951,10 @@ render_source_wrapper() {
   UPDATE_REFUSAL_GUARD='[ "${1:-}" != "update" ] && ! daemon_recovery "$@"'
   DAEMON_RECOVERY_FUNCTION="$(render_source_daemon_recovery)
 "
+  SOURCE_RUNTIME_AUTHORITY='# Only an installed source launcher grants production runtime authority.
+OMNESIS_RUNTIME_MODE="${OMNESIS_RUNTIME_MODE-production}"
+export OMNESIS_RUNTIME_MODE
+'
   case "${2:-current}" in
     current) ;;
     legacy)
@@ -1942,6 +1965,7 @@ render_source_wrapper() {
       NPM_TRUST_FUNCTION=""
       UPDATE_REFUSAL_GUARD='[ "${1:-}" != "update" ]'
       DAEMON_RECOVERY_FUNCTION=""
+      SOURCE_RUNTIME_AUTHORITY=""
       ;;
     *) return 1 ;;
   esac
@@ -1967,7 +1991,7 @@ case "\$(node --version 2>/dev/null)" in
     done
     ;;
 esac
-RUNTIME_CONFIG_DIR="\${OMNESIS_CONFIG_DIR:-\$DEFAULT_CONFIG_DIR}"
+${SOURCE_RUNTIME_AUTHORITY}RUNTIME_CONFIG_DIR="\${OMNESIS_CONFIG_DIR:-\$DEFAULT_CONFIG_DIR}"
 UPDATE_LOCK_ACQUIRED=0
 UPDATE_LOCK_HANDOFF=0
 UPDATE_LOCK_HEARTBEAT_PID=""
@@ -6294,6 +6318,10 @@ docker_require_writable_dirs() {
 docker_prepare_dirs() {
   mkdir -p "$CONFIG_DIR"
   chmod 700 "$CONFIG_DIR" 2>/dev/null || true
+  if [ "$COLLECTOR" = 0 ]; then
+    record_telemetry_notice
+    docker_own_path "$CONFIG_DIR/telemetry-notice-v1"
+  fi
   if [ "$COLLECTOR" = 1 ]; then
     mkdir -p "$CONFIG_DIR/collector"
     chmod 700 "$CONFIG_DIR/collector" 2>/dev/null || true
@@ -6439,6 +6467,8 @@ docker_compose_gateway_service() {
   [ "$DOCKER_COMBINED" = 0 ] || docker_compose_shared_folders
   printf '    environment:\n'
   printf '      - OMNESIS_CONFIG_DIR=%s\n' "$CONFIG_DIR"
+  printf '      - OMNESIS_RUNTIME_MODE=${OMNESIS_RUNTIME_MODE:-production}\n'
+  printf '      - OMNESIS_TELEMETRY=${OMNESIS_TELEMETRY:-on}\n'
   printf '      - OMNESIS_LOG_LEVEL=%s\n' "$LOG_LEVEL"
   docker_compose_host_home
   [ "$DOCKER_NETWORK" != host ] || printf '      - OMNESIS_OAUTH_CALLBACK_HOST=127.0.0.1\n'
@@ -9640,6 +9670,35 @@ parse_args() {
   done
 }
 
+print_telemetry_notice() {
+  [ "$CLIENT_ONLY" = 0 ] || return 0
+  info "Omnesis includes minimal installation telemetry, enabled by default."
+  info "Once a day it shares the gateway version, public Git commit (or custom), OS,"
+  info "CPU architecture and a random identifier derived locally that rotates monthly."
+  info "No personal content, connected accounts or conversations are collected."
+  info "Disable at any time: omnesis config set /telemetry/enabled false"
+  info "or set OMNESIS_TELEMETRY=off in the gateway environment before starting it."
+  info "Details: https://github.com/omnesis-dev/Omnesis/blob/main/TELEMETRY.md"
+  echo ""
+}
+
+record_telemetry_notice() {
+  # This records installer disclosure, independently of the portal's acknowledgement.
+  # Failure leaves reporting waiting for the portal; installation still works.
+  [ "$CLIENT_ONLY" = 0 ] || return 0
+  ( umask 077; mkdir -p "$CONFIG_DIR" && touch "$CONFIG_DIR/telemetry-notice-v1" ) || \
+    warn "Telemetry notice could not be recorded; reporting will wait for the portal."
+  TELEMETRY_ENV_NORMALIZED=$(printf '%s' "${OMNESIS_TELEMETRY:-}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
+  case "$TELEMETRY_ENV_NORMALIZED" in
+    off|false|0|no) set_env OMNESIS_TELEMETRY off ;;
+  esac
+  # A fixture's service manager starts with a fresh environment. Retain its
+  # explicit isolation identity even if a test later enables the preference.
+  if [ "${OMNESIS_TEST_INSTANCE:-}" = 1 ]; then
+    set_env OMNESIS_TEST_INSTANCE 1
+  fi
+}
+
 main() {
   # Internal: the Docker launcher for a compose file and service, on stdout,
   # with nothing else done. The updater image runs this to refresh an older
@@ -9808,6 +9867,7 @@ main() {
   printf ''"$C_BOLD"'Omnesis installer'"$C_RESET"' — fully local, fully private.\n'
   echo ""
   detect_platform
+  print_telemetry_notice
   plan_beside_docker
   note_registered_services
   plan_existing_update
@@ -9834,6 +9894,7 @@ main() {
     return 0
   fi
   if [ "$UPDATE_EXISTING" = 1 ]; then
+    record_telemetry_notice
     update_existing_install
     return 0
   fi
@@ -9935,6 +9996,7 @@ main() {
   fi
   setup_keyring_init
   setup_keyring_migrate
+  record_telemetry_notice
   start_services
   PACKAGE_SERVICE_REBOUND=1
   if [ "$WANT_SERVICE" = 1 ] && { ! restart_package_service_for_wrapper gateway ||

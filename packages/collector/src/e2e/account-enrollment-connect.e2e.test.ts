@@ -21,7 +21,7 @@
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import {
   authorizeAccountDesktop,
   hostedGatewayHostname,
@@ -70,7 +70,9 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
   let directory: string;
   let world: EnrollmentWorld;
   let browser: PasskeyBrowser;
-  const gateways: Gateway[] = [];
+  const gateways = new Set<Gateway>();
+  const sharedGateways = new Set<Gateway>();
+  let originalGateway: Gateway;
   /** A gateway linked to an account it created, and the browser holding that account's passkey. */
   let switched: { gateway: Gateway; session: PasskeySession; accountId: string };
   /** An account made before the relay became invite-only, and the browser holding its passkey. */
@@ -111,10 +113,24 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
     browser = await PasskeyBrowser.launch(world);
   }, gatewayBootBudgetMs() + 60_000);
 
+  // Each gateway owns full runtime worker pools. Keep only the fixtures that a
+  // later case still needs; independent cases must not accumulate live gateways.
+  afterEach(async () => {
+    await closeEnrollmentFixture(
+      undefined,
+      [...gateways]
+        .filter((gateway) => !sharedGateways.has(gateway))
+        .map((gateway) => async () => {
+          await gateway.close();
+          gateways.delete(gateway);
+        }),
+    );
+  }, 60_000);
+
   afterAll(async () => {
     await closeEnrollmentFixture(world ? directory : undefined, [
       () => browser?.close(),
-      ...gateways.map((gateway) => () => gateway.close()),
+      ...[...gateways].map((gateway) => () => gateway.close()),
       () => world?.close(),
     ]);
   }, 60_000);
@@ -348,7 +364,7 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
     "open signup: the code the gateway shows leads to a new passkey account, and the gateway ends linked with that sign-in pinned as a suggestion, waiting for the owner to confirm it",
     async () => {
       const gateway = await EnrollmentGateway.start(world, "open");
-      gateways.push(gateway);
+      gateways.add(gateway);
       const before = await gateway.status();
       expect(before.account.linked).toBe(false);
       expect(before.deviceEnrollment.trustedSignIns).toEqual([]);
@@ -376,6 +392,8 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
       expect(asking.deviceEnrollment).toMatchObject({ policy: "ask" });
       expect(asking.deviceEnrollment.trustedSignIns).toHaveLength(1);
       expect(session.errors).toEqual([]);
+      originalGateway = gateway;
+      sharedGateways.add(gateway);
     },
     gatewayBootBudgetMs() + 120_000,
   );
@@ -384,7 +402,7 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
     "I already have one: the sign-in page creates nothing by itself, offers to create an account instead, and the account made there links the gateway",
     async () => {
       const gateway = await EnrollmentGateway.start(world, "switch");
-      gateways.push(gateway);
+      gateways.add(gateway);
       const started = await gateway.connect("existing");
       expect(started.connect).toMatchObject({ state: "waiting" });
       const session = await browser.session();
@@ -429,12 +447,14 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
         session,
         accountId: (await signedInAccount(world, session)).accountId,
       };
+      sharedGateways.add(gateway);
     },
     gatewayBootBudgetMs() + 120_000,
   );
 
   test("starting over: an unlinked gateway creates a different account, and the account it created before is gone with its sign-in", async () => {
     const { gateway, session: former } = switched;
+    sharedGateways.delete(gateway);
     await gateway.unlinkAccount();
     expect((await gateway.status()).deviceEnrollment.trustedSignIns).toEqual([]);
 
@@ -466,6 +486,7 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
   test(
     "invite signup: an account with no gateway connects through the real CLI without an invite, which pins its sign-in and records the owner's choice to approve each device",
     async () => {
+      sharedGateways.delete(originalGateway);
       // A passkey account exists, with no gateway, before the relay becomes invite-only.
       const session = await browser.session();
       const existing = { session, accountId: await createUnlinkedAccount(world, session) };
@@ -473,7 +494,7 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
       await world.startRelay({ signupPolicy: "invite" });
 
       const gateway = await EnrollmentGateway.start(world, "invite-only");
-      gateways.push(gateway);
+      gateways.add(gateway);
       // `--accept-terms` is still accepted from older scripts, and changes nothing.
       const run = cloudConnect(gateway, ["--existing", "--ask-first", "--accept-terms"]);
       const printed = await printedGatewayCode(run);
@@ -513,7 +534,7 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
       );
       expect((await signedInAccount(world, existing.session)).accountId).toBe(existing.accountId);
       // The first gateway's link survived the relay restart and policy change.
-      expect((await gateways[0]!.status()).account.linked).toBe(true);
+      expect((await originalGateway.status()).account.linked).toBe(true);
 
       // Connecting a linked gateway again is refused before any sign-in starts.
       const again = cloudConnect(gateway, ["--existing"]);
@@ -545,7 +566,7 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
     "without a terminal, the CLI names both flags and starts nothing; a chosen new account that already existed is said, and the invite stays unused",
     async () => {
       const gateway = await EnrollmentGateway.start(world, "invite-existing");
-      gateways.push(gateway);
+      gateways.add(gateway);
       const before = await gateway.status();
       const unattended = cloudConnect(gateway, []);
       expect(await unattended.exit).not.toBe(0);
@@ -591,7 +612,7 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
     "a connect left waiting and run again with an invite starts again with it, and says the invite went unused when an existing account signs in",
     async () => {
       const gateway = await EnrollmentGateway.start(world, "invite-after-existing");
-      gateways.push(gateway);
+      gateways.add(gateway);
       // The owner starts signing in to an account they have, then closes the terminal.
       const first = cloudConnect(gateway, ["--existing"]);
       await printedGatewayCode(first);
@@ -638,7 +659,7 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
     "a browser already signed in to an account still creates a new one with a passkey from the CLI, which spends the invite",
     async () => {
       const gateway = await EnrollmentGateway.start(world, "invite-passkey");
-      gateways.push(gateway);
+      gateways.add(gateway);
       const invite = world.invite();
       const run = cloudConnect(gateway, ["--invite", invite]);
       const printed = await printedGatewayCode(run);
@@ -664,7 +685,7 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
       expect(await checked.json()).toMatchObject({ status: "used" });
       // Using it again is refused before anyone signs in.
       const again = await EnrollmentGateway.start(world, "invite-reused");
-      gateways.push(again);
+      gateways.add(again);
       const reused = cloudConnect(again, ["--invite", invite]);
       expect(await reused.exit).not.toBe(0);
       expect(reused.stdout() + reused.stderr()).toContain(
@@ -679,7 +700,7 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
     "the window a portal opened by script for the sign-in closes itself once the gateway is connected",
     async () => {
       const gateway = await EnrollmentGateway.start(world, "portal-window");
-      gateways.push(gateway);
+      gateways.add(gateway);
       // Creating an account here takes an invite by now.
       const started = await gateway.connect("create", world.invite());
       expect(started.connect?.state).toBe("waiting");

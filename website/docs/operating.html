@@ -615,6 +615,41 @@ omnesis storage cancel JOB_ID --yes</pre>
           <code>gateway.minFreeDiskMb</code>.
         </p>
 
+        <h2 id="installation-telemetry">Installation telemetry</h2>
+        <p>
+          Production gateways share a minimal daily installation census by default: gateway version,
+          verified public commit (or <code>custom</code>), operating-system family, CPU architecture
+          and an identifier derived from a local random secret that rotates every UTC calendar
+          month. The schema version and rotation month accompany the report. No personal content,
+          connected accounts, conversations or feature usage are included. Network failures never
+          affect the gateway. Test, synthetic and development gateways do not instantiate production
+          reporting.
+        </p>
+        <p>
+          The installer displays an informational notice before startup, without adding a prompt.
+          The portal's first-visit notice offers <strong>Agree</strong> and
+          <strong>Disable telemetry</strong>; both acknowledgement and preference are saved on the
+          gateway. After acknowledgement, the explanatory card disappears; the preference control
+          and documentation link remain in Settings. Previously disabled gateways are not prompted.
+          Change the setting at any time in
+          <strong>Settings → Config → Installation telemetry</strong>, or run
+          <code>omnesis config set /telemetry/enabled false</code>. This cancels scheduled and
+          in-flight reports without a restart. To resume, use
+          <code>omnesis config set /telemetry/enabled true</code>.
+        </p>
+        <p>
+          <code>OMNESIS_TELEMETRY=off</code> in the gateway environment or configuration directory's
+          <code>.env</code> forcibly disables reporting and wins over the saved setting. Remove it
+          and reload the service environment before re-enabling. Individual daily records expire at
+          the first hourly cleanup after their UTC rotation month ends; identifier-free statistics
+          remain. The census cannot accurately deduplicate unique installations across month
+          boundaries. See the complete
+          <a href="https://github.com/omnesis-dev/Omnesis/blob/main/TELEMETRY.md"
+            >payload, retention and limitations</a
+          >
+          and the <a href="/privacy#installation-telemetry">privacy policy</a>.
+        </p>
+
         <h2 id="configuration">Configuration</h2>
         <p>
           Everything you can edit lives in one file, <code>~/.config/omnesis/omnesis.json</code>,

@@ -70,7 +70,15 @@ Publishing flips both at **stage time**, never in the repo:
   are declared per package in `EXTRA_ASSETS`: the gateway's `portal/` and the
   agent integration's OpenClaw manifest/entry plus Hermes adapter bundle. Staging
   rejects compiled modules whose TypeScript source no longer exists, preventing
-  incremental-build residue from entering a release.
+  incremental-build residue from entering a release. Gateway staging also writes
+  `dist/telemetry-build.json`: a clean commit is reported only when the constant
+  public upstream advertises it as a main/tag ref or it is proved reachable from
+  its main tip. Unknown, modified or
+  offline builds use `custom`; provenance failure never blocks packaging. Official image workflows
+  generate a gitignored, content-bound proof before Docker removes Git metadata.
+  The git-less build accepts that proof only while the Docker source inputs still
+  match; changed, missing or unverified archive inputs report `custom`. Local
+  checkouts always verify their live history rather than reuse an archive proof.
 - `scripts/release/publish.mjs --registry <url> [--tag <dist-tag>]
 [--access public|restricted] [--dry-run]` — stages and packs every package,
   then publishes the packed tarballs in dependency order (`publish-graph.mjs`).
