@@ -13,7 +13,6 @@
  * removed again, parseArgs() stops surfacing the flags and these assertions
  * fail.
  */
-import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { stripVTControlCharacters } from "node:util";
@@ -1102,12 +1101,11 @@ describe("pairInstructionLines — per-kind redeem guidance", () => {
     ).not.toContain(CHROME_WEB_STORE_URL);
   });
 
-  it("links the same store listing the portal does", () => {
-    const portal = readFileSync(
-      join(import.meta.dirname, "../../../gateway/portal/js/lib/extension-links.js"),
-      "utf8",
-    );
-    expect(portal).toContain(`"${CHROME_WEB_STORE_URL}"`);
+  it("links the same store listing as the source installation guide", async () => {
+    const { findDescriptor } = await import("@omnesis/collector/registry");
+    const guide = findDescriptor("web")?.setupGuideContent;
+    expect(guide?.pairing?.deviceKind).toBe("browser");
+    expect(guide?.links?.map((link) => link.url)).toContain(CHROME_WEB_STORE_URL);
   });
 
   it("directs agent codes to connect and collector codes to a saved token file", () => {
