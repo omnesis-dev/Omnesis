@@ -15,7 +15,7 @@
     "@omnesis/types": "*",
     "@whiskeysockets/baileys": "7.0.0-rc13",
     "better-sqlite3": "^13.2.0",
-    "better-sqlite3-multiple-ciphers": "13.0.3",
+    "better-sqlite3-multiple-ciphers": "13.1.1",
     "pino": "^10.4.0",
     "qrcode-terminal": "^0.12.0",
     "sharp": "^0.35.5"
