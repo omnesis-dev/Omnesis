@@ -15,6 +15,7 @@ import {
   fingerprint,
   groupRows,
   planPage,
+  storeUnavailablePage,
   utcDay,
   utcTime,
   type OmatelCursor,
@@ -241,11 +242,15 @@ export function syncMessages(
   cursor: OmatelCursor | null,
   opts: MessagesSyncOptions,
 ): StructuredSyncResult<OmatelCursor> {
-  const snapshot = readMessages(opts.dataDir, opts.dataCutoff) ?? {
-    messages: [],
-    participants: new Map(),
-    parts: new Map(),
-  };
+  const snapshot = readMessages(opts.dataDir, opts.dataCutoff);
+  if (snapshot === null) {
+    return storeUnavailablePage(
+      cursor,
+      MESSAGES_RENDER_VERSION,
+      MESSAGES_STORE.file,
+      opts.dataCutoff,
+    );
+  }
   const groups = groupRows(snapshot.messages, (row) => `${row.address}:${utcDay(row.at)}`);
   const current = new Map<string, string>();
   for (const [key, rows] of groups) {
@@ -268,7 +273,6 @@ export function syncMessages(
   const records = plan.render.flatMap((key) =>
     groups.get(key)!.map((row) => messageToRecord(row, snapshot, opts.phoneRegion)),
   );
-  const finalDirty = !plan.hasMore && plan.dirty;
   if (plan.render.length > 0 || plan.removed.length > 0) {
     log.info(
       `Messages page: ${plan.render.length} conversation days rendered, ${plan.removed.length} removed, ${records.length} messages (hasMore: ${plan.hasMore})`,
@@ -278,16 +282,18 @@ export function syncMessages(
     analytics: {
       tableName: OMATEL_MESSAGES_TABLE,
       records,
-      // The last page of a cycle that changed something names every message
-      // still in the store, so one the owner deleted leaves the table too.
-      ...(finalDirty
-        ? { presentKeys: snapshot.messages.map((row) => ({ id: String(row.id) })) }
-        : {}),
+      // The last page of every cycle names every message still in the store,
+      // so one the owner deleted leaves the table once enough snapshots agree.
+      ...(plan.hasMore
+        ? {}
+        : { presentKeys: snapshot.messages.map((row) => ({ id: String(row.id) })) }),
     },
     documents,
     deletedExternalIds: plan.removed.map((key) => `sms:${key}`),
     cursor: plan.next,
     hasMore: plan.hasMore,
+    // A complete read clears a withheld snapshot an unavailable store left.
+    issues: plan.hasMore ? undefined : [],
     progress: {
       phase: cursor === null ? "bootstrap" : "incremental",
       processed: Object.keys(plan.next.groups).length,

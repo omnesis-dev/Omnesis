@@ -7,6 +7,7 @@ import {
   fingerprint,
   groupRows,
   planPage,
+  storeUnavailablePage,
   utcDay,
   utcTime,
   type OmatelCursor,
@@ -173,7 +174,10 @@ export function syncCalls(
   cursor: OmatelCursor | null,
   opts: CallsSyncOptions,
 ): StructuredSyncResult<OmatelCursor> {
-  const rows = readCalls(opts.dataDir, opts.dataCutoff) ?? [];
+  const rows = readCalls(opts.dataDir, opts.dataCutoff);
+  if (rows === null) {
+    return storeUnavailablePage(cursor, CALLS_RENDER_VERSION, CALLS_STORE.file, opts.dataCutoff);
+  }
   const days = groupRows(rows, (row) => utcDay(row.started_at));
   const current = new Map(
     [...days].map(([day, dayRows]) => [day, fingerprint([opts.phoneRegion ?? null, dayRows])]),
@@ -183,7 +187,6 @@ export function syncCalls(
   const records = plan.render.flatMap((day) =>
     days.get(day)!.map((row) => callToRecord(row, opts.phoneRegion)),
   );
-  const finalDirty = !plan.hasMore && plan.dirty;
   if (plan.render.length > 0 || plan.removed.length > 0) {
     log.info(
       `Call log page: ${plan.render.length} days rendered, ${plan.removed.length} removed, ${records.length} calls (hasMore: ${plan.hasMore})`,
@@ -193,14 +196,16 @@ export function syncCalls(
     analytics: {
       tableName: OMATEL_CALL_LOG_TABLE,
       records,
-      // The last page of a cycle that changed something names every call
-      // still in the store, so a call the owner deleted leaves the table too.
-      ...(finalDirty ? { presentKeys: rows.map((row) => ({ id: String(row.id) })) } : {}),
+      // The last page of every cycle names every call still in the store, so
+      // a call the owner deleted leaves the table once enough snapshots agree.
+      ...(plan.hasMore ? {} : { presentKeys: rows.map((row) => ({ id: String(row.id) })) }),
     },
     documents,
     deletedExternalIds: plan.removed.map((day) => `call-log:${day}`),
     cursor: plan.next,
     hasMore: plan.hasMore,
+    // A complete read clears a withheld snapshot an unavailable store left.
+    issues: plan.hasMore ? undefined : [],
     progress: {
       phase: cursor === null ? "bootstrap" : "incremental",
       processed: Object.keys(plan.next.groups).length,

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { chmodSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SyncError } from "@omnesis/types";
 import { CALLS_STORE, defaultDataDir, MESSAGES_STORE, openStore } from "./store.js";
@@ -23,6 +24,28 @@ describe("omatel stores", () => {
   it("answers null for a store that does not exist yet", () => {
     expect(openStore(fx.dir, CALLS_STORE)).toBeNull();
   });
+
+  it("answers null when the data folder itself is gone", () => {
+    fx.calls();
+    fx.hide();
+
+    expect(openStore(fx.dir, CALLS_STORE)).toBeNull();
+  });
+
+  it.skipIf(process.getuid?.() === 0)(
+    "refuses, as a permission failure, a store in a folder it may not search",
+    () => {
+      fx.calls();
+      chmodSync(fx.dir, 0o000);
+      try {
+        const opened = () => openStore(fx.dir, CALLS_STORE);
+        expect(opened).toThrow(SyncError);
+        expect(opened).toThrow(/for reading \(EACCES\)/);
+      } finally {
+        chmodSync(fx.dir, 0o700);
+      }
+    },
+  );
 
   it("opens a store of a known schema read-only", () => {
     fx.calls();

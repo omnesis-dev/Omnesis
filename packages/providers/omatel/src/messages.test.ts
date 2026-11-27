@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { chmodSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { tableWrites } from "@omnesis/source-sdk";
 import { syncMessages } from "./messages.js";
@@ -222,6 +223,20 @@ describe("omatel messages", () => {
     expect(write(next.last).presentKeys).toEqual([{ id: String(kept) }]);
   });
 
+  it("names every message on a cycle where nothing changed", () => {
+    const db = fx.messages();
+    const c = addConversation(db, PEER);
+    const id = addMessage(db, c, { direction: "in", body: "hi", at: at("2026-03-04T09:00") });
+    const first = cycle(null);
+
+    const again = cycle(first.cursor);
+
+    expect(again.last.documents).toEqual([]);
+    expect(write(again.last).records).toEqual([]);
+    expect(write(again.last).presentKeys).toEqual([{ id: String(id) }]);
+    expect(again.last.issues).toEqual([]);
+  });
+
   it("re-renders a conversation whose title changed", () => {
     const db = fx.messages();
     const c = addConversation(db, PEER);
@@ -232,6 +247,69 @@ describe("omatel messages", () => {
     const next = cycle(first.cursor);
 
     expect(next.last.documents![0]!.title).toBe("SMS with dentist — 2026-03-04");
+  });
+
+  it("reports a phone that has never had a message as empty, without asserting it", () => {
+    const { last } = cycle(null);
+
+    expect(last.documents).toEqual([]);
+    expect(last.deletedExternalIds).toEqual([]);
+    expect(tableWrites(last.analytics)).toEqual([]);
+    expect(last.issues).toEqual([]);
+  });
+
+  describe("after bootstrap, a messages.db that cannot be read", () => {
+    const bootstrap = () => {
+      const db = fx.messages();
+      const a = addConversation(db, PEER);
+      const b = addConversation(db, OTHER);
+      addMessage(db, a, { direction: "in", body: "first", at: at("2026-03-04T09:00") });
+      addMessage(db, b, { direction: "out", body: "second", at: at("2026-03-05T09:00") });
+      return cycle(null).cursor;
+    };
+
+    const expectRestored = (cursor: OmatelCursor) => {
+      const back = cycle(cursor);
+      expect(back.last.documents).toEqual([]);
+      expect(back.last.deletedExternalIds).toEqual([]);
+      expect(write(back.last).presentKeys).toEqual([{ id: "1" }, { id: "2" }]);
+      expect(back.last.issues).toEqual([]);
+      expect(back.cursor).toEqual(cursor);
+    };
+
+    it.each([
+      ["the file is replaced", "messages.db" as const],
+      ["its folder is moved", undefined],
+    ])("deletes nothing and keeps the cursor while %s, then picks up where it was", (_, file) => {
+      const cursor = bootstrap();
+      const restore = fx.hide(file);
+
+      const gone = cycle(cursor);
+
+      expect(gone.pages).toHaveLength(1);
+      expect(gone.last.documents).toEqual([]);
+      expect(gone.last.deletedExternalIds).toEqual([]);
+      expect(tableWrites(gone.last.analytics)).toEqual([]);
+      expect(gone.last.issues).toEqual([expect.objectContaining({ code: "snapshot-withheld" })]);
+      expect(gone.cursor).toEqual(cursor);
+
+      restore();
+      expectRestored(cursor);
+    });
+
+    it.skipIf(process.getuid?.() === 0)(
+      "fails the page as a permission problem when its folder may not be searched",
+      () => {
+        const cursor = bootstrap();
+        chmodSync(fx.dir, 0o000);
+        try {
+          expect(() => cycle(cursor)).toThrow(/for reading \(EACCES\)/);
+        } finally {
+          chmodSync(fx.dir, 0o700);
+        }
+        expectRestored(cursor);
+      },
+    );
   });
 
   it("refuses a messages.db newer than the schema it reads", () => {

@@ -10,7 +10,7 @@ describe("planPage", () => {
   it("renders every group on a first run", () => {
     const plan = planPage(null, current({ b: "2", a: "1" }), 1, 10);
 
-    expect(plan).toMatchObject({ render: ["a", "b"], removed: [], hasMore: false, dirty: true });
+    expect(plan).toMatchObject({ render: ["a", "b"], removed: [], hasMore: false });
     expect(plan.next).toEqual({ render: 1, groups: { a: "1", b: "2" } });
   });
 
@@ -27,20 +27,19 @@ describe("planPage", () => {
     expect(plan.next.groups).toEqual({ a: "1", b: "changed", d: "4" });
   });
 
-  it("is clean when nothing changed", () => {
+  it("renders nothing when nothing changed", () => {
     const plan = planPage({ render: 1, groups: { a: "1" } }, current({ a: "1" }), 1, 10);
 
-    expect(plan).toMatchObject({ render: [], removed: [], hasMore: false, dirty: false });
+    expect(plan).toMatchObject({ render: [], removed: [], hasMore: false });
   });
 
-  it("carries a cycle's change across pages until its last one", () => {
+  it("spreads a cycle's changes across pages", () => {
     const first = planPage(null, current({ a: "1", b: "2", c: "3" }), 1, 2);
     expect(first).toMatchObject({ render: ["a", "b"], hasMore: true });
-    expect(first.next.dirty).toBe(true);
 
     const second = planPage(first.next, current({ a: "1", b: "2", c: "3" }), 1, 2);
-    expect(second).toMatchObject({ render: ["c"], hasMore: false, dirty: true });
-    expect(second.next.dirty).toBeUndefined();
+    expect(second).toMatchObject({ render: ["c"], hasMore: false });
+    expect(second.next).toEqual({ render: 1, groups: { a: "1", b: "2", c: "3" } });
   });
 
   it("starts over when the rendering version changed", () => {
@@ -54,11 +53,9 @@ describe("planPage", () => {
 describe("isOmatelCursor", () => {
   it("accepts the stored shape and refuses anything else", () => {
     expect(isOmatelCursor({ render: 1, groups: { a: "0a1b" } })).toBe(true);
-    expect(isOmatelCursor({ render: 1, groups: {}, dirty: true })).toBe(true);
     expect(isOmatelCursor({ render: 1, groups: { a: 7 } })).toBe(false);
     expect(isOmatelCursor({ render: "1", groups: {} })).toBe(false);
     expect(isOmatelCursor({ render: 1, groups: [] })).toBe(false);
-    expect(isOmatelCursor({ render: 1, groups: {}, dirty: false })).toBe(false);
     expect(isOmatelCursor(null)).toBe(false);
   });
 });

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { chmodSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { tableWrites } from "@omnesis/source-sdk";
 import { buildCallDay, syncCalls, type CallRow } from "./calls.js";
@@ -115,7 +116,7 @@ describe("omatel call log", () => {
     expect(last.progress).toMatchObject({ coverage: "complete", percentComplete: 100 });
   });
 
-  it("sends nothing on a cycle where no call changed", () => {
+  it("renders nothing on a cycle where no call changed, and still names every call", () => {
     addCall(fx.calls(), {
       number: PEER,
       direction: "in",
@@ -131,7 +132,10 @@ describe("omatel call log", () => {
     expect(again.last.documents).toEqual([]);
     expect(again.last.deletedExternalIds).toEqual([]);
     expect(records(again.last).records).toEqual([]);
-    expect(records(again.last).presentKeys).toBeUndefined();
+    // The gateway removes a deleted call only after several spaced snapshots
+    // omit it, so an unchanged cycle still sends one.
+    expect(records(again.last).presentKeys).toEqual([{ id: "1" }]);
+    expect(again.last.issues).toEqual([]);
     expect(again.cursor).toEqual(first.cursor);
   });
 
@@ -211,11 +215,10 @@ describe("omatel call log", () => {
 
     expect(pages).toHaveLength(2);
     expect(pages[0]!.documents).toHaveLength(100);
-    expect(pages[0]!.cursor.dirty).toBe(true);
     expect(records(pages[0]!).presentKeys).toBeUndefined();
+    expect(pages[0]!.issues).toBeUndefined();
     expect(pages[1]!.documents).toHaveLength(30);
     expect(records(pages[1]!).presentKeys).toHaveLength(130);
-    expect(cursor!.dirty).toBeUndefined();
     expect(Object.keys(cursor!.groups)).toHaveLength(130);
   });
 
@@ -258,12 +261,79 @@ describe("omatel call log", () => {
     expect(next.last.deletedExternalIds).toEqual([]);
   });
 
-  it("treats a phone that has never placed a call as empty", () => {
+  it("treats a phone that has never placed a call as empty, without asserting it", () => {
     const { last } = cycle(null);
 
     expect(last.documents).toEqual([]);
+    expect(last.deletedExternalIds).toEqual([]);
     expect(last.hasMore).toBe(false);
-    expect(records(last).records).toEqual([]);
+    expect(tableWrites(last.analytics)).toEqual([]);
+    expect(last.issues).toEqual([]);
+    expect(last.progress).toMatchObject({ percentComplete: 100 });
+  });
+
+  describe("after bootstrap, a calls.db that cannot be read", () => {
+    const bootstrap = () => {
+      const db = fx.calls();
+      addCall(db, {
+        number: PEER,
+        direction: "in",
+        outcome: "missed",
+        startedAt: at("2026-03-04T09:15"),
+      });
+      addCall(db, {
+        number: OTHER,
+        direction: "out",
+        outcome: "answered",
+        startedAt: at("2026-03-05T10:00"),
+        duration: 42,
+      });
+      return cycle(null).cursor;
+    };
+
+    /** The store reads again: nothing re-renders, nothing is deleted, every call is named. */
+    const expectRestored = (cursor: OmatelCursor) => {
+      const back = cycle(cursor);
+      expect(back.last.documents).toEqual([]);
+      expect(back.last.deletedExternalIds).toEqual([]);
+      expect(records(back.last).presentKeys).toEqual([{ id: "1" }, { id: "2" }]);
+      expect(back.last.issues).toEqual([]);
+      expect(back.cursor).toEqual(cursor);
+    };
+
+    it.each([
+      ["the file is replaced", "calls.db" as const],
+      ["its folder is moved", undefined],
+    ])("deletes nothing and keeps the cursor while %s, then picks up where it was", (_, file) => {
+      const cursor = bootstrap();
+      const restore = fx.hide(file);
+
+      const gone = cycle(cursor);
+
+      expect(gone.pages).toHaveLength(1);
+      expect(gone.last.documents).toEqual([]);
+      expect(gone.last.deletedExternalIds).toEqual([]);
+      expect(tableWrites(gone.last.analytics)).toEqual([]);
+      expect(gone.last.issues).toEqual([expect.objectContaining({ code: "snapshot-withheld" })]);
+      expect(gone.cursor).toEqual(cursor);
+
+      restore();
+      expectRestored(cursor);
+    });
+
+    it.skipIf(process.getuid?.() === 0)(
+      "fails the page as a permission problem when its folder may not be searched",
+      () => {
+        const cursor = bootstrap();
+        chmodSync(fx.dir, 0o000);
+        try {
+          expect(() => syncCalls(cursor, options())).toThrow(/for reading \(EACCES\)/);
+        } finally {
+          chmodSync(fx.dir, 0o700);
+        }
+        expectRestored(cursor);
+      },
+    );
   });
 
   it("normalizes a national number with the phone's region, and keeps one it cannot parse", () => {

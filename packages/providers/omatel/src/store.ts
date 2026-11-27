@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { existsSync } from "node:fs";
+import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -46,10 +46,36 @@ export const CALLS_STORE: StoreSpec = {
   },
 };
 
+function permissionError(path: string, code: string): SyncError {
+  return new SyncError(
+    "permission",
+    `Cannot open ${path} for reading (${code}). Check that the collector runs as the phone's user.`,
+  );
+}
+
 /**
- * Open one store read-only, or answer `null` when it does not exist yet —
- * omatel creates each file the first time its app needs it, so a phone that
- * never placed a call has no `calls.db`.
+ * Whether the store's file is on disk. A file or folder that is not there
+ * answers false; a folder this process may not look into is a permission
+ * failure, not an absence — reading it as an empty store would delete what
+ * was indexed from it.
+ */
+function storeExists(path: string): boolean {
+  try {
+    statSync(path);
+    return true;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return false;
+    if (code === "EACCES" || code === "EPERM") throw permissionError(path, code);
+    throw err;
+  }
+}
+
+/**
+ * Open one store read-only, or answer `null` when it is not on disk — omatel
+ * creates each file the first time its app needs it, so a phone that never
+ * placed a call has no `calls.db`. What a missing store means for the index
+ * is the caller's to decide (`storeUnavailablePage`).
  *
  * A store written by a newer omatel than this source has been checked against
  * is refused rather than guessed at: omatel migrates forward in place, and a
@@ -58,17 +84,14 @@ export const CALLS_STORE: StoreSpec = {
  */
 export function openStore(dataDir: string, spec: StoreSpec): Db | null {
   const path = join(dataDir, spec.file);
-  if (!existsSync(path)) return null;
+  if (!storeExists(path)) return null;
   let db: Db;
   try {
     db = new Database(path, { readonly: true, fileMustExist: true });
   } catch (err) {
     const code = (err as { code?: string }).code;
     if (code === "EACCES" || code === "SQLITE_CANTOPEN" || code === "SQLITE_PERM") {
-      throw new SyncError(
-        "permission",
-        `Cannot open ${path} for reading (${code}). Check that the collector runs as the phone's user.`,
-      );
+      throw permissionError(path, code);
     }
     throw err;
   }

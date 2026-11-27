@@ -3,8 +3,7 @@
 
 /**
  * What both omatel sources persist between runs: the fingerprint of every
- * group they rendered (a conversation's day, a day of calls), and whether the
- * cycle in progress changed anything.
+ * group they rendered (a conversation's day, a day of calls).
  *
  * omatel keeps every message and call until the owner deletes it, and each
  * page reads the whole store, so a discarded cursor costs one full render

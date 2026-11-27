@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -57,6 +57,11 @@ export interface OmatelFixture {
   dir: string;
   messages(): Database.Database;
   calls(): Database.Database;
+  /**
+   * Take one store, or the whole data folder, off disk the way a replace or
+   * a move would; the answer puts it back where it was.
+   */
+  hide(file?: "messages.db" | "calls.db"): () => void;
   cleanup(): void;
 }
 
@@ -77,10 +82,20 @@ export function omatelFixture(): OmatelFixture {
     dir,
     messages: () => (messages ??= open("messages.db", MESSAGES_DDL)),
     calls: () => (calls ??= open("calls.db", CALLS_DDL)),
+    hide(file) {
+      // Everything committed is in the main file, so the store that comes
+      // back is the one that went.
+      for (const db of [messages, calls]) db?.pragma("wal_checkpoint(TRUNCATE)");
+      const from = file ? join(dir, file) : dir;
+      const away = `${from}.away`;
+      renameSync(from, away);
+      return () => renameSync(away, from);
+    },
     cleanup() {
       messages?.close();
       calls?.close();
       rmSync(dir, { recursive: true, force: true });
+      rmSync(`${dir}.away`, { recursive: true, force: true });
     },
   };
 }

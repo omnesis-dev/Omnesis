@@ -1489,7 +1489,9 @@
             <strong>Changes and deletions.</strong> The sources read the stores without changing
             them and sync when they change. Only the conversations and days that changed are sent
             again, such as a message that was delivered or retried. A conversation, message or call
-            you delete on the phone is removed from Omnesis too.
+            you delete on the phone is removed from Omnesis too: its document at the next sync, and
+            its row in the messages or calls table once several syncs have found it gone. While a
+            store cannot be found, for example during a move of its folder, nothing is removed.
           </li>
           <li>
             <strong>Updates.</strong> If the phone's apps move to a store layout this version of
