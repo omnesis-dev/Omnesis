@@ -175,27 +175,26 @@ struct DesktopOnboardingView: View {
                                 )
                             case .waiting:
                                 if store.state.retired == true {
-                                    ContentUnavailableView {
-                                        Label {
+                                    VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.section) {
+                                        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.medium) {
                                             Text("Omnesis is stopped on this Mac")
                                                 .font(DesktopDesignTokens.Typography.body.weight(.medium))
                                                 .accessibilityIdentifier("waiting-retired-summary")
-                                        } icon: {
-                                            Image(systemName: "app.badge.checkmark")
-                                                .font(.system(size: DesktopDesignTokens.Icon.prominent))
+                                            Text(store.state
+                                                .message ?? "Your removal choice is kept. Omnesis will not start in the background.")
+                                                .foregroundStyle(DesktopTheme.secondary)
                                         }
-                                    } description: {
-                                        Text(store.state
-                                            .message ?? "Your removal choice is kept. Omnesis will not start in the background.")
-                                    }
-                                    Button("Review removal") {
-                                        store.removalPlan = nil
-                                        store.removalOutcome = nil
-                                        store.presentRemoval = true
-                                    }
-                                    if store.state.retirement?.mode == "keep-data", store.state.retirement?.phase == "complete" {
-                                        Button("Set up Omnesis again") { store.command("connect") }
-                                            .buttonStyle(DesktopButtonStyle(primary: true))
+                                        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.regular) {
+                                            Button("Review removal") {
+                                                store.removalPlan = nil
+                                                store.removalOutcome = nil
+                                                store.presentRemoval = true
+                                            }
+                                            if store.state.retirement?.mode == "keep-data", store.state.retirement?.phase == "complete" {
+                                                Button("Set up Omnesis again") { store.command("connect") }
+                                                    .buttonStyle(DesktopButtonStyle(primary: true))
+                                            }
+                                        }
                                     }
                                 } else if store.state.waitingForLocalLibrary {
                                     ProgressView("Starting your library on this Mac…")
@@ -206,23 +205,22 @@ struct DesktopOnboardingView: View {
                                     Button("Check this Mac’s library") { store.command("connect") }
                                         .buttonStyle(DesktopButtonStyle(primary: true))
                                 } else {
-                                    ContentUnavailableView {
-                                        Label {
+                                    VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.section) {
+                                        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.medium) {
                                             Text("Your library is not connected yet")
                                                 .font(DesktopDesignTokens.Typography.body.weight(.medium))
                                                 .accessibilityIdentifier("waiting-disconnected-summary")
-                                        } icon: {
-                                            Image(systemName: "laptopcomputer")
-                                                .font(.system(size: DesktopDesignTokens.Icon.prominent))
+                                            Text(
+                                                "Start Omnesis on the computer that keeps your library. If it has not been set up yet, start there first."
+                                            )
+                                            .foregroundStyle(DesktopTheme.secondary)
                                         }
-                                    } description: {
-                                        Text(
-                                            "Start Omnesis on the computer that keeps your library. If it has not been set up yet, start there first."
-                                        )
-                                    }
-                                    Button("Look again") { store.command("connect") }.buttonStyle(DesktopButtonStyle(primary: true))
-                                    if store.state.canChangeUnpreparedChoice {
-                                        Button("Change setup choice") { store.command("status") }
+                                        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.regular) {
+                                            Button("Look again") { store.command("connect") }.buttonStyle(DesktopButtonStyle(primary: true))
+                                            if store.state.canChangeUnpreparedChoice {
+                                                Button("Change setup choice") { store.command("status") }
+                                            }
+                                        }
                                     }
                                 }
                             case .ready:

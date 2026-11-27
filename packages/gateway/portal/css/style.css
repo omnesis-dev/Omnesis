@@ -6853,6 +6853,14 @@ p.devices-pair-expiry {
 }
 
 /* Recordings (experimental): recorded conversations, their speakers and chunks. */
+/* A restored-history notice is a chip, not a full-width row decoration.
+   Let its text wrap when the recording column is narrower than the notice. */
+.recordings-list .privacy-conversation-main > .watch-indicator {
+  align-self: flex-start;
+  max-width: 100%;
+  white-space: normal;
+}
+
 .recordings-list .privacy-item-status.warning,
 .recording-detail .privacy-item-status.warning {
   color: var(--warning);

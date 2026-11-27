@@ -310,6 +310,82 @@ final class DesktopOnboardingUXTests: XCTestCase {
         }
     }
 
+    func testWaitingGuidanceAndActionsShareThePrincipalLeadingAxisWithoutDetachedGaps() async throws {
+        let scenarios: [(json: String, summary: String, detail: String, actions: [String])] = [
+            (
+                #"{"phase":"waiting"}"#,
+                "waiting-disconnected-summary",
+                "Start Omnesis on the computer that keeps your library. If it has not been set up yet, start there first.",
+                ["Look again", "Change setup choice"]
+            ),
+            (
+                #"{"phase":"waiting","retired":true,"retirement":{"mode":"keep-data","phase":"complete"}}"#,
+                "waiting-retired-summary",
+                "Your removal choice is kept. Omnesis will not start in the background.",
+                ["Review removal", "Set up Omnesis again"]
+            ),
+        ]
+        for (index, scenario) in scenarios.enumerated() {
+            let store = try store(scenario.json)
+            var appearances = 0
+            try await render(DesktopOnboardingView().environment(store), "waiting-leading-group-\(index)") { view in
+                appearances += 1
+                let window = try XCTUnwrap(view.window)
+                let content = window.convertToScreen(view.convert(view.bounds, to: nil))
+                let pixel = 1 / window.backingScaleFactor
+                let title = try DesktopAccessibilityDriver.element("onboarding-page-title", in: view)
+                let summary = try DesktopAccessibilityDriver.element(scenario.summary, in: view)
+                let elements = try DesktopAccessibilityDriver.elements(in: view)
+                let descriptions = elements.filter {
+                    $0.accessibilityRole() == .staticText && ($0.accessibilityTextValue() ?? $0.accessibilityLabel()) == scenario.detail
+                }
+                XCTAssertEqual(descriptions.count, 1)
+                let description = try XCTUnwrap(descriptions.first)
+                let titleFrame = title.accessibilityFrame()
+                let summaryFrame = summary.accessibilityFrame()
+                let descriptionFrame = description.accessibilityFrame()
+                var actionFrames: [CGRect] = []
+                for name in scenario.actions {
+                    let matches = elements.filter {
+                        $0.accessibilityRole() == .button && ($0.accessibilityTextValue() ?? $0.accessibilityLabel()) == name
+                    }
+                    XCTAssertEqual(matches.count, 1)
+                    let button = try XCTUnwrap(matches.first)
+                    XCTAssertTrue(button.isAccessibilityEnabled())
+                    actionFrames.append(button.accessibilityFrame())
+                }
+                for frame in [titleFrame, summaryFrame, descriptionFrame] + actionFrames {
+                    XCTAssertTrue([frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite))
+                    XCTAssertGreaterThan(frame.width, 0)
+                    XCTAssertGreaterThan(frame.height, 0)
+                    XCTAssertTrue(content.insetBy(dx: -pixel, dy: -pixel).contains(frame))
+                    XCTAssertEqual(
+                        frame.minX,
+                        titleFrame.minX,
+                        accuracy: pixel,
+                        "Actual text and controls must share the principal leading axis"
+                    )
+                }
+                let summaryGap = summaryFrame.minY - descriptionFrame.maxY
+                XCTAssertGreaterThanOrEqual(summaryGap, -pixel)
+                XCTAssertLessThanOrEqual(summaryGap, DesktopDesignTokens.Space.regular + pixel)
+                let firstAction = try XCTUnwrap(actionFrames.first)
+                let actionGap = descriptionFrame.minY - firstAction.maxY
+                XCTAssertGreaterThanOrEqual(actionGap, -pixel)
+                XCTAssertLessThanOrEqual(
+                    actionGap,
+                    DesktopDesignTokens.Space.wide + pixel,
+                    "Recovery actions must remain grouped with their explanation"
+                )
+                let secondAction = try XCTUnwrap(actionFrames.last)
+                let controlsGap = firstAction.minY - secondAction.maxY
+                XCTAssertGreaterThanOrEqual(controlsGap, -pixel)
+                XCTAssertLessThanOrEqual(controlsGap, DesktopDesignTokens.Space.section + pixel)
+            }
+            XCTAssertEqual(appearances, 2)
+        }
+    }
+
     private enum WaitingTextPart: String { case title, summary }
 
     /// A native Label can aggregate its icon and text; character-range geometry measures only text.

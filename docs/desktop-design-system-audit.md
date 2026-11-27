@@ -99,13 +99,16 @@ VoiceOver checks remain in the ledger even if an early selector passes.
 ## Measured results and remaining gaps
 
 The app and hosted test bundle compiled for the scoped native runs below.
-`DesktopOnboardingUXTests` passed all ten methods with zero failures in its latest
+`DesktopOnboardingUXTests` passed all eleven methods with zero failures in its latest
 selected run. This includes complete terms copy and bounded wrapping, persistent
 labels, required setup and repair actions, and the three distinct Waiting states.
-The Waiting regression retains the exact copy/action/fit contract and compares
+The Waiting regressions retain the exact copy/action/fit contract and compare
 public accessibility text-range geometry, using the already-checked full label
-or value as text authority. Original nine methods remain intact. Inspected
-Light/Dark terms components show the full final sentence. A joined-account
+or value as text authority. All ten preceding methods remain intact. The
+disconnected and stopped states share a leading axis with their headings and
+actions; actual accessibility frames verify their compact grouping in both
+appearances. Paired component images were inspected after that refinement.
+Inspected Light/Dark terms components show the full final sentence. A joined-account
 presentation fixture is robustness coverage, not evidence that production joined
 enrollment uses the home-account consent route.
 

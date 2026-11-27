@@ -207,7 +207,7 @@ enum DesktopSnapshotRenderer {
         }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate()
-        let activationRequested = NSRunningApplication.current.activate(options: [.activateAllWindows])
+        let activationSucceeded = NSRunningApplication.current.activate(options: [.activateAllWindows])
         let deadline = ContinuousClock.now + .seconds(2)
         while !NSApp.isActive || !window.isKeyWindow, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(25))
@@ -233,7 +233,7 @@ enum DesktopSnapshotRenderer {
             "captureStage": CaptureStage.ownedWindowReady.rawValue,
             "selectedWindowOnScreen": NSNull(), "selectedWindowIDMatches": NSNull(), "selectedWindowPIDMatches": NSNull(),
             "configuredCapturesAudio": NSNull(),
-            "frontmostIsOwnProcess": frontmostIsOwnProcess, "activationRequested": activationRequested,
+            "frontmostIsOwnProcess": frontmostIsOwnProcess, "activationSucceeded": activationSucceeded,
             "activationPolicy": policy, "canBecomeKey": window.canBecomeKey, "canBecomeMain": window.canBecomeMain,
             "firstResponderIsTextInput": window.firstResponder is NSTextView,
             "contentWidth": window.contentView?.bounds.width ?? 0, "contentHeight": window.contentView?.bounds.height ?? 0,
