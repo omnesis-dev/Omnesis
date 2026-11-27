@@ -45,6 +45,10 @@ Maildir is a storage format, not a product, so it has no mark to use. The source
 
 The Plaud source reads recordings through the unofficial API Plaud's own web app uses and makes no use of Plaud's marks. It uses a generic [Lucide](https://lucide.dev) `audio-lines` glyph (ISC-licensed) tinted slate.
 
+### Omamobile
+
+The Omamobile Messages and Phone sources read the local stores of the omatel apps on an Omamobile phone and make no use of Omamobile's or Omarchy's marks. They use generic [Lucide](https://lucide.dev) `message-square` and `phone-call` glyphs (ISC-licensed) tinted teal.
+
 ## Lucide
 
 Several source packages bundle [Lucide](https://lucide.dev) icons (compass, hourglass, list-checks, message-square, contact-round, notebook-pen, calendar, phone-call, voicemail, globe, heart-pulse, footprints, image, map-pin, inbox, audio-lines). Lucide is licensed under the [ISC license](https://github.com/lucide-icons/lucide/blob/main/LICENSE).

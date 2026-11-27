@@ -44,6 +44,7 @@
     { "path": "packages/providers/notion" },
     { "path": "packages/providers/maildir" },
     { "path": "packages/providers/obsidian" },
+    { "path": "packages/providers/omatel" },
     { "path": "packages/providers/openclaw" },
     { "path": "packages/providers/outlook" },
     { "path": "packages/providers/pi" },
