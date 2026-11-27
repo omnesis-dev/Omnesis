@@ -530,11 +530,13 @@ final class DataUsageLeaseTests: XCTestCase {
         process.standardInput = input
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
-        output.fileHandleForReading.readabilityHandler = { capture.append($0.availableData) }
-        defer { output.fileHandleForReading.readabilityHandler = nil
-            try? output.fileHandleForReading.close()
+        installCapture(capture, on: output.fileHandleForReading)
+        do { try process.run() }
+        catch {
+            // Preserve the exact reader and any observed-live launch for common teardown.
+            if process.isRunning { processes.append(process) }
+            throw error
         }
-        try process.run()
         processes.append(process)
         let owned = try? DesktopBackgroundProcessIdentity.read(process.processIdentifier)
         var failure: Error?
