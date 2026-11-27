@@ -5,6 +5,7 @@
 
 export {
   RecordingTranscriptionService,
+  DEFAULT_CONVERSATION_GAP_SECONDS,
   type RecordingServiceDeps,
   type RecordingStatus,
   type RecordingState,

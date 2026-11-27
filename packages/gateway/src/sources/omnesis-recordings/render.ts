@@ -17,6 +17,9 @@
  * falls in; the marked audio itself was saved as a note. People the owner
  * says were present without a speaking turn are named under the header.
  *
+ * One conversation of a session split into several renders the same way,
+ * with its own start, title and first chunk (see `buildRecordingDocument`).
+ *
  * Pure: the same session, chunks and marks always render the same text.
  */
 
@@ -83,6 +86,8 @@ export function renderRecording(
   speakerNames: ReadonlyMap<number, string> = new Map(),
   /** Who else was present, without a speaking turn of their own. */
   alsoPresent: readonly string[] = [],
+  /** The first chunk expected: a conversation of a split session starts later. */
+  fromSeq = 0,
 ): RenderedRecording {
   const label = (speaker: number | undefined): string =>
     speaker === undefined ? "" : `${speakerNames.get(speaker) ?? `Speaker ${speaker}`}: `;
@@ -97,7 +102,7 @@ export function renderRecording(
   let silentRunMs = 0;
   let silentRunAt = 0;
   let hasSpeech = false;
-  let expectedSeq = 0;
+  let expectedSeq = fromSeq;
 
   const flushSilence = (): void => {
     if (silentRunMs >= GAP_THRESHOLD_MS) {
@@ -181,6 +186,18 @@ export function renderRecording(
     durationSec: Math.round(durationMs / 1000),
     hasSpeech,
   };
+}
+
+/**
+ * The speakers whose voice is heard in these chunks: the ones a document of
+ * just these chunks, or the suggestions for them, are about.
+ */
+export function speakersHeard(chunks: readonly Pick<RecordingChunk, "voices">[]): Set<number> {
+  const heard = new Set<number>();
+  for (const chunk of chunks) {
+    for (const w of chunk.voices ?? []) if (w.speaker !== undefined) heard.add(w.speaker);
+  }
+  return heard;
 }
 
 /**

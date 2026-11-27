@@ -652,6 +652,16 @@
           after that reopen it.
         </p>
         <p>
+          A recording a device captures all day on its own is split into conversations. Once
+          90&nbsp;seconds pass with no speech after a conversation, the gateway writes that
+          conversation as a document of its own, with its speakers told apart, while the recording
+          goes on; the silence between conversations belongs to none. The first conversation keeps
+          the recording's document, and each later one gets its own. Set
+          <code>inference.recordings.conversationGapSeconds</code> to change the silence (up to
+          3600), or to 0 to keep each all-day recording as one document; it takes effect without a
+          restart. A recording you start yourself is never split, however long its pauses.
+        </p>
+        <p>
           To tell the speakers apart, set <code>inference.recordings.speakers</code> to
           <code>"local"</code> and restart the gateway. It then downloads two small voice models
           (about 46&nbsp;MB) into its models directory and separates the voices of each chunk on the
@@ -678,13 +688,20 @@
           told apart, or speakers are not separated at all. Choose a person in Omnesis or type a
           name. Each one is named under the transcript's heading, and a person in Omnesis is listed
           as a participant like a speaker you named. Removing someone rewrites the document without
-          them.
+          them. In an all-day recording split into conversations, the people present are the whole
+          recording's: each conversation names them and lists them as participants, while a speaker
+          you named is a participant only of the conversations they speak in.
         </p>
         <p>
           The portal also suggests who took part and what the recording was, and applies a
           suggestion only when you accept it. A meeting on your calendar that overlaps the recording
           offers its attendees for any unnamed speaker or as present, and its title as the
           recording's title. A dismissed suggestion is not offered again for that recording.
+        </p>
+        <p>
+          On the portal, an all-day recording shows a section for each conversation, with its own
+          title, transcript, speakers and suggestions; speakers are numbered across the whole
+          recording, since voices are only compared within one conversation.
         </p>
         <p>
           To listen back, set <code>inference.recordings.keepAudioDays</code> to the number of days

@@ -264,6 +264,24 @@ export function createRecordingTables(db: Db): void {
       ON recording_chunks(settled_at)
       WHERE audio IS NOT NULL AND status != 'pending';
   `);
+  // The conversations an all-day session was split into (see conversations.ts).
+  // A session without any is written as one document, as it always was.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS recording_conversations (
+      session_id TEXT NOT NULL REFERENCES recording_sessions(id) ON DELETE CASCADE,
+      n INTEGER NOT NULL,
+      first_seq INTEGER NOT NULL,
+      last_seq INTEGER NOT NULL,
+      started_at TEXT NOT NULL,
+      ended_at TEXT NOT NULL,
+      title TEXT,
+      -- Hash of the document last written for it, so an unchanged
+      -- conversation is not written again on every change of its session.
+      content_hash TEXT,
+      closed_at TEXT NOT NULL,
+      PRIMARY KEY (session_id, n)
+    );
+  `);
 }
 
 // ── sessions ──────────────────────────────────────────────────────────
@@ -455,6 +473,161 @@ export function listUnprojectedRecordingSessions(
     .map(toSession);
 }
 
+/**
+ * Open sessions with a closed conversation whose documents may be behind:
+ * those are written while the session goes on.
+ */
+export function listUnprojectedOpenRecordingSessions(db: Db, limit: number): RecordingSession[] {
+  return db
+    .prepare<[number], SessionRow>(
+      `SELECT s.* FROM recording_sessions s
+        WHERE s.finished_at IS NULL
+          AND (s.projected_revision IS NULL OR s.projected_revision < s.revision)
+          AND EXISTS (SELECT 1 FROM recording_conversations k WHERE k.session_id = s.id)
+        ORDER BY s.last_activity_at
+        LIMIT ?`,
+    )
+    .all(limit)
+    .map(toSession);
+}
+
+/** Open all-day sessions: the ones the gateway splits into conversations. */
+export function listOpenAmbientRecordingSessions(db: Db, limit: number): RecordingSession[] {
+  return db
+    .prepare<[number], SessionRow>(
+      `SELECT * FROM recording_sessions
+        WHERE finished_at IS NULL AND origin = 'ambient'
+        ORDER BY last_activity_at
+        LIMIT ?`,
+    )
+    .all(limit)
+    .map(toSession);
+}
+
+// ── conversations ─────────────────────────────────────────────────────
+
+/** One conversation of a split session (see conversations.ts). */
+export interface RecordingConversation {
+  sessionId: string;
+  n: number;
+  firstSeq: number;
+  lastSeq: number;
+  startedAt: string;
+  endedAt: string;
+  /** The owner's title; null for the time-based one. */
+  title: string | null;
+  contentHash: string | null;
+  closedAt: string;
+}
+
+interface ConversationRow {
+  session_id: string;
+  n: number;
+  first_seq: number;
+  last_seq: number;
+  started_at: string;
+  ended_at: string;
+  title: string | null;
+  content_hash: string | null;
+  closed_at: string;
+}
+
+/** A conversation as the gateway closes it. */
+export type ClosedRecordingConversation = Pick<
+  RecordingConversation,
+  "n" | "firstSeq" | "lastSeq" | "startedAt" | "endedAt"
+>;
+
+/** A session's conversations, in recording order. */
+export function listRecordingConversations(db: Db, sessionId: string): RecordingConversation[] {
+  return db
+    .prepare<[string], ConversationRow>(
+      `SELECT * FROM recording_conversations WHERE session_id = ? ORDER BY n`,
+    )
+    .all(sessionId)
+    .map((row) => ({
+      sessionId: row.session_id,
+      n: row.n,
+      firstSeq: row.first_seq,
+      lastSeq: row.last_seq,
+      startedAt: row.started_at,
+      endedAt: row.ended_at,
+      title: row.title,
+      contentHash: row.content_hash,
+      closedAt: row.closed_at,
+    }));
+}
+
+/**
+ * Record conversations closed in a session. A conversation already recorded
+ * only reaches further (the end of a finished session). Marks the session
+ * changed when anything was recorded, so the documents are written. The
+ * number recorded or extended; 0 when the session does not exist.
+ */
+export function closeRecordingConversations(
+  db: Db,
+  sessionId: string,
+  spans: readonly ClosedRecordingConversation[],
+  closedAt: string,
+): number {
+  if (spans.length === 0 || !getRecordingSession(db, sessionId)) return 0;
+  const insert = db.prepare(
+    `INSERT INTO recording_conversations
+       (session_id, n, first_seq, last_seq, started_at, ended_at, closed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (session_id, n) DO UPDATE SET last_seq = excluded.last_seq
+       WHERE excluded.last_seq > recording_conversations.last_seq`,
+  );
+  let changed = 0;
+  for (const s of spans) {
+    changed += insert.run(
+      sessionId,
+      s.n,
+      s.firstSeq,
+      s.lastSeq,
+      s.startedAt,
+      s.endedAt,
+      closedAt,
+    ).changes;
+  }
+  if (changed > 0) {
+    db.prepare(`UPDATE recording_sessions SET revision = revision + 1 WHERE id = ?`).run(sessionId);
+  }
+  return changed;
+}
+
+/**
+ * Give one conversation the owner's title; null clears it. Marks the session
+ * changed. False when there is no such conversation.
+ */
+export function setRecordingConversationTitle(
+  db: Db,
+  sessionId: string,
+  n: number,
+  title: string | null,
+): boolean {
+  const set =
+    db
+      .prepare(`UPDATE recording_conversations SET title = ? WHERE session_id = ? AND n = ?`)
+      .run(title, sessionId, n).changes > 0;
+  if (set) {
+    db.prepare(`UPDATE recording_sessions SET revision = revision + 1 WHERE id = ?`).run(sessionId);
+  }
+  return set;
+}
+
+/** Remember the hash of the document written for a conversation. */
+export function markRecordingConversationProjected(
+  db: Db,
+  sessionId: string,
+  n: number,
+  contentHash: string | null,
+): void {
+  db.prepare(
+    `UPDATE recording_conversations SET content_hash = ? WHERE session_id = ? AND n = ?`,
+  ).run(contentHash, sessionId, n);
+}
+
 /** Record that the session's document was written from `revision`. */
 export function markRecordingSessionProjected(db: Db, id: string, revision: number): void {
   db.prepare(
@@ -615,13 +788,14 @@ export function getRecordingChunk(db: Db, sessionId: string, seq: number): Recor
   return row ? toChunk(row) : null;
 }
 
-/** Every stored chunk of a session, in recording order. */
-export function listRecordingChunks(db: Db, sessionId: string): RecordingChunk[] {
+/** Every stored chunk of a session from `fromSeq` on, in recording order. */
+export function listRecordingChunks(db: Db, sessionId: string, fromSeq = 0): RecordingChunk[] {
   return db
-    .prepare<[string], ChunkRow>(
-      `SELECT ${CHUNK_COLUMNS} FROM recording_chunks WHERE session_id = ? ORDER BY seq`,
+    .prepare<[string, number], ChunkRow>(
+      `SELECT ${CHUNK_COLUMNS} FROM recording_chunks
+        WHERE session_id = ? AND seq >= ? ORDER BY seq`,
     )
-    .all(sessionId)
+    .all(sessionId, fromSeq)
     .map(toChunk);
 }
 
@@ -760,18 +934,23 @@ export type RecordingSpeakerMapping =
   | { kind: "name"; name: string }
   | { kind: "clear" };
 
-/** The voice windows of a session's chunks whose vectors are not grouped yet. */
+/**
+ * The voice windows of a session's chunks whose vectors are not grouped yet,
+ * of the chunks `fromSeq`..`toSeq` when given (one conversation's).
+ */
 export function listUngroupedRecordingVoices(
   db: Db,
   sessionId: string,
+  range: { fromSeq: number; toSeq: number } = { fromSeq: 0, toSeq: Number.MAX_SAFE_INTEGER },
 ): Array<{ seq: number; windows: VoiceWindow[]; vectors: Float32Array[] }> {
   return db
-    .prepare<[string], { seq: number; voices: string; voice_vectors: Buffer }>(
+    .prepare<[string, number, number], { seq: number; voices: string; voice_vectors: Buffer }>(
       `SELECT seq, voices, voice_vectors FROM recording_chunks
-        WHERE session_id = ? AND voice_vectors IS NOT NULL AND voices IS NOT NULL
+        WHERE session_id = ? AND seq BETWEEN ? AND ?
+          AND voice_vectors IS NOT NULL AND voices IS NOT NULL
         ORDER BY seq`,
     )
-    .all(sessionId)
+    .all(sessionId, range.fromSeq, range.toSeq)
     .map((row) => {
       const windows = JSON.parse(row.voices) as VoiceWindow[];
       return { seq: row.seq, windows, vectors: unpackVectors(row.voice_vectors, windows.length) };
@@ -780,8 +959,8 @@ export function listUngroupedRecordingVoices(
 
 /**
  * Record each chunk's windows with their session speakers, add the speakers
- * not seen before, and delete every voice vector of the session. Does not
- * mark the session changed: the caller writes its document next.
+ * not seen before, and delete those chunks' voice vectors. Does not mark the
+ * session changed: the caller writes its document next.
  */
 export function assignRecordingVoices(
   db: Db,
@@ -789,7 +968,7 @@ export function assignRecordingVoices(
   chunks: ReadonlyArray<{ seq: number; windows: VoiceWindow[] }>,
 ): void {
   const update = db.prepare(
-    `UPDATE recording_chunks SET voices = ? WHERE session_id = ? AND seq = ?`,
+    `UPDATE recording_chunks SET voices = ?, voice_vectors = NULL WHERE session_id = ? AND seq = ?`,
   );
   const speakers = new Set<number>();
   for (const chunk of chunks) {
@@ -800,10 +979,6 @@ export function assignRecordingVoices(
     `INSERT OR IGNORE INTO recording_speakers (session_id, speaker) VALUES (?, ?)`,
   );
   for (const speaker of speakers) insert.run(sessionId, speaker);
-  db.prepare(
-    `UPDATE recording_chunks SET voice_vectors = NULL
-      WHERE session_id = ? AND voice_vectors IS NOT NULL`,
-  ).run(sessionId);
 }
 
 interface SpeakerRow {
