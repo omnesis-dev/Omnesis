@@ -8,7 +8,7 @@
     "@omnesis/core": "*",
     "@omnesis/source-sdk": "*",
     "@omnesis/types": "*",
-    "imapflow": "1.7.1"
+    "imapflow": "2.12.2"
   },
   "files": [
     "dist"
