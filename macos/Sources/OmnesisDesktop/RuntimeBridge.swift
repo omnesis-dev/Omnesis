@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import Darwin
 import DesktopCore
 import Foundation
 
@@ -229,8 +230,13 @@ final class RuntimeBridge {
                 owned.exit.finish(termination)
             }
         }
-        do { try child.run() }
-        catch {
+        do {
+            // A live child can close stdin; keep broken-pipe handling local to this writer.
+            guard fcntl(outgoing.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1) == 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            try child.run()
+        } catch {
             owned.active = false
             child.terminationHandler = nil
             var closeFailure: Error?
@@ -294,7 +300,12 @@ final class RuntimeBridge {
         let request = BridgeRequest(command: command, params: params)
         var data = try JSONEncoder().encode(request)
         data.append(10)
-        try input.write(contentsOf: data)
+        do { try input.write(contentsOf: data) }
+        catch {
+            let failure = BridgeWriteError(underlying: error)
+            fail(session, message: failure.localizedDescription)
+            throw failure
+        }
         return request.id
     }
 
@@ -346,5 +357,12 @@ enum BridgeLaunchError: LocalizedError {
         case .cleanupUnconfirmed: "Omnesis could not confirm that its background connection finished. Another connection was not started."
         case .notRunning: "Omnesis is reconnecting to its background service. Try again in a moment."
         }
+    }
+}
+
+struct BridgeWriteError: LocalizedError {
+    let underlying: Error
+    var errorDescription: String? {
+        "Omnesis could not write to its background service. Check the connection status before trying again."
     }
 }

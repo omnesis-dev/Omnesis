@@ -27,6 +27,58 @@ final class DesktopStartupTests: XCTestCase {
         }
     }
 
+    func testClosedInputOfALiveOwnedHelperFailsOnceAndRetainsItsDrain() async throws {
+        var protectedWriter = false, closes = 0
+        try await withRuntime(closeInput: true, inputClosure: { handle in
+            protectedWriter = fcntl(handle.fileDescriptor, F_GETNOSIGPIPE) == 1
+            closes += 1
+            try handle.close()
+        }) { fixture, bridge, count in
+            var failures = 0, replies = 0
+            var reportedMessage: String?
+            bridge.onFailure = { message in
+                failures += 1
+                reportedMessage = message
+            }
+            bridge.onEnvelope = { _ in replies += 1 }
+            try await bridge.start()
+            try await fixture.waitFor("stdin-closed")
+            var requestID: String?
+            do {
+                requestID = try bridge.send("status")
+                XCTFail("A pipe without its child reader cannot accept a command")
+            } catch let failure as BridgeWriteError {
+                XCTAssertEqual(
+                    failure.localizedDescription,
+                    "Omnesis could not write to its background service. Check the connection status before trying again."
+                )
+                XCTAssertEqual(failure.localizedDescription, reportedMessage)
+                var cause: NSError? = failure.underlying as NSError
+                var brokenPipe = false
+                for _ in 0 ..< 3 {
+                    guard let current = cause else { break }
+                    if current.domain == NSPOSIXErrorDomain, current.code == Int(EPIPE) { brokenPipe = true }
+                    cause = current.userInfo[NSUnderlyingErrorKey] as? NSError
+                }
+                XCTAssertTrue(brokenPipe, "The actual write must fail with a bounded broken-pipe cause")
+            }
+            XCTAssertNil(requestID)
+            XCTAssertTrue(protectedWriter, "The exact still-open writer must suppress SIGPIPE before closing")
+            XCTAssertEqual(closes, 1)
+            XCTAssertEqual(failures, 1)
+            XCTAssertEqual(replies, 0)
+            XCTAssertEqual(fixture.requestCount, 0)
+            XCTAssertThrowsError(try bridge.send("status"))
+            await assertStartRefused(bridge)
+            XCTAssertEqual(count.value, 1)
+            fixture.release()
+            try await bridge.disconnectAndJoin()
+            XCTAssertEqual(failures, 1, "EOF and termination cannot report the retired session again")
+            try await bridge.start()
+            XCTAssertEqual(count.value, 2, "A new attempt must prepare again after exact physical retirement")
+        }
+    }
+
     func testMalformedOutputRevokesPublicationButStillDrainsOwnedShutdownOutput() async throws {
         try await withRuntime(invalidOutput: true) { fixture, bridge, count in
             var failures = 0, replies = 0
@@ -355,7 +407,7 @@ final class DesktopStartupTests: XCTestCase {
     }
 
     private func withRuntime(
-        closeOutput: Bool = false, exitCode: Int = 0, beforeReading: StartupGate? = nil,
+        closeOutput: Bool = false, closeInput: Bool = false, exitCode: Int = 0, beforeReading: StartupGate? = nil,
         exitBeforeEOF: Bool = false, invalidOutput: Bool = false,
         inputClosure: @escaping RuntimeBridge.InputClosure = { try $0.close() },
         expectCloseUncertainty: Bool = false,
@@ -363,6 +415,7 @@ final class DesktopStartupTests: XCTestCase {
     ) async throws {
         let fixture = try StartupFixture(
             closeOutput: closeOutput,
+            closeInput: closeInput,
             exitCode: exitCode,
             exitBeforeEOF: exitBeforeEOF,
             invalidOutput: invalidOutput
@@ -444,7 +497,7 @@ private final class StartupFixture {
     let script: URL
     private var control: FileHandle?
 
-    init(closeOutput: Bool, exitCode: Int, exitBeforeEOF: Bool, invalidOutput: Bool) throws {
+    init(closeOutput: Bool, closeInput: Bool, exitCode: Int, exitBeforeEOF: Bool, invalidOutput: Bool) throws {
         let selected = FileManager.default.temporaryDirectory.appendingPathComponent("omnesis-bridge-drain-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: selected, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         base = try URL(fileURLWithPath: DesktopCanonicalPath.resolve(selected.path), isDirectory: true)
@@ -464,7 +517,7 @@ private final class StartupFixture {
         guard fd >= 0 else { throw Failure.control }
         control = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         let close = closeOutput ? "exec 1>&-" : ":"
-        let input = exitBeforeEOF ? ":" : "while IFS= read -r frame; do printf '%s\\n' \"$frame\" >> \"$2.requests\"; done"
+        let input = closeInput ? "exec 0<&-; : > \"$2.stdin-closed\"" : exitBeforeEOF ? ":" : "while IFS= read -r frame; do printf '%s\\n' \"$frame\" >> \"$2.requests\"; done"
         let lateReply = exitBeforeEOF ? "printf '%s\\n' '{\"version\":1,\"id\":\"fictional-retired-reply\",\"ok\":true,\"result\":null}'" :
             ":"
         let invalid = invalidOutput ? "printf '%s\\n' 'invalid-fictional-frame'" : ":"
