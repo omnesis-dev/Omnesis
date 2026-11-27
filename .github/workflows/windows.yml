@@ -220,6 +220,11 @@ jobs:
           $checkArgs = @('scripts/ci/with-test-embedder.mjs', 'scripts/ci/windows-checks.mjs', 'e2e')
           if ($env:SHARD) { $checkArgs += "--shard=$env:SHARD" }
           node @checkArgs
+          $status = $LASTEXITCODE
+          # A native crash ends Node without a JavaScript message; name the
+          # process's own status, such as 0xC0000374 for heap corruption.
+          if ($status -ne 0) { Write-Host ('[step] with-test-embedder.mjs exited {0} (0x{0:X8})' -f $status) }
+          exit $status
 
       - name: Full Windows portal tests
         if: ${{ matrix.lane == 'portal' }}
