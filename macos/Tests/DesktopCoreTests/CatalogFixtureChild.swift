@@ -8,7 +8,11 @@ import Foundation
 
 /// Test-only ownership of one explicitly spawned catalog child. A receipt is only a PID hint.
 final class CatalogFixtureChild {
-    enum Failure: Error { case uncertainOwnership, uncertainDrain, unsafeReceipt }
+    enum Failure: Error {
+        case uncertainOwnership, uncertainDrain, unsafeReceipt
+        case uncertainChildObservation(probeStatus: Int32, probeError: Int32)
+    }
+
     private let parent: Process
     private let parentIdentity: DesktopBackgroundProcessIdentity
     private let receipt: URL
@@ -112,7 +116,11 @@ final class CatalogFixtureChild {
             return current.startedSeconds != identity.startedSeconds || current.startedMicroseconds != identity.startedMicroseconds
         }
         let status = Darwin.kill(identity.pid, 0)
-        guard status == -1, errno == ESRCH else { throw Failure.uncertainOwnership }
+        let probeError = status == -1 ? errno : 0
+        guard status == -1, probeError == ESRCH else {
+            // Finite diagnostic only: neither an unreadable identity nor a live PID certifies exit.
+            throw Failure.uncertainChildObservation(probeStatus: status, probeError: probeError)
+        }
         return true
     }
 
