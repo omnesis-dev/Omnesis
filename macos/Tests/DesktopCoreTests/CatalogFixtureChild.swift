@@ -21,6 +21,8 @@ final class CatalogFixtureChild {
     let node: URL
     private(set) var identity: DesktopBackgroundProcessIdentity?
     private var orphaned = false
+    private var cleanupConfirmed = false
+    private var exitRequested = false
     private(set) var ageAtAdoptionMilliseconds: Int?
 
     init(parent: Process, receipt: URL, images: Set<String>, node: URL, joined: @escaping () -> Bool) throws {
@@ -83,45 +85,114 @@ final class CatalogFixtureChild {
     }
 
     func cleanup(sendExit: () throws -> Void) async throws {
+        guard !cleanupConfirmed else { return }
+        let drain = Drain()
         if !orphaned, parent.isRunning {
             guard try DesktopBackgroundProcessIdentity.read(parentIdentity.pid) == parentIdentity,
                   Darwin.kill(parentIdentity.pid, SIGTERM) == 0 else { throw Failure.uncertainOwnership }
-            let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-            while parent.isRunning || !joined(), ContinuousClock.now < deadline {
-                try await Task.sleep(for: .milliseconds(10))
-            }
-            guard !parent.isRunning, joined() else { throw Failure.uncertainDrain }
+            try await drain.waitForParent { !parent.isRunning && joined() }
             parent.waitUntilExit()
-            if identity != nil { guard try childGone() else { throw Failure.uncertainDrain } }
-            return
+            if identity != nil { try await drain.waitForChild(observe: observeChild) }
+        } else if !orphaned, !parent.isRunning, joined() {
+            parent.waitUntilExit()
+            if identity != nil { try await drain.waitForChild(observe: observeChild) }
+        } else {
+            // Unexpected parent death before adoption supplies no authority to signal a guessed orphan.
+            guard identity != nil else { throw Failure.uncertainOwnership }
+            try await drain.waitForParent { !parent.isRunning }
+            parent.waitUntilExit()
+            try await drain.waitForChild(observe: observeChild) {
+                guard !exitRequested else { return }
+                exitRequested = true
+                try sendExit()
+            }
         }
-        if !orphaned, !parent.isRunning, joined() {
-            if identity != nil { guard try childGone() else { throw Failure.uncertainDrain } }
-            return
-        }
-        // Unexpected parent death before adoption supplies no authority to signal a guessed orphan.
-        guard identity != nil else { throw Failure.uncertainOwnership }
-        if try childGone() { return }
-        try sendExit()
-        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-        while try !childGone(), ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        guard try childGone() else { throw Failure.uncertainDrain }
+        try drain.checkDeadline()
+        // A confirmed original incarnation cannot become live again after PID reuse.
+        cleanupConfirmed = true
     }
 
-    private func childGone() throws -> Bool {
+    enum ChildObservation: Equatable {
+        case live, gone
+        case unknown(probeStatus: Int32, probeError: Int32)
+    }
+
+    static func childObservation(
+        expected: DesktopBackgroundProcessIdentity,
+        current: DesktopBackgroundProcessIdentity?,
+        probeStatus: Int32 = 0,
+        probeError: Int32 = 0
+    )
+        -> ChildObservation {
+        if let current {
+            return current.startedSeconds == expected.startedSeconds && current.startedMicroseconds == expected
+                .startedMicroseconds ? .live : .gone
+        }
+        return probeStatus == -1 && probeError == ESRCH ? .gone : .unknown(probeStatus: probeStatus, probeError: probeError)
+    }
+
+    private func observeChild() throws -> ChildObservation {
         guard let identity else { throw Failure.uncertainOwnership }
         if let current = try? DesktopBackgroundProcessIdentity.read(identity.pid) {
-            return current.startedSeconds != identity.startedSeconds || current.startedMicroseconds != identity.startedMicroseconds
+            return Self.childObservation(expected: identity, current: current)
         }
         let status = Darwin.kill(identity.pid, 0)
         let probeError = status == -1 ? errno : 0
-        guard status == -1, probeError == ESRCH else {
-            // Finite diagnostic only: neither an unreadable identity nor a live PID certifies exit.
-            throw Failure.uncertainChildObservation(probeStatus: status, probeError: probeError)
+        return Self.childObservation(expected: identity, current: nil, probeStatus: status, probeError: probeError)
+    }
+
+    /// Parent join and child observations spend one cleanup budget; uncertainty grants no signal authority.
+    struct Drain {
+        private let deadline: ContinuousClock.Instant
+        private let now: () -> ContinuousClock.Instant
+        private let pause: () async throws -> Void
+
+        init(
+            now: @escaping () -> ContinuousClock.Instant = { .now },
+            pause: @escaping () async throws -> Void = { try await Task.sleep(for: .milliseconds(10)) }
+        ) {
+            self.now = now
+            self.pause = pause
+            deadline = now().advanced(by: .seconds(5))
         }
-        return true
+
+        func checkDeadline() throws {
+            guard now() < deadline else { throw Failure.uncertainDrain }
+        }
+
+        func waitForParent(joined: () -> Bool) async throws {
+            while now() < deadline {
+                let confirmed = joined()
+                try checkDeadline()
+                if confirmed { return }
+                try await pause()
+            }
+            throw Failure.uncertainDrain
+        }
+
+        func waitForChild(observe: () throws -> ChildObservation, sendExit: () throws -> Void = {}) async throws {
+            var requested = false
+            var last = ChildObservation.live
+            observation: while now() < deadline {
+                last = try observe()
+                guard now() < deadline else { break }
+                switch last {
+                case .gone: return
+                case .live:
+                    if !requested {
+                        requested = true
+                        try sendExit()
+                        guard now() < deadline else { break observation }
+                    }
+                case .unknown: break
+                }
+                try await pause()
+            }
+            if case .unknown(let status, let error) = last {
+                throw Failure.uncertainChildObservation(probeStatus: status, probeError: error)
+            }
+            throw Failure.uncertainDrain
+        }
     }
 
     static func script(

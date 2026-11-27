@@ -3,7 +3,7 @@
 
 import CryptoKit
 import Darwin
-import DesktopCore
+@testable import DesktopCore
 import Foundation
 import XCTest
 
@@ -111,6 +111,162 @@ final class CatalogFixtureChildTests: XCTestCase {
         XCTAssertFalse(fixture.parent.isRunning)
         fixture.parent.waitUntilExit()
         try fixture.removeAfterJoined()
+    }
+
+    func testUnknownChildObservationCanBecomeGoneWithinTheOriginalDeadline() async throws {
+        let clock = ObservationClock(step: .seconds(1))
+        let drain = clock.drain()
+        var observations = 0, exits = 0
+        try await drain.waitForChild(observe: {
+            observations += 1
+            return observations < 3 ? .unknown(probeStatus: 0, probeError: 0) : .gone
+        }, sendExit: { exits += 1 })
+        XCTAssertEqual(observations, 3)
+        XCTAssertEqual(exits, 0, "Unknown metadata cannot authorize the existing exit callback")
+        XCTAssertEqual(clock.elapsed, .seconds(2))
+    }
+
+    func testVerifiedLiveObservationRequestsExitOnlyOnceAcrossLaterUnknowns() async throws {
+        let clock = ObservationClock(step: .seconds(1))
+        let states: [CatalogFixtureChild.ChildObservation] = [
+            .unknown(probeStatus: 0, probeError: 0), .live,
+            .unknown(probeStatus: -1, probeError: EPERM), .live, .gone,
+        ]
+        var observations = 0, exits = 0
+        try await clock.drain().waitForChild(observe: {
+            guard observations < states.count else {
+                XCTFail("The confirmed exit must finish observation without another probe")
+                return .live
+            }
+            let state = states[observations]
+            observations += 1
+            return state
+        }, sendExit: { exits += 1 })
+        XCTAssertEqual(observations, states.count)
+        XCTAssertEqual(exits, 1)
+        XCTAssertEqual(clock.elapsed, .seconds(4))
+    }
+
+    func testPersistentUnknownRefusesWithoutRenewingTheCleanupDeadline() async throws {
+        let clock = ObservationClock(step: .seconds(1))
+        var observations = 0, exits = 0
+        do {
+            try await clock.drain().waitForChild(observe: {
+                observations += 1
+                return .unknown(probeStatus: -1, probeError: EPERM)
+            }, sendExit: { exits += 1 })
+            XCTFail("Uncertain child identity must never certify exit")
+        } catch CatalogFixtureChild.Failure.uncertainChildObservation(let status, let error) {
+            XCTAssertEqual(status, -1)
+            XCTAssertEqual(error, EPERM)
+        }
+        XCTAssertEqual(observations, 5)
+        XCTAssertEqual(exits, 0)
+        XCTAssertEqual(clock.elapsed, .seconds(5))
+    }
+
+    func testGoneObservationCompletingAtTheDeadlineCannotPass() async throws {
+        let clock = ObservationClock(step: .seconds(1))
+        var observations = 0
+        do {
+            try await clock.drain().waitForChild(observe: {
+                observations += 1
+                clock.elapsed = .seconds(5)
+                return .gone
+            })
+            XCTFail("A slow observation must not accept exit at the deadline")
+        } catch CatalogFixtureChild.Failure.uncertainDrain {}
+        XCTAssertEqual(observations, 1)
+        XCTAssertEqual(clock.pauses, 0)
+    }
+
+    func testCleanupDoesNotResampleAfterTheDeadlineToAcceptLateExit() async throws {
+        let clock = ObservationClock(step: .seconds(5))
+        var observations = 0
+        do {
+            try await clock.drain().waitForChild(observe: {
+                observations += 1
+                return observations == 1 ? .live : .gone
+            })
+            XCTFail("A future gone observation cannot rescue an expired drain")
+        } catch CatalogFixtureChild.Failure.uncertainDrain {}
+        XCTAssertEqual(observations, 1, "No final post-deadline probe may turn failure into success")
+        XCTAssertEqual(clock.elapsed, .seconds(5))
+    }
+
+    func testParentJoinAndChildObservationShareTheRemainingFiveSecondBudget() async throws {
+        for finishesInTime in [true, false] {
+            let clock = ObservationClock(step: .milliseconds(4900))
+            let drain = clock.drain()
+            var parentObservations = 0, childObservations = 0
+            try await drain.waitForParent {
+                parentObservations += 1
+                return parentObservations == 2
+            }
+            XCTAssertEqual(clock.elapsed, .milliseconds(4900))
+            clock.step = finishesInTime ? .milliseconds(50) : .milliseconds(200)
+            do {
+                try await drain.waitForChild(observe: {
+                    childObservations += 1
+                    return childObservations == 1 ? .unknown(probeStatus: 0, probeError: 0) : .gone
+                })
+                XCTAssertTrue(finishesInTime)
+                XCTAssertEqual(childObservations, 2)
+            } catch CatalogFixtureChild.Failure.uncertainChildObservation {
+                XCTAssertFalse(finishesInTime)
+                XCTAssertEqual(childObservations, 1)
+            }
+            XCTAssertEqual(parentObservations, 2)
+        }
+    }
+
+    func testMissingParentJoinCannotReachChildExitObservation() async throws {
+        let clock = ObservationClock(step: .seconds(1))
+        let drain = clock.drain()
+        var childObservations = 0
+        do {
+            try await drain.waitForParent { false }
+            try await drain.waitForChild(observe: { childObservations += 1
+                return .gone
+            })
+            XCTFail("Missing parent join must refuse before child evidence can bypass it")
+        } catch CatalogFixtureChild.Failure.uncertainDrain {}
+        XCTAssertEqual(childObservations, 0)
+        XCTAssertEqual(clock.elapsed, .seconds(5))
+    }
+
+    func testChildObservationKeepsUnreadableIdentityDistinctFromGone() {
+        let expected = DesktopBackgroundProcessIdentity(pid: 42, parent: 7, startedSeconds: 1, startedMicroseconds: 2)
+        let reparented = DesktopBackgroundProcessIdentity(pid: 42, parent: 1, startedSeconds: 1, startedMicroseconds: 2)
+        let replaced = DesktopBackgroundProcessIdentity(pid: 42, parent: 1, startedSeconds: 2, startedMicroseconds: 2)
+        XCTAssertEqual(CatalogFixtureChild.childObservation(expected: expected, current: reparented), .live)
+        XCTAssertEqual(CatalogFixtureChild.childObservation(expected: expected, current: replaced), .gone)
+        XCTAssertEqual(CatalogFixtureChild.childObservation(expected: expected, current: nil, probeStatus: -1, probeError: ESRCH), .gone)
+        XCTAssertEqual(
+            CatalogFixtureChild.childObservation(expected: expected, current: nil, probeStatus: 0, probeError: 0),
+            .unknown(probeStatus: 0, probeError: 0)
+        )
+        XCTAssertEqual(
+            CatalogFixtureChild.childObservation(expected: expected, current: nil, probeStatus: -1, probeError: EPERM),
+            .unknown(probeStatus: -1, probeError: EPERM)
+        )
+    }
+
+    private final class ObservationClock {
+        private let origin = ContinuousClock.now
+        var elapsed = Duration.zero
+        var step: Duration
+        private(set) var pauses = 0
+        init(step: Duration) {
+            self.step = step
+        }
+
+        func drain() -> CatalogFixtureChild.Drain {
+            CatalogFixtureChild.Drain(now: { self.origin.advanced(by: self.elapsed) }, pause: {
+                self.pauses += 1
+                self.elapsed += self.step
+            })
+        }
     }
 
     private static func exitSocket(_ path: String) throws {
