@@ -202,7 +202,9 @@ struct DesktopOnboardingView: View {
                             case .ready:
                                 ProgressView("Verifying your protected library…")
                             case .error:
-                                Text("Your information is kept safe. Try reconnecting, or reopen the app if the problem continues.")
+                                Text(store.state.message?.isEmpty == false
+                                    ? "Review the message below before trying again."
+                                    : "Omnesis could not finish this step. Try again to check the current status.")
                                 if store.state.searchModel?.state == "needs-download" {
                                     Button("Retry search model download") { store.command("prepare", params: ["mode": .string("home")]) }
                                         .buttonStyle(DesktopButtonStyle(primary: true))

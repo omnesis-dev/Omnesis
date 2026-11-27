@@ -17,6 +17,8 @@ import type { DesktopPairing } from "./enrollment.js";
 
 type Dependencies = NonNullable<ConstructorParameters<typeof DesktopCoordinator>[1]>;
 const origin = "https://library.example.test";
+const cleanupGuidance =
+  "Omnesis could not finish checking your connection. Try again to check its status.";
 function pairing(kind: "cli" | "collector"): DesktopPairing {
   return {
     kind,
@@ -240,7 +242,11 @@ test("home preparation protects first, starts only owned runtime and waits for v
 test("an unavailable or unprotected home never claims readiness", async () => {
   const f = fixture("home");
   f.deps.protected.mockResolvedValue(false);
-  expect(await f.run("status")).toMatchObject({ phase: "error" });
+  expect(await f.run("status")).toMatchObject({
+    phase: "error",
+    mode: "home",
+    message: "Unlock your Mac's Keychain to protect your Omnesis library.",
+  });
   expect(f.deps.request).not.toHaveBeenCalled();
   f.deps.protected.mockResolvedValue(true);
   f.deps.request.mockRejectedValue(new Error("fictional-private-error"));
@@ -1002,6 +1008,35 @@ function uncertainInteractiveQuery(profile: ReturnType<typeof desktopProfile>) {
   };
 }
 
+test("unknown failures give neutral status guidance without inventing a Keychain repair", async () => {
+  const f = fixture("joined");
+  f.deps.readInstall.mockRejectedValueOnce(new Error("fictional-private-diagnostic"));
+  expect(await f.run("status")).toEqual({
+    phase: "error",
+    message: "Omnesis could not finish this step. Try again to check the current status.",
+  });
+  expect(f.deps.startTransport).not.toHaveBeenCalled();
+  expect(f.transport.close).not.toHaveBeenCalled();
+  await f.coordinator.close(false);
+});
+
+test("an unrelated oversized error graph is not described as retained connection cleanup", async () => {
+  const f = fixture("joined");
+  f.deps.readInstall.mockRejectedValueOnce(
+    new AggregateError(
+      Array.from({ length: 33 }, (_, index) => new Error(`Fictional unrelated problem ${index}`)),
+      "Fictional operation failed",
+    ),
+  );
+  expect(await f.run("status")).toEqual({
+    phase: "error",
+    message: "Omnesis could not finish this step. Try again to check the current status.",
+  });
+  expect(f.deps.startTransport).not.toHaveBeenCalled();
+  expect(f.transport.close).not.toHaveBeenCalled();
+  await f.coordinator.close(false);
+});
+
 test("failed interactive close retains the transport and refuses every successor until the same query joins", async () => {
   const f = fixture("joined");
   f.save("cli");
@@ -1014,8 +1049,8 @@ test("failed interactive close retains the transport and refuses every successor
     ManagedDesktopNearbyCleanupError,
   );
   await expect(f.coordinator.close(false)).rejects.toBeInstanceOf(ManagedDesktopNearbyCleanupError);
-  expect(await f.run("status")).toMatchObject({ phase: "error" });
-  expect(await f.run("status")).toMatchObject({ phase: "error" });
+  expect(await f.run("status")).toEqual({ phase: "error", message: cleanupGuidance });
+  expect(await f.run("status")).toEqual({ phase: "error", message: cleanupGuidance });
   expect(f.deps.startTransport).toHaveBeenCalledTimes(1);
   expect(query.owned).toHaveBeenCalledTimes(1);
   expect(query.stop).toHaveBeenCalledTimes(1);
@@ -1033,6 +1068,7 @@ test("failed startup retains its cleanup capability and original errors before a
   f.save("cli");
   f.save("collector");
   const query = uncertainInteractiveQuery(f.profile);
+  const retryCleanup = vi.spyOn(query.provider, "retryCleanup");
   const cleanup = await query.provider
     .snapshot(new AbortController().signal)
     .catch((error: unknown) => error);
@@ -1040,9 +1076,12 @@ test("failed startup retains its cleanup capability and original errors before a
   const startup = new Error("the original interactive transport startup failed");
   const failure = new AggregateError([startup, cleanup], "startup and cleanup failed");
   f.deps.startTransport.mockRejectedValueOnce(failure);
-  expect(await f.run("status")).toMatchObject({ phase: "error" });
-  expect(await f.run("status")).toMatchObject({ phase: "error" });
+  expect(await f.run("status")).toEqual({ phase: "error", message: cleanupGuidance });
+  expect(retryCleanup).not.toHaveBeenCalled();
+  expect(await f.run("status")).toEqual({ phase: "error", message: cleanupGuidance });
+  expect(retryCleanup).toHaveBeenCalledTimes(1);
   await expect(f.coordinator.close(false)).rejects.toBe(failure);
+  expect(retryCleanup).toHaveBeenCalledTimes(2);
   expect(failure.errors).toEqual([startup, cleanup]);
   expect(f.deps.startTransport).toHaveBeenCalledTimes(1);
   expect(query.owned).toHaveBeenCalledTimes(1);
@@ -1072,10 +1111,12 @@ test("uncertain status query marks the retained transport draining before the ne
   f.deps.startTransport.mockResolvedValueOnce(retainedTransport);
   expect(await f.run("status")).toMatchObject({ phase: "ready" });
   queryEnabled = true;
-  expect(await f.run("status")).toMatchObject({ phase: "error" });
-  expect(await f.run("status")).toMatchObject({ phase: "error" });
+  expect(await f.run("status")).toEqual({ phase: "error", message: cleanupGuidance });
+  expect(await f.run("status")).toEqual({ phase: "error", message: cleanupGuidance });
   expect(f.deps.startTransport).toHaveBeenCalledTimes(1);
   expect(close).toHaveBeenCalledTimes(1);
+  expect(query.owned).toHaveBeenCalledTimes(1);
+  expect(query.stop).toHaveBeenCalledTimes(1);
   query.confirm();
   expect(await f.run("status")).toMatchObject({ phase: "ready" });
   expect(f.deps.startTransport).toHaveBeenCalledTimes(2);

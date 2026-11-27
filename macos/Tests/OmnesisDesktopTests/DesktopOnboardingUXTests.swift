@@ -90,6 +90,46 @@ final class DesktopOnboardingUXTests: XCTestCase {
         }
     }
 
+    func testErrorGuidanceDoesNotPromiseProtectionOrAnAppRestartRepair() async throws {
+        let messages: [String?] = [
+            "Omnesis could not finish checking your connection. Try again to check its status.",
+            "Omnesis could not finish this step. Try again to check the current status.",
+            nil,
+        ]
+        for (index, message) in messages.enumerated() {
+            let state = DesktopState(phase: .error, message: message)
+            let store = DesktopStore(startRuntime: false)
+            store.state = state
+            XCTAssertFalse(state.canOpenLibrary)
+            XCTAssertNil(state.connection)
+            XCTAssertNil(state.encrypted)
+            try await render(DesktopOnboardingView().environment(store), "connection-error-guidance-\(index)") { view in
+                if let message {
+                    XCTAssertTrue(try DesktopAccessibilityDriver.contains(message, in: view))
+                    XCTAssertTrue(try DesktopAccessibilityDriver.contains("Review the message below before trying again.", in: view))
+                } else {
+                    XCTAssertTrue(try DesktopAccessibilityDriver.contains(
+                        "Omnesis could not finish this step. Try again to check the current status.", in: view
+                    ))
+                    XCTAssertFalse(try DesktopAccessibilityDriver.contains("Review the message below", in: view))
+                }
+                let retries = try DesktopAccessibilityDriver.elements(in: view).filter {
+                    $0.accessibilityRole() == .button &&
+                        ($0.accessibilityLabel() == "Try again" || $0.accessibilityTextValue() == "Try again")
+                }
+                XCTAssertEqual(retries.count, 1)
+                let retry = try XCTUnwrap(retries.first)
+                XCTAssertTrue(retry.isAccessibilityEnabled())
+                XCTAssertGreaterThan(retry.accessibilityFrame().width, 0)
+                XCTAssertGreaterThan(retry.accessibilityFrame().height, 0)
+                XCTAssertTrue(try XCTUnwrap(view.window).frame.contains(retry.accessibilityFrame()))
+                XCTAssertFalse(try DesktopAccessibilityDriver.contains("Your information is kept safe", in: view))
+                XCTAssertFalse(try DesktopAccessibilityDriver.contains("reopen the app", in: view))
+                XCTAssertFalse(try DesktopAccessibilityDriver.contains("Unlock your Mac", in: view))
+            }
+        }
+    }
+
     private func store(_ json: String) throws -> DesktopStore {
         let result = DesktopStore(startRuntime: false)
         result.state = try JSONDecoder().decode(DesktopState.self, from: Data(json.utf8))

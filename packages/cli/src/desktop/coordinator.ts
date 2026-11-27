@@ -252,9 +252,21 @@ export class DesktopCoordinator {
       if (protectionFailure) return protectionFailure;
       if (error instanceof DesktopRestoreFailure) return { phase: "error", message: error.message };
       if (error instanceof DesktopAccountFailure) return { phase: "error", message: error.message };
+      const retainedNearbyCleanup =
+        this.transportStartupCleanup !== undefined ||
+        (this.transport !== undefined && this.transportIdentity === undefined);
+      if (
+        error instanceof ManagedDesktopNearbyCleanupError ||
+        (retainedNearbyCleanup && desktopNearbyCleanupRetry(error) !== undefined)
+      )
+        return {
+          phase: "error",
+          message:
+            "Omnesis could not finish checking your connection. Try again to check its status.",
+        };
       return {
         phase: "error",
-        message: "Omnesis could not finish this step. Unlock your Mac and try again.",
+        message: "Omnesis could not finish this step. Try again to check the current status.",
       };
     }
   }

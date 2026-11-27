@@ -93,6 +93,7 @@ export function desktopAccountFailureCode(message: unknown): string {
     case "Your account could not connect. Check your internet connection and try again.":
       return "account-connect-failed";
     case "Omnesis could not finish this step. Unlock your Mac and try again.":
+    case "Omnesis could not finish this step. Try again to check the current status.":
       return "coordinator-step-failed";
     case "That invitation code was not accepted. Check the code and try again.":
       return "invite-invalid";

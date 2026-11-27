@@ -80,6 +80,15 @@ test("account diagnostics retain only reviewed finite state and error codes", ()
   ).toBe("account-connect-failed");
 });
 
+test("current and legacy coordinator messages retain the same content-free diagnostic code", () => {
+  for (const message of [
+    "Omnesis could not finish this step. Unlock your Mac and try again.",
+    "Omnesis could not finish this step. Try again to check the current status.",
+  ]) {
+    expect(desktopAccountFailureCode(message)).toBe("coordinator-step-failed");
+  }
+});
+
 test("unknown account diagnostics never serialize invented private strings", () => {
   const secret = "invented-private-account-diagnostic-sentinel";
   const progress = desktopAccountProgress({
@@ -99,4 +108,7 @@ test("unknown account diagnostics never serialize invented private strings", () 
     secret,
   );
   expect(desktopAccountFailureCode(secret)).toBe("unknown");
+  const extended = `Omnesis could not finish this step. Try again to check the current status. ${secret}`;
+  expect(desktopAccountFailureCode(extended)).toBe("unknown");
+  expect(JSON.stringify({ failure: desktopAccountFailureCode(extended) })).not.toContain(secret);
 });
