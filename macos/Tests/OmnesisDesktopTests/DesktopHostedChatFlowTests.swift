@@ -30,7 +30,7 @@ final class DesktopHostedChatFlowTests: XCTestCase {
             "url": fixture.url.absoluteString, "token": "gui-fixture-token",
         ])
         let connection = try JSONDecoder().decode(DesktopConnection.self, from: connectionData)
-        DesktopActionRouter.shared.question = nil
+        DesktopActionRouter.shared.pending = nil
         let store = DesktopStore(startRuntime: false)
         ownedStore = store
         defer { ownedStore = nil }

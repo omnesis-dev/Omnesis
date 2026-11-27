@@ -2,246 +2,17 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import Foundation
-import Observation
-import Omnesis
 import SwiftUI
+
+struct DesktopDraftObservation: Equatable {
+    let context: ObjectIdentifier?
+    let request: UUID?
+}
 
 struct DesktopModelObservation: Equatable {
     let api: ObjectIdentifier?
     let revision: Int
-}
-
-@MainActor @Observable
-final class DesktopChat {
-    struct Row: Identifiable { let id: String
-        let role: String
-        var text: String
-    }
-
-    var rows: [Row] = []
-    var sessionId: String?
-    private(set) var conversationId: String?
-    private(set) var references: [AgentDocRef] = []
-    private(set) var opening = false
-    private(set) var terminalFailure: String?
-    private var openGeneration = UUID()
-    private var snapshotCursor: Int?
-    private(set) var announcement = ""
-    private(set) var announcementRevision = 0
-    private var lastAnnouncedTerminal: String?
-    var input = ""
-    var busy = false
-    var failure: String?
-    private(set) var historyRevision = 0
-    private(set) var model: ModelDisplay?
-    private(set) var checkingModel = false
-    private(set) var modelCheckFailure: String?
-    private var modelGeneration = UUID()
-    private(set) var lastAnswerStopped = false
-    var needsModel: Bool {
-        model.map { !$0.configured || !$0.available } ?? false
-    }
-
-    private var client: AgentClient?
-    private var streamTask: Task<Void, Never>?
-    private var cursor: String?
-
-    func attach(_ api: DesktopAPI) {
-        guard client !== api.agent || streamTask == nil else { return }
-        streamTask?.cancel()
-        if client !== api.agent {
-            rows = []
-            sessionId = nil
-            conversationId = nil
-            references = []
-            terminalFailure = nil
-            snapshotCursor = nil
-            busy = false
-            input = ""
-            model = nil
-            modelCheckFailure = nil
-            lastAnswerStopped = false
-        }
-        client = api.agent
-        cursor = nil
-        streamTask = Task { [weak self] in await self?.listen(api.agent) }
-    }
-
-    func open(_ id: String? = nil) async {
-        guard let client else { return }
-        guard id != nil || (!needsModel && !checkingModel && modelCheckFailure == nil) else { return }
-        let generation = UUID()
-        openGeneration = generation
-        opening = true
-        defer { if openGeneration == generation { opening = false } }
-        failure = nil
-        do {
-            let session = try await client.createSession(resumeFromId: id)
-            guard !Task.isCancelled, self.client === client, openGeneration == generation else { return }
-            sessionId = session.sessionId
-            conversationId = session.conversationId ?? session.sessionId
-            terminalFailure = session.terminalFailure?.message
-            lastAnswerStopped = !session.busy && session.lastTurnFailure?.code == "canceled"
-            if !session.busy, !lastAnswerStopped, let lastFailure = session.lastTurnFailure { failure = lastFailure.message }
-            busy = session.busy
-            snapshotCursor = session.eventCursor
-            rows = Self.project(session.messages)
-            references = DesktopChatEvidence.references(in: session.messages)
-            for event in session.replayEvents {
-                observeEvidence(event)
-            }
-            historyRevision += 1
-        } catch {
-            guard self.client === client, openGeneration == generation, !Task.isCancelled else { return }
-            failure = error.localizedDescription
-        }
-    }
-
-    func checkModel(_ api: DesktopAPI) async {
-        let generation = UUID()
-        modelGeneration = generation
-        checkingModel = true
-        defer { if modelGeneration == generation { checkingModel = false } }
-        do {
-            let display: ModelDisplay = try await api.request("GET", "agent/model")
-            guard !Task.isCancelled, client === api.agent, modelGeneration == generation else { return }
-            model = display
-            modelCheckFailure = nil
-        } catch is CancellationError {} catch {
-            guard client === api.agent, modelGeneration == generation, !Task.isCancelled else { return }
-            model = nil
-            modelCheckFailure = "Could not check your answer model. Check the connection and try again."
-        }
-    }
-
-    func send() async {
-        guard let client else { return }
-        let question = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !question.isEmpty, !busy, !opening, terminalFailure == nil, !needsModel, !checkingModel,
-              modelCheckFailure == nil else { return }
-        if sessionId == nil { await open() }
-        guard let sessionId, !busy, self.client === client else { return }
-        failure = nil
-        busy = true
-        do {
-            _ = try await client.sendMessage(sessionId: sessionId, text: question)
-            guard self.client === client, self.sessionId == sessionId else { return }
-            if input.trimmingCharacters(in: .whitespacesAndNewlines) == question { input = "" }
-            historyRevision += 1
-        } catch {
-            guard self.client === client, self.sessionId == sessionId else { return }
-            // Do not resend automatically: the server may already have accepted it.
-            failure = "Your message may not have reached Omnesis. Reopen this conversation before trying again. \(error.localizedDescription)"
-            busy = false
-        }
-    }
-
-    func cancel() async {
-        guard let client, let sessionId, !opening else { return }
-        do { try await client.cancel(sessionId: sessionId) }
-        catch {
-            guard self.client === client, self.sessionId == sessionId else { return }
-            failure = error.localizedDescription
-        }
-    }
-
-    func detach() {
-        streamTask?.cancel()
-        streamTask = nil
-        openGeneration = UUID()
-        modelGeneration = UUID()
-        opening = false
-        client = nil
-    }
-
-    private func listen(_ client: AgentClient) async {
-        while !Task.isCancelled {
-            do {
-                for try await item in client.events(lastEventId: cursor) {
-                    try Task.checkCancellation()
-                    if let id = item.id { cursor = id }
-                    if let sequence = item.id.flatMap(Int.init), let snapshotCursor, sequence <= snapshotCursor { continue }
-                    if case .resync = item.event {
-                        if let id = conversationId ?? sessionId { await open(id) }
-                    } else if item.event.sessionId == sessionId {
-                        await reduce(item.event)
-                    }
-                }
-                if Task.isCancelled { return }
-                failure = "Reconnecting to your conversation…"
-            } catch is CancellationError { return }
-            catch {
-                if Task.isCancelled { return }
-                failure = "Your connection was interrupted. Reconnecting…"
-            }
-            do { try await Task.sleep(for: .seconds(2)) } catch { return }
-        }
-    }
-
-    private func reduce(_ event: AgentEvent) async {
-        observeEvidence(event)
-        switch event {
-        case .userMessage(_, let id, let text, _):
-            if !rows.contains(where: { $0.id == id }) { rows.append(Row(id: id, role: "user", text: text)) }
-        case .messageStart(_, let id):
-            busy = true
-            failure = nil
-            lastAnswerStopped = false
-            if !rows.contains(where: { $0.id == id }) { rows.append(Row(id: id, role: "assistant", text: "")) }
-        case .textDelta(_, let id, let delta):
-            if let index = rows.firstIndex(where: { $0.id == id }) { rows[index].text += delta }
-            else if busy, let index = rows.indices.last, rows[index].role == "assistant", rows[index].id.hasPrefix("saved-"),
-                    snapshotCursor != nil {
-                rows[index] = Row(id: id, role: "assistant", text: rows[index].text + delta)
-            }
-        case .messageEnd(let session, let message, let reason, _):
-            let key = session + ":" + message + ":" + reason
-            if key != lastAnnouncedTerminal {
-                lastAnnouncedTerminal = key
-                announcement = reason == "end_turn" ? "Omnesis finished answering." : reason == "canceled" ?
-                    "Response stopped. The answer is incomplete." : "The response was interrupted. Review the conversation before trying again."
-                announcementRevision += 1
-            }
-            lastAnswerStopped = reason == "canceled" || reason == "cancelled"
-            busy = false
-            if let id = conversationId ?? sessionId { await open(id) }
-        case .outputTruncated, .contextWindowExceeded:
-            busy = false
-            if let id = conversationId ?? sessionId { await open(id) }
-        case .error(_, _, _, let message, _):
-            busy = false
-            failure = message
-        default: break
-        }
-    }
-
-    private func observeEvidence(_ event: AgentEvent) {
-        switch event {
-        case .citation(_, _, _, let ref, _, _, _, _):
-            references = DesktopChatEvidence.merging(references, [ref])
-        case .citationsUpdate(_, let added, let removed):
-            references = DesktopChatEvidence.merging(references, added, removing: removed)
-        case .toolResult(_, _, _, let result, _):
-            references = DesktopChatEvidence.merging(references, DesktopChatEvidence.annotations(in: result))
-        default: break
-        }
-    }
-
-    private static func project(_ messages: [ChatMessage]) -> [Row] {
-        messages.enumerated().compactMap { index, message in
-            let text: String
-            switch message {
-            case .user(let parts): text = parts.compactMap { if case .text(let t) = $0 { return t }
-                    return nil
-                }.joined(separator: "\n")
-            case .assistant(let parts): text = parts.compactMap { if case .text(let t) = $0 { return t }
-                    return nil
-                }.joined(separator: "\n")
-            default: return nil
-            }
-            return text.isEmpty ? nil : Row(id: "saved-\(index)", role: message.role, text: text)
-        }
-    }
+    var context: ObjectIdentifier?
 }
 
 struct DesktopAskView: View {
@@ -254,6 +25,7 @@ struct DesktopAskView: View {
     @State private var chosenConversation: String?
     @State private var showHistory = false
     @State private var showSources = false
+    @State private var historyTask: Task<Void, Never>?
     @FocusState private var composerFocused: Bool
     @State private var scrollGeometry: DesktopChatScrollGeometry?
     @State private var scrollTarget: String? = "chat-bottom"
@@ -272,6 +44,7 @@ struct DesktopAskView: View {
     }
 
     var body: some View {
+        let context = store.apiContext
         GeometryReader { geometry in
             let layout = DesktopChatLayout(width: geometry.size.width, historyRequested: showHistory, sourcesRequested: showSources)
             HStack(spacing: 0) {
@@ -284,7 +57,7 @@ struct DesktopAskView: View {
                                 .labelStyle(.iconOnly).buttonStyle(.borderless).frame(width: 28, height: 28)
                                 .foregroundStyle(DesktopTheme.secondary).accessibilityLabel("New conversation")
                                 .accessibilityIdentifier("chat-history-new").help("New conversation")
-                            Button("Refresh history", systemImage: "arrow.clockwise") { Task { await store.refreshConversationHistory() } }
+                            Button("Refresh history", systemImage: "arrow.clockwise") { requestHistory(in: context) }
                                 .labelStyle(.iconOnly).buttonStyle(.borderless).frame(width: 28, height: 28)
                                 .foregroundStyle(DesktopTheme.secondary).accessibilityLabel("Refresh history")
                                 .accessibilityIdentifier("chat-history-refresh").help("Refresh history")
@@ -334,7 +107,7 @@ struct DesktopAskView: View {
                                     openSettings()
                                 }
                                 .buttonStyle(DesktopButtonStyle(primary: true)).accessibilityIdentifier("chat-setup-model")
-                                Button("Check model connection") { if let api = store.api { Task { await chat.checkModel(api) } } }
+                                Button("Check model connection") { chat.requestModelCheck(in: context) }
                                     .buttonStyle(DesktopButtonStyle()).disabled(chat.checkingModel)
                             }
                             if chat.checkingModel { ProgressView("Checking your answer model…").controlSize(.small) }
@@ -397,14 +170,17 @@ struct DesktopAskView: View {
                     if let failure = chat.failure, chat.modelCheckFailure == nil {
                         HStack {
                             Text(failure).font(.callout).foregroundStyle(DesktopTheme.secondary)
-                            Button("Reopen conversation") { Task { await chat.open(chat.conversationId ?? chat.sessionId) } }
-                                .buttonStyle(DesktopButtonStyle())
+                            if let id = chat.conversationId ?? chat.sessionId {
+                                Button("Reopen conversation") { chat.requestOpen(id, in: context) }.buttonStyle(DesktopButtonStyle())
+                            } else {
+                                Button("Check connection") { chat.requestModelCheck(in: context) }.buttonStyle(DesktopButtonStyle())
+                            }
                         }.padding()
                     }
                     if let failure = chat.modelCheckFailure {
                         HStack {
                             Text(failure).font(.callout).foregroundStyle(DesktopTheme.secondary)
-                            Button("Check again") { if let api = store.api { Task { await chat.checkModel(api) } } }
+                            Button("Check again") { chat.requestModelCheck(in: context) }
                         }.padding(.horizontal, 24).padding(.bottom, 12)
                     }
                     if chat.needsModel, !chat.rows.isEmpty {
@@ -415,7 +191,7 @@ struct DesktopAskView: View {
                                 openSettings()
                             }
                             .buttonStyle(DesktopButtonStyle())
-                            Button("Check again") { if let api = store.api { Task { await chat.checkModel(api) } } }
+                            Button("Check again") { chat.requestModelCheck(in: context) }
                                 .buttonStyle(DesktopButtonStyle())
                         }.padding(.horizontal, 24).padding(.bottom, 12)
                     }
@@ -427,20 +203,20 @@ struct DesktopAskView: View {
                     }
                     HStack(alignment: .bottom, spacing: 12) {
                         TextField("Ask Omnesis…", text: $chat.input, axis: .vertical).lineLimit(1 ... 6)
-                            .textFieldStyle(.plain).onSubmit { Task { await chat.send() } }
+                            .textFieldStyle(.plain).onSubmit { chat.requestSend(in: context) }
                             .focused($composerFocused)
                             .accessibilityLabel("Message to Omnesis")
                             .frame(minHeight: 36, alignment: .center)
                             .accessibilityIdentifier("chat-input")
                         if chat.busy {
-                            Button { Task { await chat.cancel() } } label: { Image(systemName: "stop.fill").font(.system(
+                            Button { chat.requestCancel(in: context) } label: { Image(systemName: "stop.fill").font(.system(
                                 size: 13,
                                 weight: .semibold
                             )) }
                             .buttonStyle(DesktopButtonStyle(iconOnly: true)).accessibilityLabel("Stop response").disabled(chat.opening)
                             .accessibilityIdentifier("chat-stop")
                         } else {
-                            Button { Task { await chat.send() } } label: { Image(systemName: "arrow.up").font(.system(
+                            Button { chat.requestSend(in: context) } label: { Image(systemName: "arrow.up").font(.system(
                                 size: 16,
                                 weight: .semibold
                             )) }
@@ -490,25 +266,23 @@ struct DesktopAskView: View {
                             .accessibilityIdentifier("chat-new").help("New conversation")
                     }
                 }
-                .task(id: DesktopModelObservation(api: store.api.map(ObjectIdentifier.init), revision: store.modelConfigurationRevision)) {
+                .task(id: DesktopModelObservation(
+                    api: context.map { ObjectIdentifier($0.api) }, revision: store.modelConfigurationRevision,
+                    context: context.map(ObjectIdentifier.init)
+                )) {
                     composerFocused = layout.showsReading
-                    guard let api = store.api else { chat.detach()
-                        return
-                    }
-                    chat.attach(api)
-                    async let history: Void = store.refreshConversationHistory()
-                    await chat.checkModel(api)
-                    if let question = DesktopActionRouter.shared.question {
-                        await chat.open()
-                        chat.input = question
-                        DesktopActionRouter.shared.question = nil
-                    }
+                    guard let context, context.isCurrent, store.apiContext === context else { return }
+                    chat.attach(context.api, context: context)
+                    async let history: Void = store.refreshConversationHistory(in: context)
+                    await chat.checkModel(context.api)
                     await history
                 }
                 .onChange(of: chosenConversation) { if let id = chosenConversation,
-                                                       id != chat.conversationId { Task { await chat.open(id) } }
+                                                       id != chat.conversationId { chat.requestOpen(id, in: context) }
                 }
-                .onChange(of: showHistory) { if showHistory { Task { await store.refreshConversationHistory() } } }
+                .onChange(of: showHistory) { if showHistory {
+                    requestHistory(in: context)
+                } }
                 .onChange(of: chat.conversationId) {
                     chosenConversation = chat.conversationId
                     scrollTarget = "chat-bottom"
@@ -520,30 +294,42 @@ struct DesktopAskView: View {
                     scrollGeometry = nil
                 }
                 .onChange(of: chat.opening) { if chat.opening { showSources = false } }
-                .onChange(of: chat.historyRevision) { Task { await store.refreshConversationHistory() } }
-                .onChange(of: chat.announcementRevision) { AccessibilityNotification.Announcement(chat.announcement).post() }
-                .onChange(of: scenePhase) { if scenePhase == .active, let api = store.api { Task { await chat.checkModel(api) } } }
-                .onChange(of: DesktopActionRouter.shared.newConversation) {
-                    Task {
-                        chosenConversation = nil
-                        await chat.open()
-                        composerFocused = true
-                        if let question = DesktopActionRouter.shared.question {
-                            chat.input = question
-                            DesktopActionRouter.shared.question = nil
-                        }
-                    }
+                .onChange(of: chat.historyRevision) {
+                    requestHistory(in: context)
                 }
-                .onDisappear { chat.detach() }
+                .onChange(of: chat.announcementRevision) { AccessibilityNotification.Announcement(chat.announcement).post() }
+                .onChange(of: scenePhase) {
+                    if scenePhase == .active { chat.requestModelCheck(in: context) }
+                }
+                .onChange(of: DesktopDraftObservation(
+                    context: context.map(ObjectIdentifier.init), request: DesktopActionRouter.shared.pending?.id
+                ), initial: true) {
+                    guard let context = store.apiContext, context.isCurrent else { chat.detach()
+                        return
+                    }
+                    chat.attach(context.api, context: context)
+                    guard let request = DesktopActionRouter.shared.pending else { return }
+                    chat.prepareLocalDraft(question: request.question)
+                    chosenConversation = nil
+                    showSources = false
+                    composerFocused = layout.showsReading
+                    DesktopActionRouter.shared.consume(request)
+                }
+                .onDisappear {
+                    historyTask?.cancel()
+                    chat.detach()
+                }
         }
     }
 
+    private func requestHistory(in context: DesktopAPIContext?) {
+        guard let context, context.isCurrent, store.apiContext === context else { return }
+        historyTask?.cancel()
+        historyTask = context.run { scope in await store.refreshConversationHistory(in: scope) }
+    }
+
     private func startConversation() {
-        chosenConversation = nil
-        Task {
-            await chat.open()
-            composerFocused = true
-        }
+        DesktopActionRouter.shared.enqueue(question: nil)
     }
 
     private var emptyDescription: String {

@@ -41,8 +41,7 @@ struct OmnesisDesktopApp: App {
                 }
                 CommandGroup(replacing: .newItem) {
                     Button("New Conversation") {
-                        store.destination = .ask
-                        DesktopActionRouter.shared.newConversation = UUID()
+                        DesktopActionRouter.shared.enqueue(question: nil)
                         openWindow(id: "main", value: DesktopWindowIdentity.main)
                     }.keyboardShortcut("n")
                 }
@@ -84,8 +83,8 @@ struct DesktopRootView: View {
         .omnesisSheet(item: $store.interaction) { interaction in
             RuntimeInteractionView(interaction: interaction).environment(store)
         }
-        .onChange(of: DesktopActionRouter.shared.newConversation) {
-            store.destination = .ask
+        .onChange(of: DesktopActionRouter.shared.pending?.id, initial: true) {
+            if DesktopActionRouter.shared.pending != nil { store.destination = .ask }
         }
         .onChange(of: store.requiredSetupReady) { if store.requiredSetupReady { hadVerifiedSetup = true } }
         .omnesisTheme().omnesisWindowChrome()

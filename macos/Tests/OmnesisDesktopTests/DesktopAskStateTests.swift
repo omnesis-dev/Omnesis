@@ -489,7 +489,18 @@ final class DesktopAskStateTests: XCTestCase {
             name: "ask-network-repair",
             size: CGSize(width: 860, height: 600)
         ) { view in
+            XCTAssertTrue(try DesktopAccessibilityDriver.contains("Check connection", in: view))
+            XCTAssertFalse(try DesktopAccessibilityDriver.contains("Reopen conversation", in: view))
+            XCTAssertFalse(try DesktopAccessibilityDriver.contains("Choose a model", in: view))
+        }
+        chat.sessionId = "fictional-existing-session"
+        try await DesktopSnapshotRenderer.render(
+            DesktopAskView(initialChat: chat).environment(DesktopStore(startRuntime: false)),
+            name: "ask-existing-conversation-repair",
+            size: CGSize(width: 860, height: 600)
+        ) { view in
             XCTAssertTrue(try DesktopAccessibilityDriver.contains("Reopen conversation", in: view))
+            XCTAssertFalse(try DesktopAccessibilityDriver.contains("Check connection", in: view))
             XCTAssertFalse(try DesktopAccessibilityDriver.contains("Choose a model", in: view))
         }
     }

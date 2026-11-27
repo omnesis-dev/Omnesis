@@ -730,20 +730,23 @@ final class DesktopStore {
         return draft
     }
 
-    func refreshConversationHistory() async {
-        guard let api else { conversationHistoryFailure = nil
+    func refreshConversationHistory(in expectedContext: DesktopAPIContext? = nil) async {
+        guard !Task.isCancelled else { return }
+        guard let context = expectedContext ?? apiContext else {
+            if expectedContext == nil { conversationHistoryFailure = nil }
             return
         }
+        guard context.isCurrent, apiContext === context else { return }
         let generation = UUID()
         conversationHistoryGeneration = generation
         do {
-            let rows = try await api.agent.listConversations()
-            guard !Task.isCancelled, self.api === api, conversationHistoryGeneration == generation else { return }
+            let rows = try await context.perform { try await $0.agent.listConversations() }
+            guard !Task.isCancelled, context.isCurrent, apiContext === context, conversationHistoryGeneration == generation else { return }
             conversations = rows
             conversationHistoryFailure = nil
         } catch is CancellationError {} catch {
             // Keep the last observed history if a refresh fails; never imply that it was erased.
-            guard self.api === api, conversationHistoryGeneration == generation else { return }
+            guard !Task.isCancelled, context.isCurrent, apiContext === context, conversationHistoryGeneration == generation else { return }
             conversationHistoryFailure = "Conversation history could not be refreshed. Your saved conversations are kept."
         }
     }

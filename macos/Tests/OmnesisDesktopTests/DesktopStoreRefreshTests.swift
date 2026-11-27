@@ -536,6 +536,48 @@ final class DesktopStoreRefreshTests: XCTestCase {
         XCTAssertNil(store.failure, "A recurring check must not replace the current screen with a generic error")
     }
 
+    func testQueuedHistoryForRetiredContextCannotReadTheReplacementLibrary() async throws {
+        _ = StoreRefreshFixtureProtocol.take()
+        let store = DesktopStore(startRuntime: false)
+        store.api = try api()
+        let old = try XCTUnwrap(store.apiContext)
+        let queued = Task { await store.refreshConversationHistory(in: old) }
+        store.api = try api()
+        await queued.value
+        XCTAssertFalse(old.isCurrent)
+        XCTAssertEqual(StoreRefreshFixtureProtocol.count, 0)
+        XCTAssertTrue(store.conversations.isEmpty)
+        XCTAssertNil(store.conversationHistoryFailure)
+    }
+
+    func testQueuedHistoryCannotReviveWhenTheSameApiObjectReturns() async throws {
+        _ = StoreRefreshFixtureProtocol.take()
+        let store = DesktopStore(startRuntime: false)
+        let originalAPI = try api()
+        store.api = originalAPI
+        let original = try XCTUnwrap(store.apiContext)
+        let queued = Task { await store.refreshConversationHistory(in: original) }
+        store.api = try api()
+        store.api = originalAPI
+        let current = try XCTUnwrap(store.apiContext)
+        await queued.value
+        XCTAssertFalse(current === original)
+        XCTAssertFalse(original.isCurrent)
+        XCTAssertTrue(current.isCurrent)
+        XCTAssertEqual(StoreRefreshFixtureProtocol.count, 0, "API identity reuse must not restore a queued caller's authority")
+        let fresh = Task { await store.refreshConversationHistory(in: current) }
+        defer { fresh.cancel() }
+        try await waitForRequests(1)
+        let request = try XCTUnwrap(StoreRefreshFixtureProtocol.take().first)
+        XCTAssertEqual(request.request.httpMethod, "GET")
+        XCTAssertEqual(request.request.url?.path, "/agent/conversations")
+        request.reply(history("Current incarnation title"))
+        await fresh.value
+        XCTAssertEqual(store.conversations.first?.title, "Current incarnation title")
+        XCTAssertNil(store.conversationHistoryFailure)
+        XCTAssertEqual(StoreRefreshFixtureProtocol.count, 0)
+    }
+
     func testOlderHistoryReplyCannotReplaceTheNewerObservedList() async throws {
         _ = StoreRefreshFixtureProtocol.take()
         let store = DesktopStore(startRuntime: false)

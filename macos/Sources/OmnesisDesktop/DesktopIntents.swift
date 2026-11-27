@@ -8,8 +8,22 @@ import Observation
 @MainActor @Observable
 final class DesktopActionRouter {
     static let shared = DesktopActionRouter()
-    var newConversation = UUID()
-    var question: String?
+    struct Request: Equatable {
+        let id: UUID
+        let question: String?
+    }
+
+    var pending: Request?
+
+    func enqueue(question: String?) {
+        pending = Request(id: UUID(), question: question)
+    }
+
+    @discardableResult func consume(_ request: Request) -> Bool {
+        guard pending?.id == request.id else { return false }
+        pending = nil
+        return true
+    }
 }
 
 struct NewOmnesisConversationIntent: AppIntent {
@@ -21,8 +35,7 @@ struct NewOmnesisConversationIntent: AppIntent {
     }
 
     @MainActor func perform() async throws -> some IntentResult {
-        DesktopActionRouter.shared.question = nil
-        DesktopActionRouter.shared.newConversation = UUID()
+        DesktopActionRouter.shared.enqueue(question: nil)
         return .result()
     }
 }
@@ -37,8 +50,7 @@ struct AskOmnesisDesktopIntent: AppIntent {
     }
 
     @MainActor func perform() async throws -> some IntentResult {
-        DesktopActionRouter.shared.question = question
-        DesktopActionRouter.shared.newConversation = UUID()
+        DesktopActionRouter.shared.enqueue(question: question)
         return .result()
     }
 }
