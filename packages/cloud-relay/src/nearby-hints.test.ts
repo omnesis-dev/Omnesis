@@ -250,3 +250,94 @@ test("confirmed nearby recovery cannot erase the original transport close error"
   expect(transport.close).toHaveBeenCalledTimes(1);
   expect(provider.close).toHaveBeenCalledTimes(2);
 });
+
+test.each([false, true])(
+  "startup keeps its exact error when provider cleanup reports the same failure: %s",
+  async (sameFailure) => {
+    const failure = new Error("fictional shared startup failure");
+    const provider = {
+      snapshot: vi.fn(),
+      close: vi.fn(async () => {
+        if (sameFailure) throw failure;
+      }),
+    };
+    const start = vi.fn(async () => {
+      throw failure;
+    });
+    await expect(withNearbyGatewayHints(provider, start)).rejects.toBe(failure);
+    expect(start).toHaveBeenCalledOnce();
+    expect(provider.close).toHaveBeenCalledOnce();
+    expect(provider.snapshot).not.toHaveBeenCalled();
+  },
+);
+
+test("an absent transport returns only after its nearby owner finishes closing", async () => {
+  let entered!: () => void, release!: () => void;
+  const closing = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const joined = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const provider = {
+    snapshot: vi.fn(),
+    close: vi.fn(async () => {
+      entered();
+      await joined;
+    }),
+  };
+  let finished = false;
+  const result = withNearbyGatewayHints(provider, async () => undefined).then((value) => {
+    finished = true;
+    return value;
+  });
+  try {
+    await closing;
+    expect(finished).toBe(false);
+    expect(provider.snapshot).not.toHaveBeenCalled();
+  } finally {
+    release();
+  }
+  expect(await result).toBeUndefined();
+  expect(provider.close).toHaveBeenCalledOnce();
+});
+
+test("expired optional discovery waits for a late fulfillment and discards its nonempty hints", async () => {
+  const outer = new AbortController(),
+    expiry = new AbortController();
+  let entered!: () => void, fulfill!: (hints: unknown) => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const physical = new Promise<unknown>((resolve) => {
+    fulfill = resolve;
+  });
+  let active: AbortSignal | undefined;
+  const provider = {
+    snapshot: vi.fn(async (signal: AbortSignal) => {
+      active = signal;
+      entered();
+      return physical;
+    }),
+    close: vi.fn(async () => {}),
+  };
+  let finished = false;
+  const pending = readNearbyHints(provider, outer.signal, () => expiry.signal).then((hints) => {
+    finished = true;
+    return hints;
+  });
+  try {
+    await started;
+    expiry.abort();
+    await Promise.resolve();
+    expect(active!.aborted).toBe(true);
+    expect(outer.signal.aborted).toBe(false);
+    expect(finished).toBe(false);
+  } finally {
+    fulfill(candidates(1).slice(0, 1));
+  }
+  expect(await pending).toEqual([]);
+  expect(finished).toBe(true);
+  expect(provider.snapshot).toHaveBeenCalledOnce();
+  expect(provider.close).not.toHaveBeenCalled();
+});

@@ -2202,6 +2202,7 @@
         "android/app/src/test/kotlin/dev/omnesis/android/ui/devices/PairDeviceLogicTest.kt",
         "packages/cli/src/commands/phone-pairing.test.ts",
         "packages/cloud-relay/src/client-proxy-path.test.ts",
+        "packages/cloud-relay/src/runtime.test.ts",
         "packages/cloud-relay/src/device-file-hints.test.ts",
         "packages/cloud-relay/src/metadata-recovery.test.ts",
         "packages/collector/src/e2e/pairing-lifecycle.e2e.test.ts",

@@ -20,6 +20,10 @@ import { connectOrigin } from "./network.js";
 import * as googleCommands from "./google-commands.js";
 import * as relayIdentity from "./identity.js";
 import { RelayAccounts } from "./accounts.js";
+import * as devicePairing from "./google-device-pairing.js";
+import { certificateFingerprint } from "./gateway-binding.js";
+import { tlsSpkiFingerprint } from "./pinned-key.js";
+import type { DirectCandidate } from "./direct-path.js";
 
 vi.mock("node:fs/promises", { spy: true });
 
@@ -883,4 +887,97 @@ test("metrics shutdown failure still closes the control listener and account dat
   await expect(daemon.close()).rejects.toThrow("fixture metrics shutdown failure");
   expect(close).toHaveBeenCalledOnce();
   await expect(fetch(daemon.url + "/healthz")).rejects.toThrow();
+});
+
+async function nearbyClientBundle(directCandidates?: DirectCandidate[]) {
+  const directory = await files.realpath(dir);
+  const tls = tlsFiles(directory, "gateway.example.test");
+  const certificate = await readFile(tls.certFile, "utf8");
+  const file = join(directory, "nearby-paired-device.json");
+  const value = {
+    gatewayUrl: "https://gateway.example.test",
+    gatewayFingerprint: certificateFingerprint(certificate),
+    gatewayCertificate: certificate,
+    token: "fictional-nearby-device-token",
+    deviceId: randomUUID(),
+    kind: "collector",
+    scopes: ["read", "write:*"],
+    ...(directCandidates === undefined
+      ? {}
+      : {
+          directCandidates,
+          tlsSpkiFingerprint: tlsSpkiFingerprint(certificate),
+        }),
+  };
+  const bytes = JSON.stringify(value);
+  await writeFile(file, bytes, { mode: 0o600 });
+  return {
+    file,
+    value,
+    bytes,
+    env: { OMNESIS_CLOUD_RELAY_DEVICE_FILE: file, OMNESIS_CLOUD_RELAY_CLIENT_PORT: "0" },
+  };
+}
+
+test.each([false, true])(
+  "pinned client preserves authenticated hints and optional discovery ownership: provider=%s",
+  async (enabled) => {
+    const saved = [{ address: "192.168.1.20", port: 7600 }];
+    const nearby = [{ address: "fd00::1", port: 8443 }];
+    const f = await nearbyClientBundle(saved);
+    const wire = vi
+      .spyOn(devicePairing, "pinnedGatewayJson")
+      .mockImplementation(async (_target, path) => {
+        if (path === "/whoami") return { deviceId: f.value.deviceId };
+        if (path === "/devices/direct-candidates") return { version: 1, candidates: saved };
+        throw new Error("Unexpected fictional gateway request");
+      });
+    const provider = { snapshot: vi.fn(async () => nearby), close: vi.fn(async () => {}) };
+    let client: Awaited<ReturnType<typeof runRelayCommand>>;
+    try {
+      client = await runRelayCommand("client", f.env, enabled ? { nearbyHints: provider } : {});
+      expect(client!.nearbyEnabled).toBe(enabled ? true : undefined);
+      const identity = wire.mock.calls.filter(([, path]) => path === "/whoami");
+      expect(identity).toHaveLength(1);
+      expect(identity[0]![5]).toMatchObject({
+        token: f.value.token,
+        tlsSpkiFingerprint: tlsSpkiFingerprint(f.value.gatewayCertificate),
+      });
+      const metadata = wire.mock.calls.filter(([, path]) => path === "/devices/direct-candidates");
+      expect(metadata).toHaveLength(1);
+      expect(metadata[0]![0]).toEqual({
+        publicOrigin: f.value.gatewayUrl,
+        certificate: f.value.gatewayCertificate,
+      });
+      expect(metadata[0]![5]).toEqual({
+        token: f.value.token,
+        tlsSpkiFingerprint: tlsSpkiFingerprint(f.value.gatewayCertificate),
+        // The winner also occurs in saved: the actual refresh must dial it only once.
+        directCandidates: enabled ? [...saved, ...nearby] : saved,
+      });
+      expect(await readFile(f.file, "utf8")).toBe(f.bytes);
+      expect(provider.snapshot).toHaveBeenCalledTimes(enabled ? 1 : 0);
+    } finally {
+      await client?.close();
+    }
+    expect(provider.close).toHaveBeenCalledTimes(enabled ? 1 : 0);
+  },
+);
+
+test("optional discovery does not upgrade or query a legacy exact-leaf pairing", async () => {
+  const f = await nearbyClientBundle();
+  const wire = vi.spyOn(devicePairing, "pinnedGatewayJson");
+  const provider = { snapshot: vi.fn(), close: vi.fn(async () => {}) };
+  let client: Awaited<ReturnType<typeof runRelayCommand>>;
+  try {
+    client = await runRelayCommand("client", f.env, { nearbyHints: provider });
+    expect(client!.nearbyEnabled).toBeUndefined();
+    expect(client!.gatewayUrl).toBe(f.value.gatewayUrl);
+    expect(provider.snapshot).not.toHaveBeenCalled();
+    expect(wire).not.toHaveBeenCalled();
+    expect(await readFile(f.file, "utf8")).toBe(f.bytes);
+  } finally {
+    await client?.close();
+  }
+  expect(provider.close).toHaveBeenCalledOnce();
 });

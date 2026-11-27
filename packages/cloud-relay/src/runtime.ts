@@ -633,7 +633,7 @@ async function runRelayCommandOwned(
           candidates: paired.directCandidates,
           refresh: async (saved, signal, dial) => {
             const nearby = await readNearbyHints(dependencies.nearbyHints, signal);
-            const known = [...(dial ?? []), ...saved]
+            const known = [...dial, ...saved]
               .filter(
                 (value, index, values) =>
                   values.findIndex(
