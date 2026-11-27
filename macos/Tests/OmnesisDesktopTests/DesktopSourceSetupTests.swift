@@ -563,6 +563,189 @@ final class DesktopSourceSetupTests: XCTestCase {
         XCTAssertTrue(fixture.script.operationRequests.isEmpty)
     }
 
+    func testCompanionGuideDecodingKeepsLegacyAndMalformedMetadataOutOfCollectorSetup() async throws {
+        let fixture = try fixture { _ in XCTFail("Companion setup must not dispatch collector or auth requests")
+            return "{}"
+        }
+        defer { fixture.close() }
+        for content in [nil, "future content", ["version": 9], ["version": 1, "title": 42]] as [Any?] {
+            let descriptor = try companionDescriptor(content: content, marker: "future-companion")
+            XCTAssertNil(SourceCompanionGuide.read(descriptor))
+            let flow = DesktopSourceFlow(descriptor: descriptor, api: fixture.api)
+            await flow.prepareSelectedDevice()
+            await flow.begin()
+            XCTAssertFalse(flow.complete)
+            XCTAssertNil(flow.auth)
+            XCTAssertNil(flow.flowId)
+        }
+        XCTAssertTrue(fixture.script.operationRequests.isEmpty)
+        let legacy = try companionDescriptor(marker: "browser-extension")
+        XCTAssertEqual(legacy.setupGuide, "browser-extension")
+        XCTAssertNil(legacy.setupGuideContent)
+    }
+
+    func testAnyDeclaredGuideIncludingNullAndContentOnlyRefusesPrepareAuthAndAdd() async throws {
+        let fixture = try fixture { _ in XCTFail("Declared companion metadata cannot dispatch collector setup")
+            return "{}"
+        }
+        defer { fixture.close() }
+        let fragments = [
+            #", "setupGuide":null"#,
+            #", "setupGuideContent":null"#,
+            #", "setupGuideContent":{"version":1,"title":"Invented companion","paragraphs":["Use companion setup."],"links":[]}"#,
+            #", "setupGuideContent":"malformed future guide""#,
+            #", "setupGuide":"unknown-companion", "setupGuideContent":{"version":9}"#,
+        ]
+        for extra in fragments {
+            let descriptor = try basicDescriptor(extra: extra)
+            XCTAssertTrue(descriptor.hasCompanionGuide)
+            XCTAssertNil(SourceCompanionGuide.read(descriptor))
+            let flow = DesktopSourceFlow(descriptor: descriptor, api: fixture.api)
+            flow.accounts = ["fictional-account"]
+            flow.selectedAccounts = ["fictional-account"]
+            await flow.prepareSelectedDevice()
+            await flow.begin()
+            await flow.add()
+            XCTAssertFalse(flow.complete)
+            XCTAssertNil(flow.auth)
+            XCTAssertNil(flow.flowId)
+            XCTAssertNil(flow.descriptorDeviceId)
+        }
+        XCTAssertTrue(fixture.script.requests.isEmpty, "The real model must refuse even metadata/permission preparation")
+        XCTAssertFalse(try basicDescriptor().hasCompanionGuide, "Two absent guide fields preserve ordinary collector setup")
+        XCTAssertThrowsError(try basicDescriptor(extra: #", "setupGuide":42"#), "Legacy marker type decoding must remain strict")
+    }
+
+    func testGenericCompanionGuideValidatesShapeBoundsAndHTTPSLinks() throws {
+        var content = companionContent()
+        let descriptor = try companionDescriptor(content: content)
+        let guide = try XCTUnwrap(SourceCompanionGuide.read(descriptor))
+        XCTAssertEqual(guide.title, "Install an invented companion")
+        XCTAssertEqual(guide.pairing?.deviceKind, "browser")
+        XCTAssertEqual(guide.links.first?.url, "https://companion.example.com/install")
+        // UTF-8 bytes, not graphemes or UTF-16 units: both clients use the same boundary.
+        for (title, accepted) in [
+            (String(repeating: "😀", count: 40), true), (String(repeating: "😀", count: 41), false),
+            (String(repeating: "e\u{0301}", count: 53), true), (String(repeating: "e\u{0301}", count: 54), false),
+        ] {
+            let candidate = companionContent().merging(["title": title]) { _, replacement in replacement }
+            XCTAssertEqual(try SourceCompanionGuide.read(companionDescriptor(content: candidate)) != nil, accepted)
+        }
+        for url in [
+            "javascript:alert(1)",
+            "file:///tmp/fixture",
+            "http://companion.example.com",
+            "https://user:pass@companion.example.com",
+            "https://@companion.example.com",
+            "https://companion.example.com/\nfixture",
+        ] {
+            content["links"] = [["label": "Install", "url": url]]
+            XCTAssertNil(try SourceCompanionGuide.read(companionDescriptor(content: content)))
+        }
+        for change in [
+            ["title": String(repeating: "x", count: 161)],
+            ["paragraphs": [String]()],
+            ["paragraphs": Array(repeating: "Invented paragraph", count: 9)],
+            ["paragraphs": [String(repeating: "x", count: 2001)]],
+            ["pairing": ["deviceKind": "unknown", "label": "Connect"]],
+        ] as [[String: Any]] {
+            let invalid = companionContent().merging(change) { _, replacement in replacement }
+            XCTAssertNil(try SourceCompanionGuide.read(companionDescriptor(content: invalid)))
+        }
+        XCTAssertNil(try SourceCompanionGuide.read(companionDescriptor(
+            content: companionContent(),
+            marker: String(repeating: "x", count: 129)
+        )))
+    }
+
+    func testMountedCompanionGuideUsesMetadataAndDoesNotReportSourceCompletion() async throws {
+        let fixture = try fixture { _ in XCTFail("Mounting a companion guide cannot connect a source")
+            return "{}"
+        }
+        defer { fixture.close() }
+        let cases: [(String, [String: Any]?)] = [
+            ("source-companion-guide", companionContent()), ("source-companion-legacy", nil),
+            ("source-companion-unsupported", ["version": 9]),
+        ]
+        for (name, content) in cases {
+            let supported = name == "source-companion-guide"
+            let descriptor = try companionDescriptor(content: content)
+            let flow = DesktopSourceFlow(descriptor: descriptor, api: fixture.api)
+            try await renderSource(flow, name: name) { root in
+                let elements = try DesktopAccessibilityDriver.elements(in: root)
+                let marker = supported ? "source-guide-title" : "source-guide-unavailable"
+                XCTAssertTrue(elements.contains { $0.accessibilityIdentifier() == marker })
+                XCTAssertFalse(elements.contains { $0.accessibilityIdentifier() == "source-setup-added" })
+                XCTAssertFalse(elements.contains { $0.accessibilityIdentifier() == "source-auth-waiting" })
+                let portal = try DesktopAccessibilityDriver.element("source-guide-portal", in: root)
+                XCTAssertTrue(portal.isAccessibilityEnabled())
+                if supported {
+                    let link = try DesktopAccessibilityDriver.element("source-guide-link-0", in: root)
+                    XCTAssertTrue(link.isAccessibilityEnabled())
+                    XCTAssertTrue(link.accessibilityLabel() == "Install companion" || link.accessibilityTextValue() == "Install companion")
+                }
+                XCTAssertFalse(flow.complete)
+            }
+        }
+        XCTAssertTrue(fixture.script.operationRequests.isEmpty)
+    }
+
+    func testCompanionGuideActionsUseInjectedDestinationsOnlyAfterAnActualPress() async throws {
+        let descriptor = try companionDescriptor(content: companionContent())
+        let expectedURL = "https://companion.example.com/install"
+        var opened = [URL](), portalOpens = 0, completedAppearances = 0
+        let view = SourceCompanionGuideView(descriptor: descriptor, openLink: { opened.append($0) }, openPortal: { portalOpens += 1 })
+        try await DesktopSnapshotRenderer.render(
+            view.omnesisTheme(),
+            name: "source-companion-actions",
+            size: CGSize(width: 680, height: 480)
+        ) { root in
+            // The renderer mounts Aqua and DarkAqua. Expected history comes from completed
+            // appearance passes, never from the observed action counters themselves.
+            let expectedBefore = completedAppearances
+            XCTAssertEqual(opened.map(\.absoluteString), Array(repeating: expectedURL, count: expectedBefore))
+            XCTAssertEqual(portalOpens, expectedBefore, "Mounting the next appearance cannot navigate automatically")
+            let link = try DesktopAccessibilityDriver.element("source-guide-link-0", in: root)
+            XCTAssertTrue(link.accessibilityPerformPress())
+            XCTAssertEqual(opened.map(\.absoluteString), Array(repeating: expectedURL, count: expectedBefore + 1))
+            XCTAssertEqual(portalOpens, expectedBefore, "An install press cannot open the portal")
+            let portal = try DesktopAccessibilityDriver.element("source-guide-portal", in: root)
+            XCTAssertTrue(portal.accessibilityPerformPress())
+            XCTAssertEqual(portalOpens, expectedBefore + 1)
+            XCTAssertEqual(opened.map(\.absoluteString), Array(repeating: expectedURL, count: expectedBefore + 1))
+            completedAppearances += 1
+        }
+        XCTAssertEqual(completedAppearances, 2, "Both actual renderer appearances must exercise the actions")
+        XCTAssertEqual(opened.map(\.absoluteString), [expectedURL, expectedURL])
+        XCTAssertEqual(portalOpens, 2)
+    }
+
+    private func companionContent() -> [String: Any] {
+        [
+            "version": 1,
+            "title": "Install an invented companion",
+            "paragraphs": ["Connect the companion using its own setup."],
+            "links": [["label": "Install companion", "url": "https://companion.example.com/install"]],
+            "note": "Credentials remain scoped.",
+            "pairing": ["deviceKind": "browser", "label": "Connect companion"],
+        ]
+    }
+
+    private func companionDescriptor(content: Any? = nil, marker: String = "invented-companion") throws -> DesktopDescriptor {
+        var object: [String: Any] = [
+            "id": "invented-companion",
+            "name": "Invented companion",
+            "description": "Fictional companion setup",
+            "hasAuthFlow": false,
+            "hasDiscover": false,
+            "setupGuide": marker,
+            "pushBased": true,
+            "devices": [],
+        ]
+        if let content { object["setupGuideContent"] = content }
+        return try decode(DesktopDescriptor.self, String(decoding: JSONSerialization.data(withJSONObject: object), as: UTF8.self))
+    }
+
     private func renderSource(
         _ flow: DesktopSourceFlow, name: String, validate: ((NSView) throws -> Void)? = nil
     ) async throws {

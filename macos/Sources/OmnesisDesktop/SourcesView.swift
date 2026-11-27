@@ -219,7 +219,7 @@ struct SourcePickerView: View {
     @State private var selected: String?
     var body: some View {
         NavigationStack {
-            List(store.descriptors.filter { $0.setupGuide != nil || $0.pushBased != true }) { descriptor in
+            List(store.descriptors.filter { $0.hasCompanionGuide || $0.pushBased != true }) { descriptor in
                 NavigationLink {
                     if let api = store
                         .api { SourceSetupView(flow: store.sourceDraft(descriptor, api: api)).environment(store).id(ObjectIdentifier(api)) }
@@ -252,7 +252,7 @@ struct SourceSetupView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 Text(flow.descriptor.description).foregroundStyle(DesktopTheme.secondary)
-                if !flow.complete, flow.descriptorDeviceId == flow.deviceId, flow.descriptor.setupGuide == nil,
+                if !flow.complete, flow.descriptorDeviceId == flow.deviceId, !flow.descriptor.hasCompanionGuide,
                    flow.descriptor.permissionRequirements?.isEmpty != true {
                     DesktopCollectionAccessCard(
                         flow: flow.access,
@@ -270,7 +270,7 @@ struct SourceSetupView: View {
                         continueUnverified: { await flow.tryCollectionToCheckAccess() }
                     )
                 }
-                if !flow.complete, flow.descriptor.setupGuide == nil, flow.descriptorDeviceId != flow.deviceId {
+                if !flow.complete, !flow.descriptor.hasCompanionGuide, flow.descriptorDeviceId != flow.deviceId {
                     Text("Check source settings on the selected computer before continuing.").foregroundStyle(DesktopTheme.secondary)
                     if flow.advertisedHosts.count > 1, flow.canChooseHost {
                         Picker("Connect from", selection: Binding(get: { flow.deviceId }, set: { flow.selectHost($0) })) {
@@ -290,25 +290,12 @@ struct SourceSetupView: View {
                         Text("This source remains paused. Choose Resume in Sources when you are ready to collect.")
                             .foregroundStyle(DesktopTheme.secondary)
                     }
-                } else if flow.descriptor.setupGuide != nil {
-                    if flow.descriptor.setupGuide == "browser-extension" {
-                        Label("Install the browser extension", systemImage: "puzzlepiece.extension").font(.title2)
-                        Text(
-                            "Install Omnesis Browser Capture in Chrome or a compatible browser, then pair it with this library from the extension’s settings. Pages appear in your library after the extension connects."
-                        )
-                        Button("Install browser extension") {
-                            if let url =
-                                URL(
-                                    string: "https://chromewebstore.google.com/detail/omnesis-browser-capture/akojepkcdbncipjdonhnnfmjacknplmn"
-                                ) {
-                                store.openBrowser(url)
-                            }
-                        }.buttonStyle(DesktopButtonStyle(primary: true))
-                        Text("The extension uses its own scoped device credential. It does not receive this app’s administrative access.")
-                            .font(.callout).foregroundStyle(DesktopTheme.secondary)
-                    } else {
-                        Text("This companion setup guide needs a newer version of Omnesis.")
-                    }
+                } else if flow.descriptor.hasCompanionGuide {
+                    SourceCompanionGuideView(
+                        descriptor: flow.descriptor,
+                        openLink: { store.openBrowser($0) },
+                        openPortal: { store.openPortal() }
+                    )
                 } else if flow.needsCredentials {
                     SourceCredentialsView(flow: flow)
                 } else if let auth = flow.auth {
@@ -386,8 +373,10 @@ struct SourceSetupView: View {
                 }
                 if flow.auth != nil, flow.error != nil || flow.auth?.state == "error" { cancelSignIn }
                 if flow.busy { ProgressView("Connecting…").accessibilityIdentifier("source-setup-progress") }
-                Button("Open advanced setup") { store.openPortal() }.font(.callout)
-                    .accessibilityIdentifier("source-advanced-setup")
+                if !flow.descriptor.hasCompanionGuide {
+                    Button("Open advanced setup") { store.openPortal() }.font(.callout)
+                        .accessibilityIdentifier("source-advanced-setup")
+                }
             }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
         }.navigationTitle(flow.descriptor.name).disabled(flow.busy || store.api !== flow.api)
             .onAppear {

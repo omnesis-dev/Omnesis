@@ -208,7 +208,13 @@ struct DesktopDescriptor: Decodable, Equatable, Identifiable {
     let params: [Param]?
     let devices: [Host]?
     let credentials: Credentials?
-    let setupGuide: String?
+    @DeclaredSourceGuideField var setupGuide: String?
+    // Raw optional JSON permits unknown/malformed future guide content without failing the descriptor list.
+    @DeclaredSourceGuideField var setupGuideContent: BridgeValue?
+    var hasCompanionGuide: Bool {
+        $setupGuide || $setupGuideContent
+    }
+
     let gatewayHosted: Bool?
     let pushBased: Bool?
     let widgetOrigins: WidgetOrigins?

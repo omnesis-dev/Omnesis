@@ -1118,7 +1118,7 @@ describe("browser extension pairing", () => {
     }
   });
 
-  test("browser instructions link to the Chrome Web Store", async () => {
+  test("browser instructions preserve redemption and direct installation to source setup", async () => {
     await act(async () => {
       render(
         h(PairInstructions, {
@@ -1130,11 +1130,10 @@ describe("browser extension pairing", () => {
         host,
       );
     });
-    const link = host.querySelector(
-      'a[href^="https://chromewebstore.google.com/"]',
-    ) as HTMLAnchorElement;
-    expect(link?.textContent).toContain("Chrome Web Store");
-    expect(link?.getAttribute("target")).toBe("_blank");
+    expect(host.textContent).toContain("open Options and enter the gateway URL");
+    expect(host.textContent).toContain("The extension redeems the code itself and stores its credential.");
+    expect(host.textContent).toContain("For installation instructions, open Sources and choose Add source.");
+    expect(host.querySelector('a[href^="https://chromewebstore.google.com/"]')).toBeNull();
   });
 
   test("every command and value a pairing asks the user to enter has a copy button for exactly that text", async () => {

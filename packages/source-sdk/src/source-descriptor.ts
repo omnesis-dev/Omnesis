@@ -13,7 +13,7 @@ import type { SourcePermissionDeclaration, SourcePermissionRequirement } from ".
  * without knowing source internals.
  */
 
-import type { AccountId, SourceType, ProviderType } from "@omnesis/types";
+import type { AccountId, SourceType, ProviderType, DeviceKind } from "@omnesis/types";
 import type { AuthResult, AuthSession } from "./auth-session.js";
 import type { AccountDescriptor } from "./account-descriptor.js";
 import type { ExecutionMode } from "./execution-mode.js";
@@ -342,6 +342,30 @@ export interface SelfIdentitySpec {
 }
 
 /**
+ * Provider-owned plain installation content, never executable setup or permission authority.
+ * Every string limit below is UTF-8 bytes (including URLs after normalization),
+ * not grapheme count or JavaScript UTF-16 length. Render text without markup.
+ * Version 1: title 1–160, paragraphs 1–8 (each 1–2000), links 0–4 (label 1–120,
+ * HTTPS URL 1–2048 with a host and no userinfo/control characters), note 1–2000.
+ * Optional pairing label 1–120 only opens the existing first-party device setup UI;
+ * it cannot supply scopes, credentials, API commands, or issue a code on display.
+ * Declare a nonempty opaque setupGuide marker (1–128 UTF-8 bytes) alongside content.
+ * Old clients ignore content and retain their legacy string guide; unknown versions
+ * or malformed content must refuse guide actions without entering collector setup.
+ * Any explicitly declared marker or content, including null on the wire, reserves
+ * guide handling; only two absent fields mean ordinary collector setup. Content
+ * without a valid marker is unsupported, never authority to authenticate or add.
+ */
+export interface SourceSetupGuideContent {
+  version: 1;
+  title: string;
+  paragraphs: string[];
+  links: { label: string; url: string }[];
+  note?: string;
+  pairing?: { deviceKind: DeviceKind; label: string };
+}
+
+/**
  * Declarative descriptor for a data source.
  * Each provider package exports one or more of these.
  */
@@ -417,7 +441,9 @@ export interface SourceDescriptor extends SourcePermissionDeclaration {
    * Installation guide shown instead of collector setup in clients that
    * support it. The source declares how its external ingestion is installed.
    */
-  setupGuide?: "browser-extension";
+  setupGuide?: string;
+  /** Additive provider-owned content; keep the legacy marker for older clients. */
+  setupGuideContent?: SourceSetupGuideContent;
   /** See `SourceDefinition.urlHub`. */
   urlHub?: boolean;
   /** See `SourceDefinition.urlTargetRole`. */
@@ -659,7 +685,9 @@ export interface SerializedDescriptor {
   /** See `SourceDescriptor.gatewayHosted`. */
   gatewayHosted?: boolean;
   /** See `SourceDescriptor.setupGuide`. */
-  setupGuide?: "browser-extension";
+  setupGuide?: string;
+  /** Additive provider-owned content; keep the legacy marker for older clients. */
+  setupGuideContent?: SourceSetupGuideContent;
   /** See `SourceDescriptor.urlHub`. */
   urlHub?: boolean;
   /** See `SourceDescriptor.urlTargetRole`. */
@@ -769,6 +797,7 @@ export function serializeDescriptor(d: SourceDescriptor): SerializedDescriptor {
     primaryCount: d.primaryCount,
     gatewayHosted: d.gatewayHosted,
     setupGuide: d.setupGuide,
+    setupGuideContent: d.setupGuideContent,
     urlHub: d.urlHub,
     urlTargetRole: d.urlTargetRole,
     provider: { id: String(d.provider.id), name: d.provider.name },

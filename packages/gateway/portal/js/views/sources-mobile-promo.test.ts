@@ -154,7 +154,7 @@ describe("SourcesView phone-app promos", () => {
     expect(host.querySelector(".android-promo")).toBeNull();
   });
 
-  test("all three promos share one row: Chrome, then iOS, then Android", async () => {
+  test("phone setup cards share one row: iOS, then Android", async () => {
     await act(async () => {
       render(h(SourcesView, {}), host);
     });
@@ -163,13 +163,12 @@ describe("SourcesView phone-app promos", () => {
     );
     const row = host.querySelector(".sources-promo-row") as HTMLElement;
     const cards = [...row.children].filter((el) => el.classList.contains("ext-promo"));
-    expect(cards).toHaveLength(3);
-    expect(cards[0].textContent).toContain("Install the Chrome extension");
-    expect(cards[1].textContent).toContain("Get the iPhone app");
-    expect(cards[2].textContent).toContain("Get the Android app");
+    expect(cards).toHaveLength(2);
+    expect(cards[0].textContent).toContain("Get the iPhone app");
+    expect(cards[1].textContent).toContain("Get the Android app");
   });
 
-  test("without the Chrome promo the row holds only the phone-app cards", async () => {
+  test("an external source does not hide the independent phone-app cards", async () => {
     apiMocks.getAdminSources.mockResolvedValue({
       items: [gmailRow(), { id: "web", type: "web", accountId: "", deviceId: "device-12345678", enabled: true }],
     });
@@ -194,7 +193,7 @@ describe("SourcesView phone-app promos", () => {
     expect(host.querySelector(".sources-promo-row")).toBeNull();
     expect(host.textContent).toContain("+ Add source");
     await act(async () => { render(h(SourcesView, { demo: false }), host); });
-    await vi.waitFor(() => expect(host.querySelectorAll(".sources-promo-row .ext-promo")).toHaveLength(4));
+    await vi.waitFor(() => expect(host.querySelectorAll(".sources-promo-row .ext-promo")).toHaveLength(3));
   });
 
   test("withholds installation cards until demo mode is known", async () => {
@@ -214,7 +213,7 @@ describe("SourcesView phone-app promos", () => {
     await vi.waitFor(() => expect(host.querySelector(".agent-promo")).not.toBeNull());
     const row = host.querySelector(".sources-promo-row") as HTMLElement;
     const cards = [...row.children].filter((el) => el.classList.contains("ext-promo"));
-    expect(cards).toHaveLength(4);
-    expect(cards[3].textContent).toContain("Connect your favorite agent");
+    expect(cards).toHaveLength(3);
+    expect(cards[2].textContent).toContain("Connect your favorite agent");
   });
 });

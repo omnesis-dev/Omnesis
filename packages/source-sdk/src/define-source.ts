@@ -77,6 +77,7 @@ import type {
   SourceMultiDeviceContract,
   WidgetOrigins,
   WidgetRendererSpec,
+  SourceSetupGuideContent,
 } from "./source-descriptor.js";
 import type { SourceState } from "./source-state.js";
 import type { ProviderBrokerSpec } from "./broker-spec.js";
@@ -642,7 +643,9 @@ export interface SourceDefinition<
   /** See `SourceDescriptor.gatewayHosted`. */
   gatewayHosted?: boolean;
   /** See `SourceDescriptor.setupGuide`. */
-  setupGuide?: "browser-extension";
+  setupGuide?: string;
+  /** See `SourceDescriptor.setupGuideContent`. */
+  setupGuideContent?: SourceSetupGuideContent;
   /** Icon for portal */
   icon?: SourceIcon;
   /**
@@ -969,7 +972,9 @@ export interface ProviderSourceEntry<
   /** See `SourceDescriptor.gatewayHosted`. */
   gatewayHosted?: boolean;
   /** See `SourceDescriptor.setupGuide`. */
-  setupGuide?: "browser-extension";
+  setupGuide?: string;
+  /** See `SourceDescriptor.setupGuideContent`. */
+  setupGuideContent?: SourceSetupGuideContent;
   icon?: SourceIcon;
   /** See `SourceDefinition.attribution`. */
   attribution?: SourceAttribution;

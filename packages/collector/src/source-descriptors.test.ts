@@ -1094,3 +1094,45 @@ describe("permission metadata transport", () => {
     ]);
   });
 });
+
+describe("provider-owned setup guide extraction", () => {
+  it("forwards independent standalone and provider-source content to the wire", () => {
+    const content = {
+      version: 1 as const,
+      title: "Install a companion",
+      paragraphs: ["Connect the invented companion."],
+      links: [],
+    };
+    const standalone = defineSource({
+      id: "fixture-companion",
+      name: "Companion",
+      description: "Invented external source",
+      authType: "local",
+      execution: "external",
+      setupGuide: "invented-companion",
+      setupGuideContent: content,
+    });
+    const provider = defineProvider({
+      provider: { id: "fixture-companions", name: "Companions" },
+      authType: "local",
+      sources: [
+        {
+          id: "fixture-other",
+          name: "Other",
+          description: "Another invented source",
+          execution: "external",
+          setupGuide: "other-companion",
+          setupGuideContent: { ...content, title: "Install another companion" },
+        },
+      ],
+    });
+    const [first] = extractDescriptors(standalone),
+      [second] = extractDescriptors(provider);
+    expect(serializeDescriptor(first).setupGuideContent).toEqual(content);
+    expect(serializeDescriptor(first).setupGuide).toBe("invented-companion");
+    expect(serializeDescriptor(second).setupGuideContent?.title).toBe("Install another companion");
+    expect(serializeDescriptor(second).setupGuide).toBe("other-companion");
+    expect(serializeDescriptor(first).hasAuthFlow).toBe(false);
+    expect(serializeDescriptor(second).hasAuthFlow).toBe(false);
+  });
+});

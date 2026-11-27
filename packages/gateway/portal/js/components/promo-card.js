@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// Shared shell for the Sources-page install promos (browser extension, iOS
-// app, Android app). The card itself stays compact — a product mark, a
-// title, a one-line tagline and a "Learn more" button — so the row
+// Shared shell for Sources-page app and agent setup suggestions.
+// The card itself stays compact — a product mark, a title, a one-line tagline
+// and a "Learn more" button — so the row
 // reads as a quiet suggestion above the sources table. The button opens a
 // modal that carries the full explanation and every link the install
 // needs; each promo supplies that modal body as `children`.

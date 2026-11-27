@@ -10,8 +10,6 @@
 
 import { afterEach, describe, expect, test, vi } from "vitest";
 // @ts-expect-error — portal is plain JS without sibling declarations.
-import { EXTENSION_PAIR_PATH } from "./extension-links.js";
-// @ts-expect-error — portal is plain JS without sibling declarations.
 import { parseRoute } from "./router.js";
 // @ts-expect-error — portal is plain JS without sibling declarations.
 import { settingsTabs, SETTINGS_TAB_KEYS, DEFAULT_SETTINGS_TAB } from "./settings-tabs.js";
@@ -287,11 +285,8 @@ describe("Settings page tabs", () => {
     });
   });
 
-  test("the promo card's pair link resolves back to a browser pair request", () => {
-    // Round-trips the shipped constant through the router instead of
-    // asserting the literal: the contract is parseability, not the string.
-    const [path, search] = EXTENSION_PAIR_PATH.split("?");
-    expect(route(path, `?${search}`)).toMatchObject({
+  test("the provider guide pairing route resolves to a browser pair request", () => {
+    expect(route("/portal/settings/devices", "?pair=browser")).toMatchObject({
       view: "settings",
       tab: "devices",
       pair: "browser",

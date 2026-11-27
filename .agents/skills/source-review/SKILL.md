@@ -596,6 +596,20 @@ includeAudioTypes })` and the injected `extractAttachment`; no bespoke
   extending the switch.
 - The rendered check (portal sources page and timeline) is a § 17 item.
 
+- External installation guides declare provider-owned `setupGuideContent` alongside
+  their existing opaque `setupGuide` marker. Check both descriptor extraction paths
+  and JSON projection. Source-specific instructions, install URLs and credential
+  explanations stay in the provider; shared clients render bounded, versioned plain
+  content and safe HTTPS links. Cross-client string limits use explicit UTF-8 bytes;
+  include combining-mark/emoji boundary regressions. Optional device pairing only navigates existing
+  first-party setup: no scopes, credentials, code issuance or arbitrary commands.
+  Preserve legacy markers for older clients and declaration presence for explicit
+  null/content-only metadata; only two absent fields permit ordinary collector setup.
+  Test unknown/missing/malformed content,
+  unsafe links, no collector/auth fallback or false completion, and the new-native /
+  old-gateway authenticated portal fallback. Render and inspect both native and portal
+  supported/fallback states after any guide UI change.
+
 ## 11. Watch and the ontology
 
 - Every document-emitting source declares `documentEventProfile`

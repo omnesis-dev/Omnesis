@@ -134,6 +134,7 @@ final class DesktopSourceFlow {
     }
 
     func prepareSelectedDevice() async {
+        guard !descriptor.hasCompanionGuide else { return }
         guard isCurrentAPI?() != false else { return }
         guard !busy, !deviceId.isEmpty, descriptorDeviceId != deviceId else { return }
         busy = true
@@ -169,6 +170,7 @@ final class DesktopSourceFlow {
     }
 
     func begin() async {
+        guard !descriptor.hasCompanionGuide else { return }
         guard isCurrentAPI?() != false else { return }
         guard !needsDescriptorReview else { return }
         guard !busy, !complete else { return }
@@ -181,7 +183,7 @@ final class DesktopSourceFlow {
         defer { if generation == current { busy = false } }
         do {
             try await bindSelectedDescriptor(current)
-            guard descriptor.setupGuide == nil else { return }
+            guard !descriptor.hasCompanionGuide else { return }
             try await requireRepairTarget(current)
             for param in descriptor.params ?? [] {
                 let value = params[param.name] ?? ""
@@ -260,6 +262,7 @@ final class DesktopSourceFlow {
     }
 
     private func collectCredentialsIfNeeded(_ current: Int) async throws -> Bool {
+        guard !descriptor.hasCompanionGuide else { throw DesktopAPIError.message("Open companion setup to continue.") }
         guard let spec = descriptor.credentials else { return false }
         if credentialsCollected {
             if spec.perAccount != true, !sharedCredentialsSaved {
@@ -378,7 +381,8 @@ final class DesktopSourceFlow {
     }
 
     var canAuthenticateAnotherAccount: Bool {
-        descriptor.hasAuthFlow && existingAccountId == nil && movingSource == nil && !complete && !needsDescriptorReview
+        !descriptor.hasCompanionGuide && descriptor
+            .hasAuthFlow && existingAccountId == nil && movingSource == nil && !complete && !needsDescriptorReview
     }
 
     var offersAnotherAccountAfterFailure: Bool {
@@ -390,6 +394,7 @@ final class DesktopSourceFlow {
     }
 
     private func startAuthentication(_ current: Int) async throws {
+        guard !descriptor.hasCompanionGuide else { throw DesktopAPIError.message("Open companion setup to continue.") }
         struct Started: Decodable { let flowId: String }
         var body: [String: Any] = [
             "sourceType": descriptor.id,
@@ -412,6 +417,7 @@ final class DesktopSourceFlow {
     }
 
     func add() async {
+        guard !descriptor.hasCompanionGuide else { return }
         guard isCurrentAPI?() != false else { return }
         guard !busy else { return }
         busy = true
@@ -423,8 +429,10 @@ final class DesktopSourceFlow {
     }
 
     private func addAccounts(_ current: Int) async throws {
+        guard !descriptor.hasCompanionGuide else { throw DesktopAPIError.message("Open companion setup to continue.") }
         guard !needsDescriptorReview else { throw DesktopAPIError.message("Review the updated source settings before connecting.") }
         try await bindSelectedDescriptor(current, requireUnchanged: true)
+        guard !descriptor.hasCompanionGuide else { throw DesktopAPIError.message("Open companion setup to continue.") }
         guard !selectedAccounts.isEmpty else { throw DesktopAPIError.message("Choose at least one account.") }
         let existing = try await api.sources()
         try check(current)
@@ -724,6 +732,7 @@ final class DesktopSourceFlow {
     }
 
     private func checkCollectionAccess(_ current: Int, account: String?, sourceId: String? = nil) async throws -> Bool {
+        guard !descriptor.hasCompanionGuide else { return false }
         guard descriptorDeviceId == deviceId
         else { throw DesktopAPIError.message("Check the selected computer’s source settings before continuing.") }
         if descriptor.permissionRequirements?.isEmpty == true, !access.unresolvedDenial, !access.memberAccessProblem { needsAccess = false

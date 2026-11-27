@@ -278,7 +278,7 @@ struct DesktopAccessCoach: View {
                     Text("Choose a source to set up").font(.headline)
                     ForEach(store.descriptors
                         .filter {
-                            $0.setupGuide == nil && $0.pushBased != true && $0.devices?
+                            !$0.hasCompanionGuide && $0.pushBased != true && $0.devices?
                                 .contains(where: { $0.id == store.api?.connection.collectorDeviceId }) == true
                         }) { descriptor in
                             Button { if let api = store.api { draft = store.sourceDraft(descriptor, api: api) } } label: {

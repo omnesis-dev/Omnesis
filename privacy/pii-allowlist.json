@@ -5790,8 +5790,6 @@
       "value": "Chrome Web Store",
       "paths": [
         "extension/src/store-release.test.ts",
-        "packages/gateway/portal/js/components/extension-promo.js",
-        "packages/gateway/portal/js/components/extension-promo.test.ts",
         "packages/gateway/portal/js/views/devices.js",
         "packages/gateway/portal/js/views/devices.test.ts"
       ],
@@ -7827,14 +7825,8 @@
       "value": "Google Chrome",
       "paths": [
         "packages/providers/browser-history/src/index.test.ts",
-        "packages/providers/chrome/src/setup.test.ts",
-        "packages/gateway/portal/js/components/extension-promo.test.ts"
+        "packages/providers/chrome/src/setup.test.ts"
       ],
-      "reason": "reviewed existing fixture"
-    },
-    {
-      "value": "Intel Mac",
-      "paths": ["packages/gateway/portal/js/components/extension-promo.test.ts"],
       "reason": "reviewed existing fixture"
     },
     {
