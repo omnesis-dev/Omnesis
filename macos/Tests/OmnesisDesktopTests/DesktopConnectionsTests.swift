@@ -115,18 +115,18 @@ final class DesktopConnectionsTests: XCTestCase {
         let model = DesktopAgentAuthorization()
         let context = DesktopAPIContext(api: fixture.api, id: 1)
         model.code = "invented-code"
-        try await model.lookup(
+        try await model.requestLookup(
             context: context,
             overview: overview,
             expectedResource: XCTUnwrap(URL(string: "https://library.example.com/mcp"))
-        )
+        )?.value
         XCTAssertNotNil(model.request)
         XCTAssertNil(model.decision)
         model.allowAnswers = false
         model.allowDirect = true
         model.allowedSources = ["fixture-source"]
         model.personallyStarted = true
-        await model.decide(approve: true, context: context, overview: overview)
+        try await model.decide(approve: true, requestID: XCTUnwrap(model.requestID), context: context, overview: overview)
         XCTAssertEqual(model.decision, .approved)
         XCTAssertNil(model.failure)
     }
@@ -148,12 +148,12 @@ final class DesktopConnectionsTests: XCTestCase {
         let overview = AccessOverview(principals: [], sources: [], policyFamilies: [])
         let context = DesktopAPIContext(api: fixture.api, id: 1)
         model.code = "invented-code"
-        try await model.lookup(
+        try await model.requestLookup(
             context: context,
             overview: overview,
             expectedResource: XCTUnwrap(URL(string: "https://library.example.com/mcp"))
-        )
-        await model.decide(approve: false, context: context, overview: overview)
+        )?.value
+        try await model.decide(approve: false, requestID: XCTUnwrap(model.requestID), context: context, overview: overview)
         XCTAssertEqual(model.decision, .denied)
         XCTAssertNil(model.request)
         try await DesktopSnapshotRenderer.render(
@@ -165,6 +165,261 @@ final class DesktopConnectionsTests: XCTestCase {
             XCTAssertFalse(try DesktopAccessibilityDriver.contains("Install and use Omnesis", in: view))
             XCTAssertFalse(try DesktopAccessibilityDriver.contains("Return to your assistant", in: view))
         }
+    }
+
+    func testFailedReplacementLookupClearsPriorRequestAndEveryConsentChoice() async throws {
+        let script = ScriptedDesktopHTTP { request in
+            guard request.url?.path == "/admin/access/authorizations/lookup" else {
+                XCTFail("A retired approval must never reach decision dispatch")
+                throw URLError(.unsupportedURL)
+            }
+            if try Self.body(request)["code"] as? String == "invented-code-a" { return Self.authorizationJSON() }
+            throw URLError(.cannotConnectToHost)
+        }
+        let fixture = try makeAPI(script: script)
+        defer { fixture.cleanup() }
+        let model = DesktopAgentAuthorization(), context = DesktopAPIContext(api: fixture.api, id: 1)
+        model.code = "invented-code-a"
+        await model.requestLookup(context: context, overview: Self.authorizationOverview, expectedResource: Self.resource)?.value
+        let oldID = try XCTUnwrap(model.requestID)
+        consent(model)
+        model.includeFutureSources = true
+        model.reviewedAnswers = false
+        model.policyFamilyId = "invented-policy"
+        model.code = "invented-code-b"
+        assertNoConsent(model)
+        await model.requestLookup(context: context, overview: Self.authorizationOverview, expectedResource: Self.resource)?.value
+        XCTAssertNotNil(model.failure)
+        await model.decide(approve: true, requestID: oldID, context: context, overview: Self.authorizationOverview)
+        XCTAssertNil(model.request)
+        XCTAssertNil(model.decision)
+        XCTAssertEqual(script.requests.count, 2)
+    }
+
+    func testSameCodeLookupClearsApprovalBeforeItsFailedResponse() async throws {
+        let gate = AuthorizationResponseGate()
+        let entered = expectation(description: "replacement lookup entered")
+        let count = AuthorizationLookupCount()
+        let script = ScriptedDesktopHTTP { request in
+            XCTAssertEqual(request.url?.path, "/admin/access/authorizations/lookup")
+            if count.next() > 1 {
+                entered.fulfill()
+                try gate.wait()
+                throw URLError(.cannotConnectToHost)
+            }
+            return Self.authorizationJSON()
+        }
+        let fixture = try makeAPI(script: script)
+        defer { fixture.cleanup() }
+        let model = DesktopAgentAuthorization(), context = DesktopAPIContext(api: fixture.api, id: 1)
+        model.code = "invented-code-a"
+        await model.requestLookup(context: context, overview: Self.authorizationOverview, expectedResource: Self.resource)?.value
+        let oldID = try XCTUnwrap(model.requestID)
+        consent(model)
+        let loading = Task { await model.requestLookup(
+            context: context,
+            overview: Self.authorizationOverview,
+            expectedResource: Self.resource
+        )?.value }
+        await fulfillment(of: [entered], timeout: 2)
+        assertNoConsent(model)
+        XCTAssertTrue(model.busy)
+        await model.decide(approve: true, requestID: oldID, context: context, overview: Self.authorizationOverview)
+        gate.release()
+        await loading.value
+        XCTAssertNotNil(model.failure)
+        XCTAssertNil(model.requestID)
+        XCTAssertEqual(script.requests.count, 2)
+    }
+
+    func testEditingCodeWhileLookupIsHeldRejectsLateSuccessOrFailureIncludingCodeABA() async throws {
+        for (returnToA, fails) in [(false, false), (true, false), (false, true), (true, true)] {
+            let gate = AuthorizationResponseGate()
+            let entered = expectation(description: "lookup entered")
+            let script = ScriptedDesktopHTTP { request in
+                XCTAssertEqual(request.url?.path, "/admin/access/authorizations/lookup")
+                XCTAssertEqual(try Self.body(request)["code"] as? String, "invented-code-a")
+                entered.fulfill()
+                try gate.wait()
+                if fails { throw URLError(.cannotConnectToHost) }
+                return Self.authorizationJSON()
+            }
+            let fixture = try makeAPI(script: script)
+            let model = DesktopAgentAuthorization(), context = DesktopAPIContext(api: fixture.api, id: 1)
+            model.code = "invented-code-a"
+            let loading = Task {
+                await model.requestLookup(context: context, overview: Self.authorizationOverview, expectedResource: Self.resource)?.value
+            }
+            await fulfillment(of: [entered], timeout: 2)
+            model.code = "invented-code-b"
+            if returnToA { model.code = "invented-code-a" }
+            assertNoConsent(model)
+            XCTAssertTrue(model.busy, "An edit must retain ownership until the real lookup returns")
+            gate.release()
+            await loading.value
+            XCTAssertFalse(model.busy)
+            XCTAssertNil(model.request)
+            XCTAssertNil(model.failure, "A retired lookup cannot publish a success or error under edited text")
+            XCTAssertEqual(script.requests.count, 1)
+            fixture.cleanup()
+        }
+    }
+
+    func testCachedAllowAndDenyCannotDecideReplacementEvenWhenServerIdentityRepeats() async throws {
+        let script = ScriptedDesktopHTTP { request in
+            if request.url?.path == "/admin/access/authorizations/lookup" { return Self.authorizationJSON() }
+            XCTAssertEqual(request.url?.path, "/admin/access/authorizations/approval-1/decision")
+            return #"{"request":{"status":"approved"}}"#
+        }
+        let fixture = try makeAPI(script: script)
+        defer { fixture.cleanup() }
+        let model = DesktopAgentAuthorization(), context = DesktopAPIContext(api: fixture.api, id: 1)
+        model.code = "invented-code-a"
+        await model.requestLookup(context: context, overview: Self.authorizationOverview, expectedResource: Self.resource)?.value
+        let oldID = try XCTUnwrap(model.requestID)
+        model.code = "invented-code-b"
+        await model.requestLookup(context: context, overview: Self.authorizationOverview, expectedResource: Self.resource)?.value
+        let currentID = try XCTUnwrap(model.requestID)
+        XCTAssertNotEqual(oldID, currentID)
+        consent(model)
+        for approve in [true, false] {
+            await model.decide(approve: approve, requestID: oldID, context: context, overview: Self.authorizationOverview)
+        }
+        XCTAssertEqual(script.requests.count, 2)
+        XCTAssertEqual(model.requestID, currentID)
+        await model.decide(approve: true, requestID: currentID, context: context, overview: Self.authorizationOverview)
+        XCTAssertEqual(script.requests.count, 3)
+        XCTAssertEqual(model.decision, .approved)
+    }
+
+    func testQueuedAllowCannotFollowCodeEditBeforeDispatch() async throws {
+        let script = ScriptedDesktopHTTP { request in
+            XCTAssertEqual(request.url?.path, "/admin/access/authorizations/lookup")
+            return Self.authorizationJSON()
+        }
+        let fixture = try makeAPI(script: script)
+        defer { fixture.cleanup() }
+        let model = DesktopAgentAuthorization(), context = DesktopAPIContext(api: fixture.api, id: 1)
+        model.code = "invented-code-a"
+        await model.requestLookup(context: context, overview: Self.authorizationOverview, expectedResource: Self.resource)?.value
+        let identity = try XCTUnwrap(model.requestID)
+        consent(model)
+        let deciding = Task {
+            await model.decide(approve: true, requestID: identity, context: context, overview: Self.authorizationOverview)
+        }
+        model.code = "invented-code-b"
+        await deciding.value
+        XCTAssertEqual(script.requests.count, 1)
+        XCTAssertNil(model.decision)
+    }
+
+    func testCodeEditAfterActualDecisionDispatchDoesNotRevokeOrPublishItsCompletion() async throws {
+        let gate = AuthorizationResponseGate()
+        let dispatched = expectation(description: "decision actually dispatched")
+        let script = ScriptedDesktopHTTP { request in
+            if request.url?.path == "/admin/access/authorizations/lookup" { return Self.authorizationJSON() }
+            XCTAssertEqual(request.url?.path, "/admin/access/authorizations/approval-1/decision")
+            XCTAssertEqual(try Self.body(request)["decision"] as? String, "approve")
+            dispatched.fulfill()
+            try gate.wait()
+            return #"{"request":{"status":"approved"}}"#
+        }
+        let fixture = try makeAPI(script: script)
+        defer { fixture.cleanup() }
+        let model = DesktopAgentAuthorization(), context = DesktopAPIContext(api: fixture.api, id: 1)
+        model.code = "invented-code-a"
+        await model.requestLookup(context: context, overview: Self.authorizationOverview, expectedResource: Self.resource)?.value
+        let identity = try XCTUnwrap(model.requestID)
+        consent(model)
+        let deciding = Task {
+            await model.decide(approve: true, requestID: identity, context: context, overview: Self.authorizationOverview)
+        }
+        await fulfillment(of: [dispatched], timeout: 2)
+        model.code = "invented-code-b"
+        assertNoConsent(model)
+        XCTAssertTrue(model.busy)
+        gate.release()
+        await deciding.value
+        XCTAssertFalse(model.busy)
+        XCTAssertNil(model.decision, "A's committed decision cannot claim that displayed B was approved")
+        XCTAssertNil(model.failure)
+        XCTAssertEqual(script.requests.map(\.httpMethod), ["POST", "POST"], "Editing must not send revocation or another decision")
+    }
+
+    func testApprovalCannotBorrowAnotherContextForTheSameApi() async throws {
+        let script = ScriptedDesktopHTTP { request in
+            XCTAssertEqual(request.url?.path, "/admin/access/authorizations/lookup")
+            return Self.authorizationJSON()
+        }
+        let fixture = try makeAPI(script: script)
+        defer { fixture.cleanup() }
+        let first = DesktopAPIContext(api: fixture.api, id: 1)
+        let second = DesktopAPIContext(api: fixture.api, id: 2)
+        let model = DesktopAgentAuthorization()
+        model.code = "invented-code-a"
+        await model.requestLookup(context: first, overview: Self.authorizationOverview, expectedResource: Self.resource)?.value
+        let identity = try XCTUnwrap(model.requestID)
+        consent(model)
+        await model.decide(approve: true, requestID: identity, context: second, overview: Self.authorizationOverview)
+        first.invalidate()
+        await model.decide(approve: true, requestID: identity, context: first, overview: Self.authorizationOverview)
+        await first.drain()
+        XCTAssertEqual(script.requests.count, 1)
+        XCTAssertNil(model.decision)
+    }
+
+    func testQueuedFindCannotLookupEditedCodeIncludingCodeABAAndCurrentFindStillWorks() async throws {
+        for returnToA in [false, true] {
+            let script = ScriptedDesktopHTTP { request in
+                XCTAssertEqual(request.url?.path, "/admin/access/authorizations/lookup")
+                XCTAssertEqual(try Self.body(request)["code"] as? String, returnToA ? "invented-code-a" : "invented-code-b")
+                return Self.authorizationJSON()
+            }
+            let fixture = try makeAPI(script: script)
+            defer { fixture.cleanup() }
+            let model = DesktopAgentAuthorization(), context = DesktopAPIContext(api: fixture.api, id: 1)
+            model.code = "invented-code-a"
+            let queued = model.requestLookup(context: context, overview: Self.authorizationOverview, expectedResource: Self.resource)
+            model.code = "invented-code-b"
+            if returnToA { model.code = "invented-code-a" }
+            await queued?.value
+            XCTAssertTrue(script.requests.isEmpty, "A queued Find must not look up whichever code was entered later")
+            XCTAssertNil(model.requestID)
+            XCTAssertFalse(model.busy)
+            await model.requestLookup(context: context, overview: Self.authorizationOverview, expectedResource: Self.resource)?.value
+            XCTAssertEqual(script.requests.count, 1, "An explicit Find for the current code must still dispatch")
+            XCTAssertNotNil(model.requestID)
+        }
+    }
+
+    private static let resource = URL(string: "https://library.example.com/mcp")!
+    private static let authorizationOverview = AccessOverview(
+        principals: [], sources: [AccessSourceInstance(id: "fixture-source", name: "Invented source")], policyFamilies: []
+    )
+
+    private nonisolated static func authorizationJSON() -> String {
+        let expiry = Int64(Date().addingTimeInterval(600).timeIntervalSince1970 * 1000)
+        return #"{"request":{"id":"request-1","approvalId":"approval-1","status":"pending","clientId":"client-1","clientName":"Invented assistant","redirectOrigin":"https://assistant.example.com","resource":"https://library.example.com/mcp","scope":"mcp:access","expiresAt":\#(expiry),"requiresAnswer":false}}"#
+    }
+
+    private func consent(_ model: DesktopAgentAuthorization) {
+        model.allowAnswers = false
+        model.allowDirect = true
+        model.allowedSources = ["fixture-source"]
+        model.personallyStarted = true
+    }
+
+    private func assertNoConsent(_ model: DesktopAgentAuthorization, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertNil(model.request, file: file, line: line)
+        XCTAssertNil(model.requestID, file: file, line: line)
+        XCTAssertFalse(model.personallyStarted, file: file, line: line)
+        XCTAssertTrue(model.allowedSources.isEmpty, file: file, line: line)
+        XCTAssertFalse(model.includeFutureSources, file: file, line: line)
+        XCTAssertFalse(model.allowDirect, file: file, line: line)
+        XCTAssertTrue(model.allowAnswers, file: file, line: line)
+        XCTAssertTrue(model.reviewedAnswers, file: file, line: line)
+        XCTAssertEqual(model.policyFamilyId, "", file: file, line: line)
+        XCTAssertNil(model.decision, file: file, line: line)
     }
 
     private nonisolated static let overviewJSON = #"{"principals":[],"sources":[],"policyFamilies":[],"oauth":{"resource":"https://localhost:17601/mcp","resources":[{"resource":"https://library.example.com/mcp","publiclyTrusted":true}]}}"#
@@ -292,5 +547,37 @@ private final class PhoneRosterSequence: @unchecked Sendable {
         reads += 1
         return reads == 1 ? #"{"items":[]}"#
             : #"{"items":[{"id":"unrelated-phone","name":"Another phone","kind":"ios","online":true}]}"#
+    }
+}
+
+/// The fixture owns a bounded response hold and releases it before its caller joins.
+private final class AuthorizationResponseGate: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var released = false
+    func wait() throws {
+        condition.lock()
+        defer { condition.unlock() }
+        let deadline = Date().addingTimeInterval(5)
+        while !released {
+            guard condition.wait(until: deadline) else { throw URLError(.timedOut) }
+        }
+    }
+
+    func release() {
+        condition.lock()
+        released = true
+        condition.broadcast()
+        condition.unlock()
+    }
+}
+
+private final class AuthorizationLookupCount: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+    func next() -> Int {
+        lock.withLock {
+            value += 1
+            return value
+        }
     }
 }

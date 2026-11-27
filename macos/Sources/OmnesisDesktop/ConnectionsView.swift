@@ -34,18 +34,16 @@ struct DesktopAssistantsView: View {
                                 TextField("Confirmation code", text: $authorization.code).textFieldStyle(.roundedBorder)
                                     .accessibilityIdentifier("assistant-comparison-code")
                                 Button("Find request") {
-                                    context?.run { scope in if let overview = connections.overview { await authorization.lookup(
-                                        context: scope,
-                                        overview: overview,
-                                        expectedResource: mcp
-                                    ) } }
+                                    if let context, let overview = connections.overview {
+                                        authorization.requestLookup(context: context, overview: overview, expectedResource: mcp)
+                                    }
                                 }.disabled(authorization.code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || authorization.busy)
                             }
                         }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
-                if let request = authorization.request, let overview = connections.overview {
-                    authorizationForm(request, overview: overview)
+                if let request = authorization.request, let requestID = authorization.requestID, let overview = connections.overview {
+                    authorizationForm(request, requestID: requestID, overview: overview)
                 }
                 if let decision = authorization.decision {
                     DesktopAssistantDecisionView(decision: decision)
@@ -64,7 +62,7 @@ struct DesktopAssistantsView: View {
             } } }
     }
 
-    private func authorizationForm(_ envelope: AccessAuthorizationLookupEnvelope, overview: AccessOverview) -> some View {
+    private func authorizationForm(_ envelope: AccessAuthorizationLookupEnvelope, requestID: UUID, overview: AccessOverview) -> some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 18) {
                 Text("3. Choose what to share").font(.headline)
@@ -108,14 +106,14 @@ struct DesktopAssistantsView: View {
                 HStack {
                     Button("Deny", role: .destructive) {
                         context?.run { scope in
-                            await authorization.decide(approve: false, context: scope, overview: overview)
+                            await authorization.decide(approve: false, requestID: requestID, context: scope, overview: overview)
                             if authorization.decision != nil { await assistantStatus.refresh(context: scope) }
                         }
                     }
                     Spacer()
                     Button("Allow this connection") {
                         context?.run { scope in
-                            await authorization.decide(approve: true, context: scope, overview: overview)
+                            await authorization.decide(approve: true, requestID: requestID, context: scope, overview: overview)
                             if authorization.decision != nil { await assistantStatus.refresh(context: scope) }
                         }
                     }.buttonStyle(DesktopButtonStyle(primary: true))

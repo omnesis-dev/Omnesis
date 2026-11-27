@@ -230,8 +230,14 @@ final class DesktopPhonePairing {
 
 @MainActor @Observable
 final class DesktopAgentAuthorization {
-    var code = ""
-    var request: AccessAuthorizationLookupEnvelope?
+    var code = "" {
+        didSet {
+            if code != oldValue { clearRequest() }
+        }
+    }
+
+    private(set) var request: AccessAuthorizationLookupEnvelope?
+    private(set) var requestID: UUID?
     var allowedSources: Set<String> = []
     var includeFutureSources = false
     var allowDirect = false
@@ -244,19 +250,65 @@ final class DesktopAgentAuthorization {
     enum Decision: Equatable { case approved, denied }
     private(set) var decision: Decision?
     private var requestContext: DesktopAPIContext?
+    private var generation = UUID()
 
-    func lookup(context: DesktopAPIContext, overview: AccessOverview, expectedResource: URL) async {
-        guard !busy else { return }
-        busy = true
-        failure = nil
+    private func clearRequest() {
+        generation = UUID()
+        request = nil
+        requestID = nil
+        requestContext = nil
+        allowedSources = []
+        includeFutureSources = false
+        allowDirect = false
+        allowAnswers = true
+        reviewedAnswers = true
+        policyFamilyId = ""
+        personallyStarted = false
         decision = nil
+        failure = nil
+    }
+
+    private func isCurrent(_ identity: UUID, code: String, context: DesktopAPIContext) -> Bool {
+        generation == identity && self.code == code && context.isCurrent
+    }
+
+    @discardableResult
+    func requestLookup(context: DesktopAPIContext, overview: AccessOverview, expectedResource: URL) -> Task<Void, Never>? {
+        guard !busy, context.isCurrent else { return nil }
+        let expectedGeneration = generation
+        let enteredCode = code
+        return context.run { scope in
+            await self.lookup(
+                expectedGeneration: expectedGeneration,
+                enteredCode: enteredCode,
+                context: scope,
+                overview: overview,
+                expectedResource: expectedResource
+            )
+        }
+    }
+
+    private func lookup(
+        expectedGeneration: UUID,
+        enteredCode: String,
+        context: DesktopAPIContext,
+        overview: AccessOverview,
+        expectedResource: URL
+    ) async {
+        // A queued Find action cannot clear consent belonging to a later code or lookup.
+        guard !busy, isCurrent(expectedGeneration, code: enteredCode, context: context) else { return }
+        clearRequest()
+        let identity = generation
+        busy = true
         defer { busy = false }
         do {
             let found = try await context.perform { api in
+                guard self.isCurrent(identity, code: enteredCode, context: context) else { throw CancellationError() }
                 let client = AccessClient(baseURL: api.connection.url, token: api.connection.token, session: api.session)
-                return try await client.lookup(code: self.code.trimmingCharacters(in: .whitespacesAndNewlines))
+                return try await client.lookup(code: enteredCode.trimmingCharacters(in: .whitespacesAndNewlines))
             }
             try context.check()
+            guard isCurrent(identity, code: enteredCode, context: context) else { return }
             guard found.request.resource == expectedResource.absoluteString, found.request.status == "pending",
                   found.request.expiresAt > Int64(Date().timeIntervalSince1970 * 1000) else {
                 throw DesktopAPIError
@@ -265,6 +317,7 @@ final class DesktopAgentAuthorization {
                     )
             }
             request = found
+            requestID = identity
             requestContext = context
             allowedSources = []
             policyFamilyId = overview.defaultPolicyFamilyId ?? overview.policyFamilies.first?.id ?? ""
@@ -272,11 +325,15 @@ final class DesktopAgentAuthorization {
             allowAnswers = true
             allowDirect = false
             personallyStarted = false
-        } catch { self.failure = error.localizedDescription }
+        } catch {
+            if isCurrent(identity, code: enteredCode, context: context) { failure = error.localizedDescription }
+        }
     }
 
-    func decide(approve: Bool, context: DesktopAPIContext, overview: AccessOverview) async {
-        guard let request, !busy, requestContext === context, context.isCurrent else { return }
+    func decide(approve: Bool, requestID identity: UUID, context: DesktopAPIContext, overview: AccessOverview) async {
+        guard let request, !busy, requestID == identity, generation == identity,
+              requestContext === context, context.isCurrent else { return }
+        let enteredCode = code
         busy = true
         failure = nil
         defer { busy = false }
@@ -316,12 +373,18 @@ final class DesktopAgentAuthorization {
                 decision = .approve(selection)
             } else { decision = .deny }
             try await context.perform { api in
+                guard self.isCurrent(identity, code: enteredCode, context: context), self.requestID == identity,
+                      self.requestContext === context else { throw CancellationError() }
                 let client = AccessClient(baseURL: api.connection.url, token: api.connection.token, session: api.session)
+                // An edit after dispatch retires presentation, not the server decision already sent.
                 try await client.decide(approvalId: request.request.approvalId, decision: decision)
             }
             try context.check()
+            guard isCurrent(identity, code: enteredCode, context: context) else { return }
+            clearRequest()
             self.decision = approve ? .approved : .denied
-            self.request = nil
-        } catch { self.failure = error.localizedDescription }
+        } catch {
+            if isCurrent(identity, code: enteredCode, context: context) { failure = error.localizedDescription }
+        }
     }
 }

@@ -22,6 +22,11 @@ import {
 } from "./codex-managed-model-discovery.js";
 import type { NodeCommandInvocation, AgentEvent } from "@omnesis/core";
 
+// The real SDK/RPC fixture requires both the managed native target and /bin/sh.
+const nativeFixtureSupported =
+  (process.platform === "darwin" || process.platform === "linux") &&
+  (process.arch === "arm64" || process.arch === "x64");
+
 type Json = Record<string, unknown>;
 const record = (value: unknown): Json => {
   if (!value || typeof value !== "object" || Array.isArray(value))
@@ -30,7 +35,7 @@ const record = (value: unknown): Json => {
 };
 
 /** Actual pinned SDK metadata discovery and scripted responses; no model inference or login. */
-test.each([null, "code_mode_only"])(
+test.skipIf(!nativeFixtureSupported).each([null, "code_mode_only"])(
   "vendor-discovered native-capable metadata %s is isolated before a static worker receives a turn",
   async (mode) => {
     const root = await realpath(await mkdtemp(join(tmpdir(), "omnesis-catalog-runtime-fixture-")));

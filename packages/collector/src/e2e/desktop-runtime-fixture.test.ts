@@ -87,24 +87,27 @@ test("generated OS-keyring fixture parses and models isolated services, atomic i
   }
 });
 
-test("source runtime adapter fixes system trust for unmodified executable-path descendants", async () => {
-  const root = await mkdtemp(join(tmpdir(), "omnesis-desktop-node-policy-"));
-  try {
-    const adapter = await createDesktopNodeAdapter(root);
-    const { stdout } = await execute(adapter, [
-      "--input-type=module",
-      "-e",
-      `
+test.skipIf(process.platform === "win32")(
+  "source runtime adapter fixes system trust for unmodified executable-path descendants",
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), "omnesis-desktop-node-policy-"));
+    try {
+      const adapter = await createDesktopNodeAdapter(root);
+      const { stdout } = await execute(adapter, [
+        "--input-type=module",
+        "-e",
+        `
       import {execFileSync} from 'node:child_process';
       if (!process.execArgv.includes('--use-system-ca')) process.exit(2);
       process.stdout.write(execFileSync(process.execPath, ['-p', "JSON.stringify({system:process.execArgv.includes('--use-system-ca'),path:process.execPath})"], {encoding:'utf8'}));
     `,
-    ]);
-    expect(JSON.parse(stdout)).toEqual({ system: true, path: adapter });
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
+      ]);
+      expect(JSON.parse(stdout)).toEqual({ system: true, path: adapter });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
 
 test.skipIf(process.platform !== "linux")(
   "the source bridge keeps an unclaimed profile empty and runs the real welcome protocol",
@@ -126,8 +129,10 @@ test.skipIf(process.platform !== "linux")(
   30_000,
 );
 
-// This adapter never runs a real OS credential executable, including on macOS.
-test.each(["success", "locked", "denied", "noop", "root-denied", "root-noop"] as const)(
+// This adapter executes a private POSIX shebang, never a real OS credential executable.
+test
+  .skipIf(process.platform === "win32")
+  .each(["success", "locked", "denied", "noop", "root-denied", "root-noop"] as const)(
   "owned fixture purger executes actual scoped Codex/root/mirror checks: %s",
   async (fault) => {
     const root = await realpath(await mkdtemp(join(tmpdir(), "omnesis-desktop-purge-adapter-")));
