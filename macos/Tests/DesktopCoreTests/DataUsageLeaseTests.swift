@@ -22,7 +22,18 @@ final class DataUsageLeaseTests: XCTestCase {
     private var uncertainChildRegistration = false
     private var setupMilliseconds = 0
 
+    private static let phaseJournal: DesktopFixturePhaseJournal? = {
+        var checkout = URL(fileURLWithPath: #filePath)
+        for _ in 0 ..< 4 {
+            checkout.deleteLastPathComponent()
+        }
+        return try? DesktopFixturePhaseJournal(checkout: checkout)
+    }()
+
     private static func phase(_ name: StaticString) {
+        if let phase = DesktopFixturePhaseJournal.Phase(rawValue: String(describing: name)) {
+            phaseJournal?.record(phase)
+        }
         FileHandle.standardError.write(Data("data-fixture:\(name)\n".utf8))
     }
 
