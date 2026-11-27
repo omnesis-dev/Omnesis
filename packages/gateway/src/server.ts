@@ -2346,9 +2346,12 @@ export function createServer(
     recordings.start();
     // Switching recognition off also refuses enrolments under way, even if it
     // is switched on again before they finish; a pass alone could miss that.
-    opts.configStore?.onChange((before, after) => {
+    // Told as the change takes effect, not when an `onChange` listener would
+    // be reached, which can be after it was switched on again.
+    opts.configStore?.onCommit((before, after) => {
+      const setting = after.inference?.recordings?.selfVoice ?? "off";
       if (before.inference?.recordings?.selfVoice !== after.inference?.recordings?.selfVoice) {
-        recordings.selfVoiceSettingChanged().catch((err: unknown) => {
+        recordings.selfVoiceSettingChanged(setting).catch((err: unknown) => {
           log.warn(
             `Deleting the owner's voice failed: ${err instanceof Error ? err.message : String(err)}`,
           );

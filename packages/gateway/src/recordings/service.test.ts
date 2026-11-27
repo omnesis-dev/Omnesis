@@ -1323,19 +1323,19 @@ describe("RecordingTranscriptionService recognising the owner's voice", () => {
     const whileOff = service.enrollSelfVoice(clip("owner", 24), "audio/webm");
     await clips.started(1);
     selfVoice = "off";
-    await service.selfVoiceSettingChanged();
+    await service.selfVoiceSettingChanged(selfVoice);
     clips.read(0);
     expect(await whileOff).toEqual({ kind: "off" });
     expect(getRecordingVoiceProfile(db)).toBeNull();
 
     selfVoice = "match";
-    await service.selfVoiceSettingChanged();
+    await service.selfVoiceSettingChanged(selfVoice);
     const offAndOn = service.enrollSelfVoice(clip("owner", 24), "audio/webm");
     await clips.started(2);
     selfVoice = "off";
-    await service.selfVoiceSettingChanged();
+    await service.selfVoiceSettingChanged(selfVoice);
     selfVoice = "match";
-    await service.selfVoiceSettingChanged();
+    await service.selfVoiceSettingChanged(selfVoice);
     clips.read(1);
     expect(await offAndOn).toEqual({ kind: "superseded" });
     expect(getRecordingVoiceProfile(db)).toBeNull();

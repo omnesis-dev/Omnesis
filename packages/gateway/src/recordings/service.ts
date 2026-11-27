@@ -639,12 +639,17 @@ export class RecordingTranscriptionService {
   }
 
   /**
-   * The operator changed `inference.recordings.selfVoice`. Switched off, the
-   * enrolled voice is deleted and every enrolment under way is refused, even
-   * one that finishes after it is switched on again.
+   * The operator changed `inference.recordings.selfVoice` to `setting`.
+   * Switched off, the enrolled voice is deleted and every enrolment under way
+   * is refused, even one that finishes after it is switched on again. It acts
+   * on the change it is told of, not on the setting as it stands, so the
+   * caller must tell it of each change as it takes effect (the gateway does,
+   * from `ConfigStore.onCommit`): the refusal is then counted before anything
+   * can see the setting on again, and the deletion is queued ahead of every
+   * enrolment begun after that.
    */
-  async selfVoiceSettingChanged(): Promise<void> {
-    if (this.selfVoiceSetting() === "off") await this.deleteSelfVoice();
+  async selfVoiceSettingChanged(setting: SelfVoiceSetting): Promise<void> {
+    if (setting !== "match") await this.deleteSelfVoice();
   }
 
   /** Runs self-voice writes one at a time, in the order they were asked for. */
