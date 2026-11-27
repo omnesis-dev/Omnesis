@@ -9,52 +9,293 @@ import XCTest
 
 @MainActor
 final class DesktopStartupTests: XCTestCase {
+    private static var retainedUncertainBridges: [RuntimeBridge] = []
+
     func testStdoutEOFOfALiveOwnedHelperFailsTheConnectionAndDrainsItsInput() async throws {
-        let selected = FileManager.default.temporaryDirectory.appendingPathComponent("omnesis-eof-fixture-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: selected, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let base = try URL(fileURLWithPath: DesktopCanonicalPath.resolve(selected.path), isDirectory: true)
-        let cache = base.appendingPathComponent("runtime")
-        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let manifest = Data(
-            #"{"format":1,"codeUsageProtocol":1,"processAuthorityProtocol":3,"runtimeLauncher":"runtime-exec","inventory":[{"path":"node","executable":true},{"path":"runtime-exec","executable":true}]}"#
-                .utf8
-        )
-        let epoch = SHA256.hash(data: manifest).map { String(format: "%02x", $0) }.joined()
-        let runtime = cache.appendingPathComponent(epoch)
-        let script = runtime.appendingPathComponent("packages/cli/dist/index.js")
-        try FileManager.default.createDirectory(at: script.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try manifest.write(to: runtime.appendingPathComponent("desktop-runtime.json"))
-        try Data("inert fixture entry".utf8).write(to: script)
-        let helper = runtime.appendingPathComponent("runtime-exec")
-        // Keeps its own stdin open after closing stdout. No gateway or network is involved.
-        try Data("#!/bin/sh\nprintf '%s\\n' \"$$\" > \"$2.pid\"\nexec 1>&-\nwhile IFS= read -r ignored; do :; done\n".utf8)
-            .write(to: helper)
-        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helper.path)
+        try await withRuntime(closeOutput: true) { fixture, bridge, count in
+            var failures = 0
+            bridge.onFailure = { _ in failures += 1 }
+            try await bridge.start()
+            try await waitUntil { failures == 1 }
+            try await fixture.waitFor("eof")
+            XCTAssertThrowsError(try bridge.send("status"))
+            await assertStartRefused(bridge)
+            XCTAssertEqual(count.value, 1)
+            fixture.release()
+            try await bridge.disconnectAndJoin()
+            XCTAssertEqual(failures, 1)
+        }
+    }
+
+    func testMalformedOutputRevokesPublicationButStillDrainsOwnedShutdownOutput() async throws {
+        try await withRuntime(invalidOutput: true) { fixture, bridge, count in
+            var failures = 0, replies = 0
+            bridge.onFailure = { _ in failures += 1 }
+            bridge.onEnvelope = { _ in replies += 1 }
+            try await bridge.start()
+            try await waitUntil { failures == 1 }
+            try await fixture.waitFor("drained-output")
+            await assertStartRefused(bridge)
+            XCTAssertEqual(count.value, 1)
+            XCTAssertEqual(replies, 0)
+            fixture.release()
+            try await bridge.disconnectAndJoin()
+            XCTAssertEqual(failures, 1)
+        }
+    }
+
+    func testCancelledDrainWaiterCannotReleaseTheExactOwner() async throws {
+        try await withRuntime { fixture, bridge, count in
+            try await bridge.start()
+            bridge.disconnect()
+            let first = Task { try await bridge.disconnectAndJoin() }
+            let second = Task { try await bridge.disconnectAndJoin() }
+            var bodyError: Error?
+            do {
+                first.cancel()
+                try await fixture.waitFor("eof")
+                await assertStartRefused(bridge)
+                XCTAssertEqual(count.value, 1)
+                fixture.release()
+                do { try await first.value
+                    XCTFail("A cancelled waiter must not report successful cleanup")
+                } catch is CancellationError {} catch { XCTFail("Unexpected drain outcome") }
+                try await second.value
+                try await bridge.start()
+                XCTAssertEqual(count.value, 2)
+            } catch { bodyError = error }
+            fixture.release()
+            _ = await first.result
+            _ = await second.result
+            if let bodyError { throw bodyError }
+        }
+    }
+
+    func testTerminatedChildDoesNotRetireBeforeItsReaderReturns() async throws {
+        let reading = StartupGate()
+        try await withRuntime(beforeReading: reading, exitBeforeEOF: true) { fixture, bridge, count in
+            var failures = 0, replies = 0
+            bridge.onFailure = { _ in failures += 1 }
+            bridge.onEnvelope = { _ in replies += 1 }
+            try await bridge.start()
+            try await waitUntil { reading.entered }
+            fixture.release()
+            try await waitUntil { failures == 1 }
+            await assertStartRefused(bridge)
+            XCTAssertEqual(count.value, 1)
+            XCTAssertEqual(bridge.lastTermination?.status, 0, "The exact child has terminated while its reader is still held")
+            reading.release()
+            try await bridge.disconnectAndJoin()
+            XCTAssertEqual(replies, 0, "Retired buffered envelopes cannot publish")
+            XCTAssertEqual(failures, 1, "The exact termination callback reports failure once while the reader is held")
+            try await bridge.start()
+            XCTAssertEqual(count.value, 2)
+        }
+    }
+
+    func testNonzeroExitRetiresOnlyAfterPhysicalJoinAndFreshRetryPreparesAgain() async throws {
+        try await withRuntime(exitCode: 7) { fixture, bridge, count in
+            try await bridge.start()
+            bridge.disconnect()
+            try await fixture.waitFor("eof")
+            await assertStartRefused(bridge)
+            fixture.release()
+            try await bridge.disconnectAndJoin()
+            XCTAssertEqual(bridge.lastTermination?.status, 7)
+            XCTAssertEqual(bridge.lastTermination?.clean, false, "Physical retirement is not graceful portable cleanup")
+            try await bridge.start()
+            XCTAssertEqual(count.value, 2, "A retry must prepare a new attempt rather than reuse the retired channel")
+        }
+    }
+
+    func testStoreCancellationKeepsBusyAndRejectsRetryUntilTheWholeLaunchReturns() async throws {
+        let preparation = StartupGate()
         let bridge = RuntimeBridge(preparation: { _ in
-            try (runtime, DesktopRuntimeUsageLease.acquire(runtime: runtime))
+            await preparation.wait()
+            throw CancellationError()
         })
-        defer { bridge.disconnect() }
-        var failed = false
-        bridge.onFailure = { _ in failed = true }
-        try await bridge.start()
-        let deadline = ContinuousClock().now.advanced(by: .seconds(5))
-        while !failed, ContinuousClock().now < deadline {
-            try await Task.sleep(for: .milliseconds(10))
+        let store = DesktopStore(startRuntime: false, runtimeBridge: bridge)
+        var cancelling: Task<Void, Never>?
+        var bodyError: Error?
+        do {
+            store.start()
+            try await waitUntil { preparation.entered }
+            cancelling = Task { await store.cancelStartup() }
+            try await waitUntil { store.cancellingStartup }
+            XCTAssertTrue(store.busy)
+            XCTAssertFalse(store.startupCancelled)
+            store.start()
+            XCTAssertEqual(preparation.entries, 1)
+            await assertStartRefused(bridge)
+            store.command("status")
+        } catch { bodyError = error }
+        preparation.release()
+        await cancelling?.value
+        await store.cancelStartup()
+        try await bridge.disconnectAndJoin()
+        if let bodyError { throw bodyError }
+        XCTAssertTrue(store.startupCancelled)
+        XCTAssertFalse(store.busy)
+        XCTAssertFalse(store.state.canOpenLibrary)
+    }
+
+    func testStoreShutdownJoinsItsControlChannelAndPreventsNewCommands() async throws {
+        try await withRuntime { fixture, bridge, count in
+            let store = DesktopStore(startRuntime: false, runtimeBridge: bridge)
+            store.start()
+            try await waitUntil { !store.launchingRuntime }
+            let shuttingDown = Task { try await store.shutdownRuntime() }
+            var bodyError: Error?
+            do {
+                try await fixture.waitFor("eof")
+                XCTAssertTrue(store.shuttingDownRuntime)
+                XCTAssertTrue(store.busy)
+                store.start()
+                store.command("status")
+                XCTAssertEqual(count.value, 1)
+                let frames = try String(contentsOf: fixture.script.appendingPathExtension("requests"), encoding: .utf8)
+                XCTAssertEqual(frames.split(separator: "\n").count, 1, "Only the original startup status reached the child")
+                fixture.release()
+                try await shuttingDown.value
+                XCTAssertTrue(store.shuttingDownRuntime, "Shutdown never re-enables a start while termination is pending")
+            } catch { bodyError = error }
+            fixture.release()
+            _ = await shuttingDown.result
+            if let bodyError { throw bodyError }
         }
-        XCTAssertTrue(failed, "A live helper's closed output must refuse an awaited response")
-        bridge.disconnect()
-        let pidText = try String(contentsOf: URL(fileURLWithPath: script.path + ".pid"), encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let pid = try XCTUnwrap(Int32(pidText))
-        let drained = ContinuousClock().now.advanced(by: .seconds(5))
-        while Darwin.kill(pid, 0) == 0, ContinuousClock().now < drained {
-            try await Task.sleep(for: .milliseconds(10))
+    }
+
+    func testFailedShutdownCompletesRPCsWithoutLeavingBusyOrRevokingVerifiedHTTP() async throws {
+        let closes = StartupCount()
+        try await withRuntime(inputClosure: { handle in
+            closes.increment()
+            try handle.close()
+            throw StartupFixture.Failure.control
+        }, expectCloseUncertainty: true) { fixture, bridge, count in
+            let store = DesktopStore(startRuntime: false, runtimeBridge: bridge, nativeOwnerVerified: true, monitorPrerequisites: false)
+            store.start()
+            try await waitUntil { !store.launchingRuntime }
+            let connection = try JSONDecoder().decode(DesktopConnection.self, from: Data(
+                #"{"url":"https://library.example.test","token":"fictional-token"}"#.utf8
+            ))
+            store.state = DesktopState(
+                phase: .ready,
+                mode: "joined",
+                connection: connection,
+                encrypted: true,
+                installationId: "desktop-0000000000000001"
+            )
+            let api = try DesktopAPI(connection: connection)
+            store.api = api
+            let scope = store.apiContext
+            let rpc = Task { try await store.request("updateStatus") }
+            var shutdown: Task<Void, Error>?
+            var bodyError: Error?
+            do {
+                try await waitUntil { fixture.requestCount == 2 }
+                XCTAssertTrue(store.busy)
+                shutdown = Task { try await store.shutdownRuntime() }
+                try await fixture.waitFor("eof")
+                do { _ = try await rpc.value
+                    XCTFail("Closing the controller must fail its pending request")
+                } catch let error as DesktopBridgeReplyWaiter.Failure {
+                    XCTAssertEqual(error.message, "Omnesis is closing its background connection.")
+                }
+                fixture.release()
+                do { try await shutdown?.value
+                    XCTFail("The uncertain close receipt must refuse shutdown")
+                } catch BridgeLaunchError.cleanupUnconfirmed {}
+                let blocked = try XCTUnwrap(store.runtimeCleanupFailure)
+                XCTAssertFalse(store.shuttingDownRuntime)
+                XCTAssertFalse(store.busy, "A completed blocked error is not an in-flight operation")
+                XCTAssertEqual(store.failure, blocked)
+                XCTAssertFalse(store.nativeOwnerReady)
+                XCTAssertTrue(store.api === api)
+                XCTAssertTrue(store.apiContext === scope)
+                XCTAssertTrue(scope?.isCurrent == true)
+                XCTAssertTrue(store.state.canOpenLibrary, "Already verified HTTP scopes remain independently available")
+                store.start()
+                store.command("status")
+                XCTAssertEqual(count.value, 1)
+                XCTAssertEqual(closes.value, 1)
+                XCTAssertEqual(store.failure, blocked)
+                do { _ = try await store.request("updateStatus")
+                    XCTFail("A blocked controller cannot accept new requests")
+                } catch let error as DesktopBridgeReplyWaiter.Failure { XCTAssertEqual(error.message, blocked) }
+            } catch { bodyError = error }
+            fixture.release()
+            if let shutdown { _ = await shutdown.result }
+            else { try? await store.shutdownRuntime() }
+            _ = await rpc.result
+            if let bodyError { throw bodyError }
         }
-        guard Darwin.kill(pid, 0) != 0, errno == ESRCH else {
-            XCTFail("Owned fixture has not drained; retain its files")
-            return
+    }
+
+    func testRefusedControlShutdownLeavesPrerequisiteMonitoringResponsive() async throws {
+        try await withRuntime(inputClosure: { handle in
+            try handle.close()
+            throw StartupFixture.Failure.control
+        }, expectCloseUncertainty: true) { fixture, bridge, _ in
+            var checks = 0
+            let notifications = NotificationCenter()
+            let startup = DesktopAutomaticStartup(read: { checks += 1
+                return .enabled
+            }, register: {})
+            let store = DesktopStore(
+                startRuntime: false,
+                runtimeBridge: bridge,
+                automaticStartup: startup,
+                monitorPrerequisites: true,
+                monitoringIntervals: .init(collection: .seconds(3600), system: .seconds(3600)),
+                monitoringNotifications: notifications
+            )
+            var bodyError: Error?
+            var shutdown: Task<Void, Error>?
+            do {
+                store.start()
+                try await waitUntil { !store.launchingRuntime && checks > 0 }
+                shutdown = Task { try await store.shutdownRuntime() }
+                try await fixture.waitFor("eof")
+                fixture.release()
+                do { try await shutdown?.value
+                    XCTFail("The close receipt remains uncertain")
+                } catch BridgeLaunchError.cleanupUnconfirmed {}
+                XCTAssertEqual(store.state.phase, .error)
+                XCTAssertFalse(store.busy)
+                let previous = checks
+                notifications.post(name: NSApplication.didBecomeActiveNotification, object: nil)
+                try await waitUntil { checks > previous }
+            } catch { bodyError = error }
+            fixture.release()
+            _ = await shutdown?.result
+            await store.stopPrerequisiteMonitoring()
+            if let bodyError { throw bodyError }
         }
-        try FileManager.default.removeItem(at: base)
+    }
+
+    func testStartupWaitRejectsAPredicateThatBecomesTrueAfterItsOriginalDeadline() async {
+        var now = ContinuousClock.now
+        var ready = false
+        do {
+            try await waitUntil {
+                ready
+            } now: {
+                now
+            } pause: { now += .seconds(6)
+                ready = true
+            }
+            XCTFail("Late readiness cannot turn an expired barrier green")
+        } catch StartupFixture.Failure.barrier {} catch { XCTFail("Unexpected barrier failure") }
+    }
+
+    func testFailedLaunchDoesNotWaitForANonexistentTerminationReceipt() async throws {
+        try await withRuntime { fixture, bridge, _ in
+            try Data([0, 1, 2]).write(to: fixture.runtime.appendingPathComponent("runtime-exec"))
+            do { try await bridge.start()
+                XCTFail("Invalid executable must fail")
+            } catch {}
+            try await bridge.disconnectAndJoin()
+        }
     }
 
     func testPendingPreparationIsVisibleCannotOpenLibraryAndCanBeCancelled() async {
@@ -93,5 +334,185 @@ final class DesktopStartupTests: XCTestCase {
         XCTAssertFalse(store.state.canOpenLibrary)
         XCTAssertNil(store.api)
         XCTAssertEqual(store.state.phase, .waiting)
+    }
+
+    private func assertStartRefused(_ bridge: RuntimeBridge, file: StaticString = #filePath, line: UInt = #line) async {
+        do { try await bridge.start()
+            XCTFail("A retained drain must refuse a replacement", file: file, line: line)
+        } catch BridgeLaunchError.draining {} catch { XCTFail("Unexpected replacement outcome", file: file, line: line) }
+    }
+
+    private func waitUntil(
+        _ condition: () -> Bool,
+        now: () -> ContinuousClock.Instant = { .now },
+        pause: @MainActor () async throws -> Void = { try await Task.sleep(for: .milliseconds(10)) }
+    ) async throws {
+        let deadline = now() + .seconds(5)
+        while !condition(), now() < deadline {
+            try await pause()
+        }
+        guard condition(), now() < deadline else { throw StartupFixture.Failure.barrier }
+    }
+
+    private func withRuntime(
+        closeOutput: Bool = false, exitCode: Int = 0, beforeReading: StartupGate? = nil,
+        exitBeforeEOF: Bool = false, invalidOutput: Bool = false,
+        inputClosure: @escaping RuntimeBridge.InputClosure = { try $0.close() },
+        expectCloseUncertainty: Bool = false,
+        body: @MainActor (StartupFixture, RuntimeBridge, StartupCount) async throws -> Void
+    ) async throws {
+        let fixture = try StartupFixture(
+            closeOutput: closeOutput,
+            exitCode: exitCode,
+            exitBeforeEOF: exitBeforeEOF,
+            invalidOutput: invalidOutput
+        )
+        let count = StartupCount()
+        let runtime = fixture.runtime
+        let bridge = RuntimeBridge(preparation: { _ in
+            count.increment()
+            return try (runtime, DesktopRuntimeUsageLease.acquire(runtime: runtime))
+        }, beforeReading: beforeReading.map { gate in { await gate.wait() } }, inputClosure: inputClosure)
+        var bodyError: Error?
+        do { try await body(fixture, bridge, count) } catch { bodyError = error }
+        beforeReading?.release()
+        fixture.release()
+        do {
+            try await bridge.disconnectAndJoin()
+            try fixture.removeAfterJoined()
+            if expectCloseUncertainty { XCTFail("The uncertain close receipt must remain retained") }
+        } catch BridgeLaunchError.cleanupUnconfirmed where expectCloseUncertainty {
+            Self.retainedUncertainBridges.append(bridge)
+            fixture.closeControl() // Retain files and the failed bridge owner; this is not a clean receipt.
+        } catch {
+            // Unconfirmed physical closure keeps the fixture evidence, never deletes it.
+            fixture.closeControl()
+            if let bodyError { throw StartupFixture.CleanupFailure(original: bodyError, cleanup: error) }
+            throw error
+        }
+        if let bodyError { throw bodyError }
+    }
+}
+
+private final class StartupCount: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    func increment() {
+        lock.withLock { count += 1 }
+    }
+
+    var value: Int {
+        lock.withLock { count }
+    }
+}
+
+@MainActor
+private final class StartupGate {
+    private var open = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private(set) var entries = 0
+    var entered: Bool {
+        entries > 0
+    }
+
+    func wait() async {
+        entries += 1
+        if open { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func release() {
+        open = true
+        let pending = waiters
+        waiters.removeAll()
+        for waiter in pending {
+            waiter.resume()
+        }
+    }
+}
+
+@MainActor
+private final class StartupFixture {
+    enum Failure: Error { case barrier, control }
+    struct CleanupFailure: Error {
+        let original: Error
+        let cleanup: Error
+    }
+
+    let base: URL
+    let runtime: URL
+    let script: URL
+    private var control: FileHandle?
+
+    init(closeOutput: Bool, exitCode: Int, exitBeforeEOF: Bool, invalidOutput: Bool) throws {
+        let selected = FileManager.default.temporaryDirectory.appendingPathComponent("omnesis-bridge-drain-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: selected, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        base = try URL(fileURLWithPath: DesktopCanonicalPath.resolve(selected.path), isDirectory: true)
+        let manifest = Data(
+            #"{"format":1,"codeUsageProtocol":1,"processAuthorityProtocol":3,"runtimeLauncher":"runtime-exec","inventory":[{"path":"node","executable":true},{"path":"runtime-exec","executable":true}]}"#
+                .utf8
+        )
+        let epoch = SHA256.hash(data: manifest).map { String(format: "%02x", $0) }.joined()
+        runtime = base.appendingPathComponent(epoch)
+        script = runtime.appendingPathComponent("packages/cli/dist/index.js")
+        try FileManager.default.createDirectory(at: script.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try manifest.write(to: runtime.appendingPathComponent("desktop-runtime.json"))
+        try Data("inert fixture entry".utf8).write(to: script)
+        let fifo = script.appendingPathExtension("control")
+        guard mkfifo(fifo.path, 0o600) == 0 else { throw Failure.control }
+        let fd = open(fifo.path, O_RDWR | O_CLOEXEC)
+        guard fd >= 0 else { throw Failure.control }
+        control = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        let close = closeOutput ? "exec 1>&-" : ":"
+        let input = exitBeforeEOF ? ":" : "while IFS= read -r frame; do printf '%s\\n' \"$frame\" >> \"$2.requests\"; done"
+        let lateReply = exitBeforeEOF ? "printf '%s\\n' '{\"version\":1,\"id\":\"fictional-retired-reply\",\"ok\":true,\"result\":null}'" :
+            ":"
+        let invalid = invalidOutput ? "printf '%s\\n' 'invalid-fictional-frame'" : ":"
+        let drainOutput = invalidOutput ?
+            "i=0; while [ \"$i\" -lt 4096 ]; do printf '%s\\n' 'Fictional shutdown output remains unpublished while the exact control channel drains.'; i=$((i+1)); done; : > \"$2.drained-output\"" :
+            ":"
+        let helper = """
+        #!/bin/sh
+        : > "$2.started"
+        \(close)
+        \(invalid)
+        \(input)
+        : > "$2.eof"
+        \(drainOutput)
+        IFS= read -r release < "$2.control"
+        \(lateReply)
+        : > "$2.exiting"
+        exit \(exitCode)
+        """
+        let executable = runtime.appendingPathComponent("runtime-exec")
+        try Data(helper.utf8).write(to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    }
+
+    func waitFor(_ stage: String) async throws {
+        let marker = script.appendingPathExtension(stage)
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !FileManager.default.fileExists(atPath: marker.path), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        guard FileManager.default.fileExists(atPath: marker.path), ContinuousClock.now < deadline else { throw Failure.barrier }
+    }
+
+    var requestCount: Int {
+        (try? String(contentsOf: script.appendingPathExtension("requests"), encoding: .utf8).split(separator: "\n").count) ?? 0
+    }
+
+    func release() {
+        try? control?.write(contentsOf: Data("release\n".utf8))
+    }
+
+    func closeControl() {
+        try? control?.close()
+        control = nil
+    }
+
+    func removeAfterJoined() throws {
+        closeControl()
+        try FileManager.default.removeItem(at: base)
     }
 }

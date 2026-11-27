@@ -103,9 +103,11 @@ final class DesktopStore {
     var removalOutcome: DesktopRemovalOutcome?
     private(set) var launchingRuntime = false
     private(set) var cancellingStartup = false
+    private(set) var shuttingDownRuntime = false
+    private(set) var runtimeCleanupFailure: String?
     private(set) var startupCancelled = false
     var busy: Bool {
-        requests.busy || launchingRuntime || cleaningUpdateInstaller || automaticStartup.working
+        requests.busy || launchingRuntime || cancellingStartup || shuttingDownRuntime || cleaningUpdateInstaller || automaticStartup.working
     }
 
     private var requests = BridgeCommandTracker()
@@ -256,6 +258,9 @@ final class DesktopStore {
     private var conversationHistoryGeneration = UUID()
     private let runtime: RuntimeBridge
     private var startupTask: Task<Void, Never>?
+    private var startupGeneration = UUID()
+    private var startupCancellationTask: Task<Void, Never>?
+    private var shutdownTask: Task<Void, Error>?
     private struct VerifiedReadScope {
         let installationId: String
         let connection: DesktopConnection
@@ -284,7 +289,8 @@ final class DesktopStore {
         applicationInstallationCurrent = nativeOwnerVerified
         replyWaiter = DesktopBridgeReplyWaiter { [weak self] name, params in
             guard let self else { throw DesktopBridgeReplyWaiter.Failure("Reopen Omnesis to continue.") }
-            guard self.requests.canSubmit(name), !self.cleaningUpdateInstaller else {
+            if let blocked = self.runtimeCleanupFailure { throw DesktopBridgeReplyWaiter.Failure(blocked) }
+            guard self.requests.canSubmit(name), !self.cleaningUpdateInstaller, !self.cancellingStartup, !self.shuttingDownRuntime else {
                 throw DesktopBridgeReplyWaiter.Failure("Wait for the current operation to finish, then try again.")
             }
             let id = try self.runtime.send(name, params: params)
@@ -308,43 +314,7 @@ final class DesktopStore {
             self?.nativeOwnerReady = block == nil
             self?.automaticStartup.refresh()
         }
-        runtime.onFailure = { [weak self] message in
-            guard let self else { return }
-            nativeOwnerReady = false
-            applicationOwnership = nil
-            applicationInstallationCurrent = false
-            automaticStartupTask?.cancel()
-            automaticStartupTask = nil
-            startupInstallation = nil
-            self.automaticStartup.bindInstallation(nil)
-            recoveryDraft = nil
-            replyWaiter?.failAll(message)
-            updateInteractionTask?.cancel()
-            failure = message
-            requests = BridgeCommandTracker()
-            statusTask?.cancel()
-            statusTask = nil
-            if canRetainVerifiedReads() {
-                // A stopped control channel does not revoke this already verified HTTP read connection.
-                backgroundStartupBlock = backgroundStartupBlock ?? .helperUnavailable
-                return
-            }
-            configuredConnection = nil
-            api = nil
-            sources = []
-            sourceRemovals = []
-            devices = []
-            descriptors = []
-            conversations = []
-            state = DesktopState(
-                phase: .waiting,
-                mode: state.mode,
-                message: message,
-                homeName: state.homeName,
-                retired: state.retired,
-                retirement: state.retirement
-            )
-        }
+        runtime.onFailure = { [weak self] message in self?.runtimeControlClosed(message, reportFailure: true) }
         collectionHealth.onUpdate = { [weak self] in self?.applyCollectionHealthEvidence() }
         if monitorPrerequisites ?? startRuntime {
             prerequisiteMonitor = DesktopPrerequisiteMonitor(
@@ -354,6 +324,60 @@ final class DesktopStore {
             )
         }
         if startRuntime { start() }
+    }
+
+    private func runtimeControlClosed(_ message: String, reportFailure: Bool) {
+        nativeOwnerReady = false
+        applicationOwnership = nil
+        applicationInstallationCurrent = false
+        automaticStartupTask?.cancel()
+        automaticStartupTask = nil
+        startupInstallation = nil
+        self.automaticStartup.bindInstallation(nil)
+        recoveryDraft = nil
+        interaction = nil
+        replyWaiter?.failAll(message)
+        updateInteractionTask?.cancel()
+        if reportFailure { failure = message }
+        requests = BridgeCommandTracker()
+        statusTask?.cancel()
+        statusTask = nil
+        if canRetainVerifiedReads() {
+            // A stopped control channel does not revoke this already verified HTTP read connection.
+            backgroundStartupBlock = backgroundStartupBlock ?? .helperUnavailable
+            return
+        }
+        configuredConnection = nil
+        api = nil
+        sources = []
+        sourceRemovals = []
+        devices = []
+        descriptors = []
+        conversations = []
+        state = DesktopState(
+            phase: .waiting,
+            mode: state.mode,
+            message: message,
+            homeName: state.homeName,
+            retired: state.retired,
+            retirement: state.retirement
+        )
+    }
+
+    private func recordRuntimeCleanupFailure() {
+        let message = BridgeLaunchError.cleanupUnconfirmed.localizedDescription
+        runtimeCleanupFailure = message
+        failure = message
+        if !canRetainVerifiedReads() {
+            state = DesktopState(
+                phase: .error,
+                mode: state.mode,
+                message: message,
+                homeName: state.homeName,
+                retired: state.retired,
+                retirement: state.retirement
+            )
+        }
     }
 
     func stopPrerequisiteMonitoring() async {
@@ -390,19 +414,31 @@ final class DesktopStore {
     }
 
     func start() {
-        guard !launchingRuntime else { return }
+        if let blocked = runtimeCleanupFailure { failure = blocked
+            return
+        }
+        guard !launchingRuntime, !cancellingStartup, !shuttingDownRuntime else { return }
+        let generation = UUID()
+        startupGeneration = generation
         launchingRuntime = true
         startupCancelled = false
         startupTask = Task {
-            defer { launchingRuntime = false }
+            defer {
+                if startupGeneration == generation { launchingRuntime = false
+                    startupTask = nil
+                }
+            }
             do {
                 try await runtime.start()
                 try Task.checkCancellation()
+                guard startupGeneration == generation, !cancellingStartup, !shuttingDownRuntime else { return }
                 command("status")
                 startStatusUpdates()
             } catch is CancellationError {
+                guard startupGeneration == generation, !cancellingStartup, !shuttingDownRuntime else { return }
                 failure = "App preparation was cancelled. Choose Retry when you’re ready."
             } catch {
+                guard startupGeneration == generation, !cancellingStartup, !shuttingDownRuntime else { return }
                 automaticStartup.refresh()
                 failure = error.localizedDescription
             }
@@ -410,33 +446,95 @@ final class DesktopStore {
     }
 
     func cancelStartup() async {
-        guard launchingRuntime, !cancellingStartup else { return }
+        if let pending = startupCancellationTask { await pending.value
+            return
+        }
+        guard launchingRuntime, !shuttingDownRuntime else { return }
+        let generation = startupGeneration
+        let starting = startupTask
+        let status = statusTask
         cancellingStartup = true
         automaticStartupTask?.cancel()
         automaticStartupTask = nil
         startupInstallation = nil
         automaticStartup.bindInstallation(nil)
-        defer { cancellingStartup = false }
-        statusTask?.cancel()
         statusTask = nil
-        startupTask?.cancel()
+        status?.cancel()
+        starting?.cancel()
         runtime.disconnect()
-        await startupTask?.value
-        requests = BridgeCommandTracker()
-        configuredConnection = nil
-        api = nil
-        sources = []
-        sourceRemovals = []
-        devices = []
-        descriptors = []
-        conversations = []
-        interaction = nil
-        state = DesktopState(phase: .welcome)
-        startupCancelled = true
+        runtimeControlClosed("Omnesis is closing its background connection.", reportFailure: false)
+        let cancellation = Task { [self] in
+            defer {
+                if startupGeneration == generation { cancellingStartup = false
+                    startupCancellationTask = nil
+                }
+            }
+            await starting?.value
+            await status?.value
+            do { try await runtime.disconnectAndJoin() }
+            catch {
+                if startupGeneration == generation { recordRuntimeCleanupFailure() }
+                return
+            }
+            guard startupGeneration == generation, !shuttingDownRuntime else { return }
+            requests = BridgeCommandTracker()
+            configuredConnection = nil
+            api = nil
+            sources = []
+            sourceRemovals = []
+            devices = []
+            descriptors = []
+            conversations = []
+            interaction = nil
+            state = DesktopState(phase: .welcome)
+            startupCancelled = true
+        }
+        startupCancellationTask = cancellation
+        await cancellation.value
+    }
+
+    /// Joins this presentation's control channel and monitors, not the independent daemon.
+    func shutdownRuntime() async throws {
+        if let blocked = runtimeCleanupFailure { throw DesktopBridgeReplyWaiter.Failure(blocked) }
+        if let shutdownTask { try await shutdownTask.value
+            return
+        }
+        shuttingDownRuntime = true
+        let generation = startupGeneration
+        let starting = startupTask
+        let cancelling = startupCancellationTask
+        let status = statusTask
+        statusTask = nil
+        status?.cancel()
+        starting?.cancel()
+        runtime.disconnect()
+        runtimeControlClosed("Omnesis is closing its background connection.", reportFailure: false)
+        let shutdown = Task { [self] in
+            do {
+                await starting?.value
+                await cancelling?.value
+                await status?.value
+                try await runtime.disconnectAndJoin()
+                guard startupGeneration == generation else { throw CancellationError() }
+                await stopPrerequisiteMonitoring()
+            } catch {
+                if startupGeneration == generation {
+                    recordRuntimeCleanupFailure()
+                    shuttingDownRuntime = false
+                    shutdownTask = nil
+                }
+                throw error
+            }
+        }
+        shutdownTask = shutdown
+        try await shutdown.value
     }
 
     func command(_ name: String, params: [String: BridgeValue] = [:]) {
-        guard requests.canSubmit(name) else { return }
+        if let blocked = runtimeCleanupFailure { failure = blocked
+            return
+        }
+        guard !cancellingStartup, !shuttingDownRuntime, requests.canSubmit(name) else { return }
         if name == "cancel" { updateInteractionTask?.cancel() }
         if name == "updateDownload" { updateBytes = 0
             updateTotalBytes = nil
@@ -449,12 +547,13 @@ final class DesktopStore {
     }
 
     private func startStatusUpdates() {
-        guard statusTask == nil else { return }
+        guard statusTask == nil, runtimeCleanupFailure == nil, !cancellingStartup, !shuttingDownRuntime else { return }
         statusTask = Task { [weak self] in
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(5)) } catch { return }
                 guard let self else { return }
-                guard self.interaction == nil, self.requests.canPoll else { continue }
+                guard self.runtimeCleanupFailure == nil, !self.cancellingStartup, !self.shuttingDownRuntime, self.interaction == nil,
+                      self.requests.canPoll else { continue }
                 do {
                     let id = try self.runtime.send("status")
                     self.requests.submitted(id: id, command: "status")
@@ -641,7 +740,8 @@ final class DesktopStore {
 
     func request(_ name: String, params: [String: BridgeValue] = [:]) async throws -> BridgeValue {
         try Task.checkCancellation()
-        guard requests.canSubmit(name), !launchingRuntime, !cleaningUpdateInstaller else {
+        if let blocked = runtimeCleanupFailure { throw DesktopBridgeReplyWaiter.Failure(blocked) }
+        guard requests.canSubmit(name), !launchingRuntime, !cleaningUpdateInstaller, !cancellingStartup, !shuttingDownRuntime else {
             throw DesktopBridgeReplyWaiter.Failure("Wait for the current operation to finish, then try again.")
         }
         guard let replyWaiter else { throw DesktopBridgeReplyWaiter.Failure("Reopen Omnesis to continue.") }
