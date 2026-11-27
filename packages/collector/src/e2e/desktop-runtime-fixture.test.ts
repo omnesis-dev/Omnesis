@@ -2,12 +2,27 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  link,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { expect, test } from "vitest";
-import { createDesktopNodeAdapter } from "./desktop-node-adapter.js";
+import {
+  createDesktopNodeAdapter,
+  readDesktopStartupObservations,
+} from "./desktop-node-adapter.js";
 import { installDesktopAccountBridge } from "./desktop-account-bridge.js";
 import {
   DesktopRuntimeFixture,
@@ -207,4 +222,176 @@ test("fixture retirement diagnostics report only known outcomes, never unexpecte
   }).message;
   expect(message).not.toContain("fixture-private");
   expect(message).toContain("data=unknown,keyring=unknown");
+});
+
+async function withStartupObserver(
+  body: (root: string, adapter: string, source: string) => Promise<void>,
+) {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "omnesis-startup-observer-")));
+  try {
+    const source = join(root, "source");
+    await mkdir(join(source, "packages/cli/src/desktop"), { recursive: true });
+    const adapter = await createDesktopNodeAdapter(join(root, "adapter"), {
+      startupObservation: true,
+      sourceRoot: source,
+    });
+    await body(root, adapter, source);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+const observedRoleRecord = (role: string) => ({
+  format: 1,
+  role,
+  entered: true,
+  uncaught: false,
+  category: "none",
+  exit: "zero",
+});
+
+test.skipIf(process.platform === "win32").each(["daemon", "gateway", "collector"] as const)(
+  "startup observer records the first actual %s child without changing its exit",
+  async (role) => {
+    await withStartupObserver(async (root, adapter, source) => {
+      const entry = join(
+        source,
+        role === "daemon"
+          ? "packages/cli/src/index.ts"
+          : "packages/cli/src/desktop/component-process.ts",
+      );
+      await writeFile(
+        entry,
+        "process.stdout.write(String(process.execArgv.includes('--use-system-ca')));\n",
+      );
+      const args = role === "daemon" ? ["desktop", "daemon"] : [role];
+      expect((await execute(adapter, [entry, ...args])).stdout).toBe("true");
+      const directory = join(root, "adapter/startup-observations");
+      const receipt = join(directory, `${role}.json`);
+      expect((await readDesktopStartupObservations(join(root, "adapter")))[role]).toEqual(
+        observedRoleRecord(role),
+      );
+      const before = await readFile(receipt);
+      expect((await lstat(receipt)).mode & 0o777).toBe(0o600);
+      expect(before.length).toBeLessThanOrEqual(1024);
+      await writeFile(entry, "process.exit(7);\n");
+      await expect(execute(adapter, [entry, ...args])).rejects.toMatchObject({ code: 7 });
+      expect(await readFile(receipt)).toEqual(before);
+      expect(await readdir(directory)).toEqual([`${role}.json`]);
+    });
+  },
+);
+
+test.skipIf(process.platform === "win32").each([true, false])(
+  "startup observer distinguishes uncaught=%s from a caught actual child failure without leaking error text",
+  async (uncaught) => {
+    await withStartupObserver(async (root, adapter, source) => {
+      const entry = join(source, "packages/cli/src/desktop/component-process.ts");
+      const failure =
+        "const error=new Error('invented-private-observation');error.code='ERR_MODULE_NOT_FOUND';throw error;";
+      await writeFile(entry, uncaught ? failure : `try{${failure}}catch{process.exit(1);}`);
+      await expect(execute(adapter, [entry, "gateway"])).rejects.toMatchObject({ code: 1 });
+      const projected = await readDesktopStartupObservations(join(root, "adapter"));
+      expect(projected.gateway).toEqual({
+        ...observedRoleRecord("gateway"),
+        uncaught,
+        category: uncaught ? "module" : "none",
+        exit: "nonzero",
+      });
+      expect(JSON.stringify(projected)).not.toContain("invented-private-observation");
+      expect(projected.daemon).toBe("unknown");
+      expect(projected.collector).toBe("unknown");
+    });
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "startup observer ignores unrelated entries and remains default off",
+  async () => {
+    await withStartupObserver(async (root, adapter, source) => {
+      const entry = join(source, "unrelated.cjs");
+      await writeFile(entry, "process.stdout.write('unchanged');");
+      expect((await execute(adapter, [entry, "gateway"])).stdout).toBe("unchanged");
+      expect(await readdir(join(root, "adapter/startup-observations"))).toEqual([]);
+      const unobserved = await createDesktopNodeAdapter(join(root, "default"));
+      expect((await execute(unobserved, [entry])).stdout).toBe("unchanged");
+      expect(await readdir(join(root, "default"))).toEqual(
+        expect.not.arrayContaining(["startup-observations"]),
+      );
+    });
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "startup observer cannot replace an unsafe role leaf or change actual child behavior",
+  async () => {
+    await withStartupObserver(async (root, adapter, source) => {
+      const entry = join(source, "packages/cli/src/index.ts"),
+        foreign = join(root, "foreign");
+      await writeFile(entry, "process.stdout.write('original');process.exit(7);");
+      await writeFile(foreign, "untouched", { mode: 0o600 });
+      await symlink(foreign, join(root, "adapter/startup-observations/daemon.json"));
+      await expect(execute(adapter, [entry, "desktop", "daemon"])).rejects.toMatchObject({
+        code: 7,
+        stdout: "original",
+      });
+      expect(await readFile(foreign, "utf8")).toBe("untouched");
+      expect((await readDesktopStartupObservations(join(root, "adapter"))).daemon).toBe("unknown");
+    });
+  },
+);
+
+test
+  .skipIf(process.platform === "win32")
+  .each([
+    "secret",
+    "enum",
+    "array-enum",
+    "wrong-role",
+    "malformed",
+    "oversize",
+    "symlink",
+    "hardlink",
+    "directory",
+    "public",
+  ])("startup projector refuses %s role observations without publishing payload", async (kind) => {
+  await withStartupObserver(async (root) => {
+    const path = join(root, "adapter/startup-observations/gateway.json");
+    const valid = JSON.stringify(observedRoleRecord("gateway"));
+    if (kind === "directory") await mkdir(path);
+    else if (kind === "symlink" || kind === "hardlink") {
+      const foreign = join(root, "foreign");
+      await writeFile(foreign, valid, { mode: 0o600 });
+      if (kind === "symlink") await symlink(foreign, path);
+      else await link(foreign, path);
+    } else {
+      const payload =
+        kind === "secret"
+          ? JSON.stringify({
+              ...observedRoleRecord("gateway"),
+              secret: "invented-private-observation",
+            })
+          : kind === "enum"
+            ? JSON.stringify({
+                ...observedRoleRecord("gateway"),
+                exit: "invented-private-observation",
+              })
+            : kind === "array-enum"
+              ? JSON.stringify({ ...observedRoleRecord("gateway"), exit: ["zero"] })
+              : kind === "wrong-role"
+                ? JSON.stringify(observedRoleRecord("collector"))
+                : kind === "malformed"
+                  ? "{"
+                  : kind === "oversize"
+                    ? "x".repeat(1025)
+                    : valid;
+      await writeFile(path, payload, { mode: 0o600 });
+      if (kind === "public") await chmod(path, 0o644);
+    }
+    expect(await readDesktopStartupObservations(join(root, "adapter"))).toEqual({
+      daemon: "unknown",
+      gateway: "unknown",
+      collector: "unknown",
+    });
+  });
 });

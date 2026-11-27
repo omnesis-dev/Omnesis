@@ -23,8 +23,12 @@ import {
   type PasskeySession,
 } from "./account-enrollment-harness.js";
 import { closeEnrollmentFixture } from "./enrollment-fixture-cleanup.js";
+import { readDesktopStartupObservations } from "./desktop-node-adapter.js";
 import { DesktopRuntimeFixture } from "./desktop-runtime-fixture.js";
-import { installDesktopAccountBridge } from "./desktop-account-bridge.js";
+import {
+  installDesktopAccountBridge,
+  readDesktopPrepareProgress,
+} from "./desktop-account-bridge.js";
 import { startDesktopAccountDns } from "./desktop-account-dns.js";
 import {
   desktopAccountFailureCode,
@@ -97,6 +101,7 @@ describe.skipIf(!nonce)("actual desktop account onboarding and owned collection"
     home = await DesktopRuntimeFixture.create({
       prepareInstall: false,
       systemTrustRuntime: true,
+      startupObservation: true,
       relayUrl: world.relayOrigin,
     });
     await installDesktopAccountBridge(home, {
@@ -136,7 +141,22 @@ describe.skipIf(!nonce)("actual desktop account onboarding and owned collection"
         return "continue";
       }),
     ).toMatchObject({ phase: "chooseHome" });
-    expect(await home.command("prepare", { mode: "home" })).toMatchObject({
+    expect(
+      await home.command("prepare", { mode: "home" }).catch(async (error: unknown) => {
+        // Capture only finite observations before afterAll retires the owned fixture.
+        try {
+          process.stderr.write(
+            `Desktop prepare observations: ${JSON.stringify(await readDesktopPrepareProgress(home.root))}\n`,
+          );
+          process.stderr.write(
+            `Desktop startup observations: ${JSON.stringify(await readDesktopStartupObservations(join(home.root, "node-runtime")))}\n`,
+          );
+        } catch {
+          // Diagnostic availability never replaces the original command failure.
+        }
+        throw error;
+      }),
+    ).toMatchObject({
       phase: "accountRequired",
       mode: "home",
       encrypted: true,

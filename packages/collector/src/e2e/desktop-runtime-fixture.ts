@@ -189,6 +189,7 @@ export class DesktopRuntimeFixture {
     options: {
       scriptedAgent?: { url: string; modelId: string };
       systemTrustRuntime?: boolean;
+      startupObservation?: boolean;
       relayUrl?: string;
       prepareInstall?: boolean;
       gatewayEnv?: NodeJS.ProcessEnv;
@@ -213,7 +214,9 @@ export class DesktopRuntimeFixture {
       const address = relay.address();
       if (!address || typeof address === "string") throw new Error("Fixture relay did not bind");
       const nodeExecutable = options.systemTrustRuntime
-        ? await createDesktopNodeAdapter(join(root, "node-runtime"))
+        ? await createDesktopNodeAdapter(join(root, "node-runtime"), {
+            startupObservation: options.startupObservation,
+          })
         : process.execPath;
       const selected = await execute(
         nodeExecutable,
