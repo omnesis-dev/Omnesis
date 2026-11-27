@@ -72,9 +72,50 @@ final class RuntimeUsageLeaseTests: XCTestCase {
         retired = true
     }
 
+    func testOwnedRuntimePipeDrainedWhileWriterOpenRemainsReadableThroughLaterBytesAndEOF() throws {
+        let pipe = Pipe(), capture = Capture()
+        let reader = pipe.fileHandleForReading
+        let original = fcntl(reader.fileDescriptor, F_GETFL)
+        guard original >= 0 else { throw POSIXError(.EIO) }
+        defer { try? pipe.fileHandleForWriting.close() }
+        try installCaptures([(reader, capture)])
+        let configured = fcntl(reader.fileDescriptor, F_GETFL)
+        // Refuse before a manual no-byte read if the enforced precondition regresses.
+        guard configured >= 0, configured & O_NONBLOCK != 0 else {
+            XCTFail("The exact live reader must be nonblocking before an empty receive")
+            return
+        }
+        XCTAssertEqual(configured & ~O_NONBLOCK, original & ~O_NONBLOCK)
+        capture.receive(reader)
+        XCTAssertEqual(capture.text, "")
+        XCTAssertEqual(capture.readStatus, "ok")
+        XCTAssertFalse(capture.reachedEOF, "A live writer with no bytes is not EOF")
+        XCTAssertNotNil(reader.readabilityHandler)
+        let marker = "later-ready\n"
+        try pipe.fileHandleForWriting.write(contentsOf: Data(marker.utf8))
+        capture.receive(reader)
+        XCTAssertEqual(capture.text, marker)
+        capture.receive(reader)
+        XCTAssertEqual(capture.text, marker)
+        XCTAssertEqual(capture.readStatus, "ok")
+        XCTAssertFalse(capture.reachedEOF, "Draining all current bytes must leave future reads enabled")
+        XCTAssertNotNil(reader.readabilityHandler)
+        try pipe.fileHandleForWriting.close()
+        capture.receive(reader)
+        XCTAssertTrue(capture.reachedEOF)
+        XCTAssertNil(reader.readabilityHandler)
+        XCTAssertFalse(capture.readerClosed)
+        XCTAssertLessThanOrEqual(capture.text.utf8.count, 8192)
+        XCTAssertTrue(capture.ready)
+        try retireCapturedReaders()
+        XCTAssertTrue(capture.readerClosed)
+        try retireCapturedReaders()
+        XCTAssertEqual(capture.text, marker)
+    }
+
     func testOwnedRuntimePipeFinalBytesAndEOFDisarmBeforeReaderRetirement() async throws {
         let pipe = Pipe(), capture = Capture()
-        installCapture(capture, on: pipe.fileHandleForReading)
+        try installCaptures([(pipe.fileHandleForReading, capture)])
         defer { try? pipe.fileHandleForWriting.close() }
         let text = String(repeating: "x", count: 12000) + "final-ready"
         try pipe.fileHandleForWriting.write(contentsOf: Data(text.utf8))
@@ -207,18 +248,59 @@ final class RuntimeUsageLeaseTests: XCTestCase {
         private var ended = false
         private var stopped = false
         private var closed = false
+        private var readFailure: Int32?
+
+        func prepare(_ reader: FileHandle) throws {
+            let descriptor = reader.fileDescriptor
+            let original = fcntl(descriptor, F_GETFL)
+            guard original >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            guard fcntl(descriptor, F_SETFL, original | O_NONBLOCK) == 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            let current = fcntl(descriptor, F_GETFL)
+            guard current >= 0, current & O_NONBLOCK != 0,
+                  current & ~O_NONBLOCK == original & ~O_NONBLOCK else {
+                throw POSIXError(.EIO)
+            }
+        }
+
+        private func readStatusLocked() -> String {
+            guard let readFailure else { return "ok" }
+            switch readFailure {
+            case EBADF: return "bad-descriptor"
+            case EIO: return "io-error"
+            case EINVAL: return "invalid-read"
+            default: return "other-read-error"
+            }
+        }
+
+        var readStatus: String {
+            lock.withLock { readStatusLocked() }
+        }
+
+        var hasReadFailure: Bool {
+            lock.withLock { readFailure != nil }
+        }
 
         func receive(_ reader: FileHandle) {
             lock.lock()
             defer { lock.unlock() }
-            guard !stopped, !ended else { return }
-            let data = reader.availableData
-            if data.isEmpty {
+            guard !stopped, !ended, readFailure == nil else { return }
+            var bytes = [UInt8](repeating: 0, count: 8192)
+            let count = Darwin.read(reader.fileDescriptor, &bytes, bytes.count)
+            if count < 0 {
+                let code = errno
+                if code == EAGAIN || code == EWOULDBLOCK || code == EINTR { return }
+                readFailure = code
+                reader.readabilityHandler = nil
+                return
+            }
+            if count == 0 {
                 reader.readabilityHandler = nil
                 ended = true
                 return
             }
-            value = String((value + (String(data: data, encoding: .utf8) ?? "")).suffix(8192))
+            value = String((value + (String(data: Data(bytes.prefix(count)), encoding: .utf8) ?? "")).suffix(8192))
         }
 
         func close(_ reader: FileHandle) throws {
@@ -226,9 +308,13 @@ final class RuntimeUsageLeaseTests: XCTestCase {
             lock.lock()
             defer { lock.unlock() }
             stopped = true
-            guard !closed else { return }
-            try reader.close()
-            closed = true
+            if !closed {
+                try reader.close()
+                closed = true
+            }
+            guard readFailure == nil else {
+                throw FixtureFailure.detail("Owned capture failed: " + readStatusLocked())
+            }
         }
 
         var readerClosed: Bool {
@@ -238,7 +324,7 @@ final class RuntimeUsageLeaseTests: XCTestCase {
         var text: String {
             lock.lock()
             defer { lock.unlock() }
-            return value
+            return readFailure == nil ? value : ""
         }
 
         var ready: Bool {
@@ -276,8 +362,7 @@ final class RuntimeUsageLeaseTests: XCTestCase {
         process.standardInput = input
         process.standardOutput = output
         process.standardError = errors
-        installCapture(capture, on: output.fileHandleForReading, parent: process)
-        installCapture(diagnostics, on: errors.fileHandleForReading, parent: process)
+        try installCaptures([(output.fileHandleForReading, capture), (errors.fileHandleForReading, diagnostics)], parent: process)
         let bootstrapDeadline = FixtureReadiness.bootstrapDeadline()
         do { try process.run() }
         catch {
@@ -340,7 +425,7 @@ final class RuntimeUsageLeaseTests: XCTestCase {
             let stage = String(line.dropFirst(prefix.count))
             return allowed.contains(stage) ? stage : nil
         }.suffix(24).joined(separator: ",")
-        return "image=\(image); stdoutBytes=\(running.capture.text.utf8.count); stderrBytes=\(running.diagnostics.text.utf8.count); stdout[\(pipeState(running.output.fileHandleForReading))]; stderr[\(pipeState(running.errors.fileHandleForReading))]; stages=\(stages); nativeRefusal=\(running.diagnostics.text.contains("The managed runtime lease could not be established")); nativeCode=\(DesktopReadinessFailureDiagnostic.nativeRefusalCode(running.diagnostics.text))"
+        return "image=\(image); stdoutRead=\(running.capture.readStatus); stderrRead=\(running.diagnostics.readStatus); stdoutBytes=\(running.capture.text.utf8.count); stderrBytes=\(running.diagnostics.text.utf8.count); stdout[\(pipeState(running.output.fileHandleForReading))]; stderr[\(pipeState(running.errors.fileHandleForReading))]; stages=\(stages); nativeRefusal=\(running.diagnostics.text.contains("The managed runtime lease could not be established")); nativeCode=\(DesktopReadinessFailureDiagnostic.nativeRefusalCode(running.diagnostics.text))"
     }
 
     private enum ReadinessPhase: String, Sendable { case stdout, forkParent, forkChild }
@@ -352,6 +437,7 @@ final class RuntimeUsageLeaseTests: XCTestCase {
         until: ContinuousClock.Instant? = nil
     ) async throws {
         let observed: @Sendable () -> Bool = { [capture = running.capture, diagnostics = running.diagnostics] in
+            guard !capture.hasReadFailure, !diagnostics.hasReadFailure else { return false }
             switch phase {
             case .stdout: return capture.ready
             case .forkParent: return diagnostics.text.split(separator: "\n").contains("fixture-stage:fork-parent-initialized")
@@ -393,9 +479,13 @@ final class RuntimeUsageLeaseTests: XCTestCase {
         }
     }
 
-    private func installCapture(_ capture: Capture, on reader: FileHandle, parent: Process? = nil) {
-        capturedReaders.append((reader, capture, parent))
-        reader.readabilityHandler = { capture.receive($0) }
+    private func installCaptures(_ readers: [(FileHandle, Capture)], parent: Process? = nil) throws {
+        // Retain the entire prelaunch cohort before any descriptor setup can fail.
+        capturedReaders.append(contentsOf: readers.map { ($0.0, $0.1, parent) })
+        for (reader, capture) in readers {
+            try capture.prepare(reader)
+            reader.readabilityHandler = { capture.receive($0) }
+        }
     }
 
     private func canRetire(_ parent: Process?) -> Bool {
