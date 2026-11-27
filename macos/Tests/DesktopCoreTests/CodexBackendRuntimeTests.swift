@@ -139,8 +139,6 @@ final class CodexBackendRuntimeTests: XCTestCase {
         ], config.appendingPathComponent("desktop-install.json"))
         let process = Process(), output = Pipe(), errors = Pipe()
         let stdout = Capture(), stderr = Capture()
-        output.fileHandleForReading.readabilityHandler = { stdout.append($0.availableData) }
-        errors.fileHandleForReading.readabilityHandler = { stderr.append($0.availableData) }
         process.executableURL = runtime.appendingPathComponent("runtime-exec")
         let encoded = try JSONEncoder().encode(scope).base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(
             of: "/",
@@ -160,40 +158,196 @@ final class CodexBackendRuntimeTests: XCTestCase {
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = output
         process.standardError = errors
-        try process.run()
-        let deadline = Date().addingTimeInterval(60)
-        while process.isRunning, Date() < deadline {
-            try await Task.sleep(for: .milliseconds(25))
+        let owned = try OwnedBackendProcess(process: process, output: output, errors: errors, stdout: stdout, stderr: stderr, home: home)
+        var originalError: Error?
+        do { try await owned.runAndJoin() }
+        catch { originalError = error }
+        do {
+            guard owned.parentJoined || !owned.launched else { throw Failure.cleanupUncertain }
+            // Native EX, not parent exit, proves that all real data consumers have drained.
+            var root = stat()
+            guard lstat(config.path, &root) == 0 else { throw Failure.input }
+            let operation = UUID().uuidString.lowercased()
+            try record([
+                "version": 1,
+                "owner": "omnesis-desktop",
+                "instance": scope.instance,
+                "secretService": scope.secretService,
+                "operationId": operation,
+                "mode": "erase-data",
+                "phase": "requested",
+                "root": ["device": String(root.st_dev), "inode": String(root.st_ino)],
+            ], URL(fileURLWithPath: config.path + ".bootstrap/retirement.json"))
+            let drained = try DesktopDataUsageLease.acquire(scope: scope, epoch: epoch, purpose: .erase, operationId: operation)
+            try owned.retireReaders()
+            try withExtendedLifetime(drained) { try files.removeItem(at: home) }
+        } catch {
+            Self.retained.retain(owned)
+            if let originalError {
+                XCTFail("Owned backend cleanup is unconfirmed; its exact process, readers and private fixture were retained")
+                throw originalError
+            }
+            throw error
         }
-        if process.isRunning { process.terminate() }
-        let stopDeadline = Date().addingTimeInterval(5)
-        while process.isRunning, Date() < stopDeadline {
-            try await Task.sleep(for: .milliseconds(25))
-        }
-        if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-        process.waitUntilExit()
-        output.fileHandleForReading.readabilityHandler = nil
-        errors.fileHandleForReading.readabilityHandler = nil
-        stdout.append(output.fileHandleForReading.readDataToEndOfFile())
-        stderr.append(errors.fileHandleForReading.readDataToEndOfFile())
-        // Retain uncertain fixture state unless native EX proves all real data consumers drained.
-        var root = stat()
-        guard lstat(config.path, &root) == 0 else { throw Failure.input }
-        let operation = UUID().uuidString.lowercased()
-        try record([
-            "version": 1,
-            "owner": "omnesis-desktop",
-            "instance": scope.instance,
-            "secretService": scope.secretService,
-            "operationId": operation,
-            "mode": "erase-data",
-            "phase": "requested",
-            "root": ["device": String(root.st_dev), "inode": String(root.st_ino)],
-        ], URL(fileURLWithPath: config.path + ".bootstrap/retirement.json"))
-        let drained = try DesktopDataUsageLease.acquire(scope: scope, epoch: epoch, purpose: .erase, operationId: operation)
-        withExtendedLifetime(drained) { try? files.removeItem(at: home) }
+        if let originalError { throw originalError }
         XCTAssertEqual(process.terminationStatus, 0, stderr.text)
         XCTAssertEqual(stdout.text, "codex-production-backend:passed\n", stderr.text)
+    }
+
+    func testCancelledBackendWaitPhysicallyJoinsItsExactParentBeforeReaderRetirement() async throws {
+        let owned = try sleepingBackend()
+        defer { retainOrRemove(owned) }
+        let work = Task {
+            try await owned.runAndJoin(pause: {
+                withUnsafeCurrentTask { $0?.cancel() }
+                try Task.checkCancellation()
+            })
+        }
+        do {
+            try await work.value
+            XCTFail("The original wait cancellation must survive physical cleanup")
+        } catch is CancellationError {}
+        XCTAssertTrue(owned.parentJoined)
+        XCTAssertFalse(owned.process.isRunning)
+        // This fixed sleep fixture has no descendants or managed DATA scope.
+        try owned.retireReaders()
+        XCTAssertTrue(owned.readersRetired)
+    }
+
+    func testBackendReadersCannotRetireWhileTheirExactParentIsLive() throws {
+        let owned = try sleepingBackend()
+        defer { retainOrRemove(owned) }
+        try owned.launch()
+        XCTAssertTrue(owned.process.isRunning)
+        XCTAssertThrowsError(try owned.retireReaders())
+        XCTAssertFalse(owned.readersRetired)
+        XCTAssertGreaterThanOrEqual(fcntl(owned.output.fileHandleForReading.fileDescriptor, F_GETFL), 0)
+        XCTAssertGreaterThanOrEqual(fcntl(owned.errors.fileHandleForReading.fileDescriptor, F_GETFL), 0)
+        try owned.stopAndJoin()
+        try owned.retireReaders()
+        XCTAssertTrue(owned.parentJoined)
+        XCTAssertTrue(owned.readersRetired)
+    }
+
+    private func sleepingBackend() throws -> OwnedBackendProcess {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("omnesis-backend-cleanup-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        let process = Process(), output = Pipe(), errors = Pipe(), stdout = Capture(), stderr = Capture()
+        process.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        process.arguments = ["30"]
+        process.currentDirectoryURL = home
+        process.environment = ["PATH": "/usr/bin:/bin", "HOME": home.path, "TMPDIR": home.path]
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = output
+        process.standardError = errors
+        return try OwnedBackendProcess(process: process, output: output, errors: errors, stdout: stdout, stderr: stderr, home: home)
+    }
+
+    private func retainOrRemove(_ owned: OwnedBackendProcess) {
+        do {
+            try owned.stopAndJoin()
+            try owned.retireReaders()
+            try FileManager.default.removeItem(at: owned.home)
+        } catch {
+            Self.retained.retain(owned)
+            XCTFail("Owned backend regression cleanup is unconfirmed; its private fixture was retained")
+        }
+    }
+
+    private static let retained = RetainedBackends()
+    private final class RetainedBackends: @unchecked Sendable {
+        private let lock = NSLock()
+        private var owned: [OwnedBackendProcess] = []
+        func retain(_ process: OwnedBackendProcess) {
+            lock.lock()
+            owned.append(process)
+            lock.unlock()
+        }
+    }
+
+    private final class OwnedBackendProcess: @unchecked Sendable {
+        let process: Process
+        let output: Pipe
+        let errors: Pipe
+        let home: URL
+        private let readers: DesktopOwnedFixturePipeReaders
+        private var identity: DesktopBackgroundProcessIdentity?
+        private(set) var launched = false
+        private(set) var parentJoined = false
+        private(set) var readersRetired = false
+        private var readerRetirementAttempted = false
+
+        init(process: Process, output: Pipe, errors: Pipe, stdout: Capture, stderr: Capture, home: URL) throws {
+            self.process = process
+            self.output = output
+            self.errors = errors
+            readers = try DesktopOwnedFixturePipeReaders(
+                output: output, errors: errors, consumeOutput: { stdout.append($0) }, consumeErrors: { stderr.append($0) }
+            )
+            self.home = home
+        }
+
+        func launch() throws {
+            defer {
+                // A failed run that nevertheless reports a live child still owns its physical cleanup.
+                if process.isRunning { launched = true }
+                if launched, let observed = try? DesktopBackgroundProcessIdentity.read(process.processIdentifier),
+                   observed.parent == getpid() { identity = observed }
+            }
+            try readers.start()
+            try process.run()
+            launched = true
+        }
+
+        func runAndJoin(pause: () async throws -> Void = { try await Task.sleep(for: .milliseconds(25)) }) async throws {
+            var originalError: Error?
+            do {
+                try Task.checkCancellation()
+                try launch()
+                let deadline = Date().addingTimeInterval(60)
+                while process.isRunning, Date() < deadline {
+                    try await pause()
+                }
+                if process.isRunning { throw Failure.processTimedOut }
+            } catch { originalError = error }
+            do { try stopAndJoin() }
+            catch {
+                if let originalError { throw originalError }
+                throw error
+            }
+            if let originalError { throw originalError }
+        }
+
+        private func signal(_ value: Int32) -> Bool {
+            guard process.isRunning else { return true }
+            guard let identity, (try? DesktopBackgroundProcessIdentity.read(identity.pid)) == identity else { return false }
+            return Darwin.kill(identity.pid, value) == 0 || errno == ESRCH
+        }
+
+        func stopAndJoin() throws {
+            guard launched, !parentJoined else { return }
+            if process.isRunning { _ = signal(SIGTERM) }
+            let stopDeadline = Date().addingTimeInterval(5)
+            // Cleanup must not inherit the cancellation that interrupted the test body.
+            while process.isRunning, Date() < stopDeadline {
+                usleep(25000)
+            }
+            if process.isRunning, !signal(SIGKILL) { throw Failure.cleanupUncertain }
+            process.waitUntilExit()
+            parentJoined = true
+        }
+
+        func retireReaders() throws {
+            guard !readersRetired else { return }
+            guard parentJoined || !launched, !readerRetirementAttempted else { throw Failure.cleanupUncertain }
+            readerRetirementAttempted = true
+            if !launched {
+                try output.fileHandleForWriting.close()
+                try errors.fileHandleForWriting.close()
+            }
+            try readers.retireAfterEOF()
+            readersRetired = true
+        }
     }
 
     private func builtTool() throws -> URL {
@@ -225,7 +379,7 @@ final class CodexBackendRuntimeTests: XCTestCase {
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
     }
 
-    private enum Failure: Error { case input }
+    private enum Failure: Error { case input, processTimedOut, cleanupUncertain }
     private final class Capture: @unchecked Sendable {
         private let lock = NSLock()
         private var value = ""
