@@ -60,12 +60,10 @@ import {
   type RecordingSpeakerMapping,
   type NewRecordingParticipant,
 } from "./storage.js";
-import { resolveGivenName } from "./suggestion-reads.js";
 import {
   buildSuggestions,
   type CalendarEventCandidate,
   type RecordingSuggestion,
-  type SuggestionTurn,
 } from "./suggestions.js";
 import type { ParticipantIdentity, SpeakerIdentity } from "../sources/omnesis-recordings/index.js";
 import type { SeparatedVoices, VoiceSeparator, VoiceWindow } from "./voices/voices.js";
@@ -522,8 +520,8 @@ export class RecordingTranscriptionService {
 
   /**
    * Who likely took part in a session and what it was, from the owner's
-   * calendar and from names heard in the transcript. Null when the session
-   * does not exist. A calendar that cannot be read leaves only the mentions.
+   * calendar. Null when the session does not exist; a calendar that cannot
+   * be read leaves none.
    */
   async suggestions(id: string): Promise<RecordingSuggestions | null> {
     const session = getRecordingSession(this.deps.readDb, id);
@@ -556,24 +554,10 @@ export class RecordingTranscriptionService {
       Math.min(end, Date.parse(e.end)) - Math.max(start, Date.parse(e.start));
     events = events.filter((e) => overlap(e) > 0).sort((a, b) => overlap(b) - overlap(a));
 
-    const turns: SuggestionTurn[] = [];
-    for (const chunk of chunks) {
-      for (const turn of speakerTurns(chunk.segments ?? [], chunk.voices ?? [])) {
-        turns.push({
-          ...(turn.speaker !== undefined ? { speaker: turn.speaker } : {}),
-          text: turn.text,
-        });
-      }
-    }
-    const names = new Map<string, ReturnType<typeof resolveGivenName>>();
     return {
       suggestions: buildSuggestions({
         title: session.title,
-        turns,
         events,
-        namedSpeakers: new Set(
-          speakers.filter((s) => s.isSelf || s.personId || s.name).map((s) => s.speaker),
-        ),
         mappedPeople: new Set(speakers.flatMap((s) => (s.personId ? [s.personId] : []))),
         presentPeople: new Set(
           listRecordingParticipants(this.deps.readDb, id).flatMap((p) =>
@@ -581,11 +565,6 @@ export class RecordingTranscriptionService {
           ),
         ),
         dismissed: listDismissedRecordingSuggestions(this.deps.readDb, id),
-        resolveName: (name) => {
-          const key = name.toLowerCase();
-          if (!names.has(key)) names.set(key, resolveGivenName(this.deps.readDb, name));
-          return names.get(key)!;
-        },
       }),
     };
   }

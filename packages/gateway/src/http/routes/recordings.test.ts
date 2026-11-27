@@ -519,15 +519,6 @@ describe("recordings routes", () => {
           documentId: "doc-sync",
         },
         {
-          key: "mention:2:alex",
-          kind: "person",
-          source: "mention",
-          speaker: 2,
-          personId: null,
-          name: "Alex",
-          evidence: "Thanks, Alex.",
-        },
-        {
           key: `person:${priya}`,
           kind: "person",
           source: "calendar",
@@ -542,11 +533,10 @@ describe("recordings routes", () => {
     // Accept the title, dismiss the rest: nothing is left to offer.
     const titled = await request("PUT", `/recordings/${id}/title`, { title: "Weekly sync" });
     expect(await titled.json()).toMatchObject({ id, title: "Weekly sync" });
-    for (const key of ["mention:2:alex", `person:${priya}`]) {
-      expect((await request("POST", `/recordings/${id}/suggestions/dismiss`, { key })).status).toBe(
-        204,
-      );
-    }
+    expect(
+      (await request("POST", `/recordings/${id}/suggestions/dismiss`, { key: `person:${priya}` }))
+        .status,
+    ).toBe(204);
     expect(await (await request("GET", `/recordings/${id}/suggestions`)).json()).toEqual({
       suggestions: [],
     });
