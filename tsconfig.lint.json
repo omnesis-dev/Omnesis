@@ -12,6 +12,7 @@
   "include": [
     "evals/briefs/src/**/*.ts",
     "evals/search/src/**/*.ts",
+    "evals/speakers/src/**/*.ts",
     "extension/src/**/*.ts",
     "packages/**/*.ts",
     "packages/**/*.tsx",

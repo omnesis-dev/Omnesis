@@ -1280,6 +1280,7 @@ export const addSource = ({ deviceId, descriptorId, accountIds, params }) =>
 // --- Config (unified omnesis.json) ---
 
 export const getAdminConfig = () => request("GET", "/admin/config");
+export const getTelemetryStatus = () => request("GET", "/admin/telemetry");
 
 /**
  * Returns the raw text body, not JSON — the config view feeds this
@@ -1867,7 +1868,10 @@ export const listRecordings = (limit = 100) => request("GET", "/recordings", { q
 /** One recording as the list shows it, with its chunks: `{ recording, chunks }`. */
 export const getRecordingChunks = (id) => request("GET", `${recordingPath(id)}/chunks`);
 
-/** A recording's speakers, with how long each spoke and what they said first: `{ speakers }`. */
+/**
+ * A recording's speakers, with how long each spoke and what they said first,
+ * and the people present without a turn: `{ speakers, participants }`.
+ */
 export const getRecordingSpeakers = (id) => request("GET", `${recordingPath(id)}/speakers`);
 
 /**
@@ -1878,6 +1882,14 @@ export const setRecordingSpeaker = (id, speaker, mapping) =>
   request("PUT", `${recordingPath(id)}/speakers/${encodeURIComponent(String(speaker))}`, {
     body: mapping,
   });
+
+/** Add someone present without a turn: `{ personId }` or `{ name }`. Answers `{ participants }`. */
+export const addRecordingParticipant = (id, participant) =>
+  request("POST", `${recordingPath(id)}/participants`, { body: participant });
+
+/** Remove a participant by its key. Answers `{ participants }`. */
+export const removeRecordingParticipant = (id, key) =>
+  request("DELETE", `${recordingPath(id)}/participants/${encodeURIComponent(key)}`);
 
 /** Delete a recording with its chunks, any kept audio, and its document. */
 export const deleteRecording = (id) => request("DELETE", recordingPath(id));

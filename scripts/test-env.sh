@@ -11,6 +11,10 @@
 # cert written to "$OMNESIS_CONFIG_DIR/tls/cert.pem" on first boot, so the URLs
 # use https:// and NODE_EXTRA_CA_CERTS points Node (and the `omnesis` CLI) at
 # that cert — otherwise the TLS handshake fails with a self-signed-cert error.
+
+export OMNESIS_RUNTIME_MODE=test
+export OMNESIS_TELEMETRY=off
+
 export OMNESIS_CONFIG_DIR=/tmp/omnesis-test
 export OMNESIS_GATEWAY_PORT=7700
 export OMNESIS_COLLECTOR_PORT=7701

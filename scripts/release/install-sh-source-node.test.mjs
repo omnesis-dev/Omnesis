@@ -37,6 +37,7 @@ const functions = [
   "npm_trust_preload",
   "with_npm_trust",
   "npm",
+  "pacman_install",
 ]
   .map(definition)
   .join("\n");
@@ -105,6 +106,11 @@ function run(
       `#!/bin/sh\npreload=$(printf '%s' "\${NODE_OPTIONS##*--import=file://}" | sed 's/%20/ /g; s/%23/#/g; s/%3F/?/g; s/%25/%/g')\ncase "\${NODE_OPTIONS##*--import=}" in *" "*) preload=; esac\nif [ -f "$preload" ]; then echo "npm preload ok" >> '${calls}'; else echo "npm preload missing" >> '${calls}'; fi\n`,
     );
   }
+  if (manager === "pacman")
+    executable(
+      join(bin, "pacman"),
+      `#!/bin/sh\nprintf 'pacman %s\\n' "$*" >> '${calls}'\nprintf '%s' '${upgrade}' > '${currentFile}'\n`,
+    );
   if (manager === "dnf")
     executable(
       join(bin, "dnf"),
@@ -192,6 +198,26 @@ describe("installer source Node requirements", () => {
       expect(result.calls).toBe("");
     },
   );
+  test("installs Node 24 LTS with pacman, without NodeSource or a database refresh", () => {
+    const result = run("22.0.0", {
+      method: "auto",
+      resolved: "source",
+      platform: "linux",
+      manager: "pacman",
+      upgrade: "24.22.3",
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.calls).toBe("pacman -S --needed --noconfirm nodejs-lts-krypton npm\n");
+  });
+  test("names the full upgrade when pacman cannot install Node", () => {
+    const result = run("22.0.0", {
+      platform: "linux",
+      manager: "pacman",
+      command: "pacman() { return 1; }; ensure_node",
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("sudo pacman -Syu nodejs-lts-krypton npm");
+  });
   test.each(["apt", "dnf"])(
     "installs and verifies Node 24 with %s after auto resolves to source",
     (manager) => {
@@ -224,5 +250,55 @@ describe("installer npm trust preload", () => {
     expect(result.calls).toContain("setup https://deb.nodesource.com/setup_24.x");
     expect(result.calls).toContain("npm preload ok");
     expect(result.calls).not.toContain("npm preload missing");
+  });
+});
+
+describe("installer pacman prerequisites", () => {
+  const prerequisites = [
+    "pacman_install",
+    "ensure_git",
+    "source_build_tools_ready",
+    "ensure_source_build_tools",
+  ]
+    .map(definition)
+    .join("\n");
+  function runPrerequisite(command, pacmanExit = 0) {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-pacman-"));
+    roots.push(dir);
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    const calls = join(dir, "calls");
+    writeFileSync(calls, "");
+    // Each tool answers --version only once pacman has "installed" it.
+    const marker = join(dir, "installed");
+    for (const tool of ["make", "cc", "c++", "python3"])
+      executable(join(bin, tool), `#!/bin/sh\n[ -f '${marker}' ] && exit 0\nexit 127\n`);
+    executable(
+      join(bin, "pacman"),
+      `#!/bin/sh\nprintf 'pacman %s\\n' "$*" >> '${calls}'\n[ ${pacmanExit} = 0 ] && : > '${marker}'\nexit ${pacmanExit}\n`,
+    );
+    const script = `${prerequisites}\ninfo() { :; }\nfail() { printf '%s\\n' "$*" >&2; exit 1; }\nresolve_sudo() { return 0; }\nrun_privileged() { "$@"; }\nPLATFORM=linux\n${command}\n`;
+    const result = spawnSync("/bin/sh", ["-eu", "-c", script], {
+      encoding: "utf8",
+      env: { ...process.env, PATH: bin },
+    });
+    return { ...result, calls: readFileSync(calls, "utf8") };
+  }
+
+  test("installs missing build tools with base-devel and python", () => {
+    const result = runPrerequisite("ensure_source_build_tools");
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.calls).toBe("pacman -S --needed --noconfirm base-devel python\n");
+  });
+  test("names the full upgrade when the build tools cannot be installed", () => {
+    const result = runPrerequisite("ensure_source_build_tools", 1);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("sudo pacman -Syu base-devel python");
+  });
+  test("installs a missing git", () => {
+    // No git on PATH: the fixture bin holds only the build tools and pacman.
+    const result = runPrerequisite("ensure_git");
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.calls).toBe("pacman -S --needed --noconfirm git\n");
   });
 });

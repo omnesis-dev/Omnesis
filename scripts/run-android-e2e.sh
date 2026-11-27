@@ -7,6 +7,9 @@
 # cert, so this exercises the real LeafCertPinner (pinned to the leaf fingerprint).
 set -euo pipefail
 
+export OMNESIS_RUNTIME_MODE=test
+export OMNESIS_TELEMETRY=off
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 export PATH="/opt/homebrew/opt/node@24/bin:$PATH"

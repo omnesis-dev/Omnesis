@@ -7,7 +7,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { readProviderAccountCredentials, writeProviderAccountCredentials } from "@omnesis/core";
 import { AuthFailure, type AuthChallenge, type AuthSession } from "@omnesis/source-sdk";
-import { fakeProviderHost } from "@omnesis/source-sdk/testing";
+import {
+  fakeProviderHost,
+  formatConformanceReport,
+  runProviderConformance,
+} from "@omnesis/source-sdk/testing";
 import { EU_BASE, FAKE_EMAIL, FakePlaud } from "./fake-plaud.js";
 import {
   authenticate,
@@ -237,5 +241,34 @@ describe("stored sign-ins", () => {
       access_token: "ut-2",
       refresh_token: "rt-1",
     });
+  });
+});
+
+describe("the source contract", () => {
+  test("the live instance conforms, so the collector syncs it through syncStructured()", async () => {
+    const configDir = tempConfigDir();
+    await writeProviderAccountCredentials(
+      "plaud",
+      FAKE_EMAIL,
+      { email: FAKE_EMAIL, api_base: EU_BASE, access_token: "ut-1" },
+      configDir,
+    );
+    const host = { ...fakeProviderHost(), configDir };
+    const ctx = await plaudProvider.createContext!({ accountId: FAKE_EMAIL, host } as never);
+    const [entry] = plaudProvider.sources;
+    const reports = await runProviderConformance(plaudProvider as never, {
+      [entry!.id]: {
+        instantiate: () =>
+          entry!.create(
+            {
+              sourceId: `${entry!.id}:${FAKE_EMAIL}`,
+              providerId: `plaud:${FAKE_EMAIL}`,
+              host,
+            } as never,
+            ctx,
+          ),
+      },
+    });
+    for (const report of reports) expect(report.ok, formatConformanceReport(report)).toBe(true);
   });
 });

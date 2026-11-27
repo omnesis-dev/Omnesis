@@ -52,6 +52,11 @@ export const CONFIG_DEFAULTS = {
     preUpdateCount: 2,
   },
   releaseCheck: true,
+  telemetry: {
+    enabled: true,
+    acknowledged: false,
+    noticeShown: false,
+  },
   brain: {
     knowledge: {
       immediateThreshold: 0.8,

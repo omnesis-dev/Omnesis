@@ -27,7 +27,7 @@ esac
 
 DOMAINS=(omnesis.app omnesis.dev)
 # The deliberate lookups that must fail: the relay and the installer's host.
-PROBES=(relay.omnesis.app omnesis.dev)
+PROBES=(relay.omnesis.app telemetry.omnesis.app omnesis.dev)
 STATE="${RUNNER_TEMP:?RUNNER_TEMP is not set}/production-network"
 BASELINE="${STATE}/baseline"
 # Linux: the kernel log prefix of a refused question.

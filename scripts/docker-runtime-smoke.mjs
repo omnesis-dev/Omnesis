@@ -90,6 +90,10 @@ function runGateway(name, state, extra = [], configDir = "/var/lib/omnesis") {
     `type=bind,source=${state},target=${configDir}`,
     "--env",
     `OMNESIS_CONFIG_DIR=${configDir}`,
+    "--env",
+    "OMNESIS_RUNTIME_MODE=test",
+    "--env",
+    "OMNESIS_TELEMETRY=off",
     ...extra,
     image,
   );

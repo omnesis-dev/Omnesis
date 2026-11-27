@@ -6,8 +6,9 @@
  * Never applied on their own — the owner accepts or dismisses each one.
  *
  *   - Calendar. An event on the owner's calendar that overlaps the recording
- *     offers its attendees as likely participants, and its title as the
- *     recording's title.
+ *     offers its attendees as likely participants — for a speaker, or as
+ *     present without a turn of their own — and its title as the recording's
+ *     title.
  *   - Mentions. A name addressed in the transcript ("thanks, Jamie",
  *     "Jamie, can you…") is offered for the speaker who answers: the next
  *     turn by another voice.
@@ -52,7 +53,10 @@ export type RecordingSuggestion =
       key: string;
       kind: "person";
       source: "calendar" | "mention";
-      /** The speaker it is offered for; null for an attendee, offered for any unnamed speaker. */
+      /**
+       * The speaker it is offered for; null for an attendee, offered for any
+       * unnamed speaker or as present without a turn.
+       */
       speaker: number | null;
       /** The person, when exactly one goes by the name; null offers the plain name. */
       personId: string | null;
@@ -71,6 +75,8 @@ export interface SuggestionContext {
   namedSpeakers: ReadonlySet<number>;
   /** People already mapped to a speaker of this recording. */
   mappedPeople: ReadonlySet<string>;
+  /** People the owner already said were present without a turn. */
+  presentPeople?: ReadonlySet<string>;
   /** Keys the owner dismissed. */
   dismissed: ReadonlySet<string>;
   /** Who a name addressed in the transcript is. */
@@ -303,13 +309,14 @@ export function buildSuggestions(context: SuggestionContext): RecordingSuggestio
     }
   });
 
-  // Attendees not already offered for a speaker or mapped to one.
+  // Attendees not already offered for a speaker, mapped to one, or present.
   const mentioned = new Set(
     out.flatMap((s) => (s.kind === "person" && s.personId ? [s.personId] : [])),
   );
   for (const [personId, a] of attendees) {
     const key = personKey(personId);
     if (context.mappedPeople.has(personId) || mentioned.has(personId)) continue;
+    if (context.presentPeople?.has(personId)) continue;
     if (context.dismissed.has(key)) continue;
     out.push({
       key,
