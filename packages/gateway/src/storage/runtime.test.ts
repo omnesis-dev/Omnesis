@@ -14,8 +14,22 @@ import type { IndexStorageAccounting } from "./index-accounting.js";
 import type { StorageRuntimeDeps } from "./runtime.js";
 import type { StorageAllocationSnapshot } from "./physical-accounting.js";
 
+/** Holds or fails the next footprint walks; every other walk runs for real. */
+const footprint = vi.hoisted(() => ({ next: [] as Array<() => Promise<void>> }));
+vi.mock("../disk-usage.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../disk-usage.js")>();
+  return {
+    ...actual,
+    measureDiskUsage: async (...args: Parameters<typeof actual.measureDiskUsage>) => {
+      await footprint.next.shift()?.();
+      return actual.measureDiskUsage(...args);
+    },
+  };
+});
+
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
+  footprint.next.length = 0;
   for (const cleanup of cleanups.splice(0)) await cleanup();
 });
 
@@ -427,4 +441,49 @@ test("an initial capacity refresh finishing after disposal never messages an ind
   pending.resolve();
   await Promise.resolve();
   expect(f.indexer.setStoragePressure).not.toHaveBeenCalled();
+});
+
+test("start settles with the first capacity measurement, so the gateway opens with writes admitted", async () => {
+  const f = await fixture();
+  await f.runtime.start();
+  expect(() => f.runtime.pressure.assertCanGrow()).not.toThrow();
+  expect(f.indexer.setStoragePressure.mock.lastCall?.[0]).toBe(false);
+});
+
+test("start waits for a slow first measurement, and growth fails closed until it lands", async () => {
+  const f = await fixture();
+  const walk = deferred<void>();
+  footprint.next.push(() => walk.promise);
+  let started = false;
+  const start = Promise.resolve(f.runtime.start()).then(() => {
+    started = true;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(started).toBe(false);
+  expect(() => f.runtime.pressure.assertCanGrow()).toThrow("cannot be verified");
+  walk.resolve();
+  await start;
+  expect(() => f.runtime.pressure.assertCanGrow()).not.toThrow();
+  expect(f.indexer.setStoragePressure.mock.lastCall?.[0]).toBe(false);
+});
+
+test("a failed first measurement still lets startup finish, with growth paused", async () => {
+  const f = await fixture();
+  footprint.next.push(() => Promise.reject(new Error("EACCES: permission denied, scandir")));
+  await f.runtime.start();
+  expect(() => f.runtime.pressure.assertCanGrow()).toThrow("cannot be verified");
+  expect(f.indexer.setStoragePressure.mock.lastCall?.[0]).toBe(true);
+});
+
+test("a failed capacity measurement is measured again on the next tick, not after the interval", async () => {
+  const f = await fixture();
+  await f.configStore.patch({ gateway: { storage: { measurementIntervalMs: 3_600_000 } } });
+  await f.runtime.start();
+  expect(() => f.runtime.pressure.assertCanGrow()).not.toThrow();
+  footprint.next.push(() => Promise.reject(new Error("EIO: i/o error, scandir")));
+  await f.runtime.pressure.refresh();
+  expect(() => f.runtime.pressure.assertCanGrow()).toThrow("cannot be verified");
+  await tick(f.tasks.get("storage.capacity.tick")!);
+  expect(() => f.runtime.pressure.assertCanGrow()).not.toThrow();
+  expect(f.indexer.setStoragePressure.mock.lastCall?.[0]).toBe(false);
 });

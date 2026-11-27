@@ -116,8 +116,15 @@ export class StorageRuntime {
     });
   }
 
-  start(): void {
-    if (this.disposed) return;
+  /**
+   * Schedules the storage jobs and starts the first capacity measurement.
+   * Resolves once that measurement has settled: until then capacity is
+   * unverified and every write is refused, so the gateway opens for requests
+   * only after this resolves. A failed measurement settles it too, leaving
+   * growth paused until a later measurement succeeds.
+   */
+  start(): Promise<void> {
+    if (this.disposed) return Promise.resolve();
     const capacity: PeriodicTask<undefined, void> = {
       name: "storage.capacity.tick",
       runner: "main",
@@ -125,9 +132,15 @@ export class StorageRuntime {
       periodMs: 1_000,
       initialArgs: undefined,
       run: async () => {
-        const interval = this.pressure.snapshot().policy.measurementIntervalMs;
-        const last = this.pressure.snapshot().measuredAt;
-        if (last === null || Date.now() - last >= interval) await this.pressure.refresh();
+        const pressure = this.pressure.snapshot();
+        // Unverified capacity (never measured, or the last measurement failed)
+        // is measured again on the next tick instead of waiting out the interval.
+        if (
+          pressure.state === "unknown" ||
+          pressure.measuredAt === null ||
+          Date.now() - pressure.measuredAt >= pressure.policy.measurementIntervalMs
+        )
+          await this.pressure.refresh();
         this.publishPressure();
         return { kind: "done", value: undefined };
       },
@@ -170,13 +183,14 @@ export class StorageRuntime {
     this.deps.scheduler.schedule(accounting);
     this.deps.scheduler.schedule(retention);
     if (this.deps.allocations) this.deps.scheduler.schedule(allocations);
-    void this.pressure.refresh().then(() => this.publishPressure());
+    const measured = this.pressure.refresh().then(() => this.publishPressure());
     this.deps.configStore.onChange((_before, _after, paths) => {
       if (paths.some((path) => path === "/gateway" || path.startsWith("/gateway/"))) {
         this.publishPressure();
         this.deps.scheduler.kickPeriodic(capacity.name);
       }
     });
+    return measured;
   }
 
   /** An explicit portal refresh shares ongoing accounting rather than starting a second scan. */
