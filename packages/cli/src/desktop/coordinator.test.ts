@@ -1124,3 +1124,21 @@ test("uncertain status query marks the retained transport draining before the ne
   expect(query.stop).toHaveBeenCalledTimes(1);
   await f.coordinator.close(false);
 });
+
+test("collector resume is constrained to the independently approved interactive home before enrollment", async () => {
+  const f = fixture("joined");
+  f.save("cli");
+  expect(await f.run("connect")).toMatchObject({ phase: "ready", mode: "joined" });
+  expect(f.deps.enroll).toHaveBeenCalledOnce();
+  const options = f.deps.enroll.mock.calls[0]![0];
+  expect(options.role).toBe("collector");
+  expect(options.expectedGateway).toEqual({
+    gatewayUrl: pairing("cli").gatewayUrl,
+    gatewayFingerprint: pairing("cli").gatewayFingerprint,
+    ...(pairing("cli").tlsSpkiFingerprint === undefined
+      ? {}
+      : { tlsSpkiFingerprint: pairing("cli").tlsSpkiFingerprint }),
+  });
+  expect(options.expectedGateway).not.toHaveProperty("token");
+  expect(options.expectedGateway).not.toHaveProperty("gatewayCertificate");
+});

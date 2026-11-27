@@ -213,3 +213,22 @@ test("retirement can refuse signing-key publication before enrollment opens a br
   expect(f.ui.openBrowser).not.toHaveBeenCalled();
   expect(f.events.at(-1)?.phase).toBe("failed");
 });
+
+test("collector enrollment forwards only its approved identity constraint while retaining independent role permissions", async () => {
+  const f = fixture();
+  const expectedGateway = {
+    gatewayUrl: credential.gatewayUrl,
+    gatewayFingerprint: credential.gatewayFingerprint,
+  };
+  const pair = vi.fn<typeof pairAccountDevice>(async (options) => ({
+    ...credential,
+    kind: options.kind,
+  }));
+  await enrollDesktopRole({ ...f.options, role: "collector", expectedGateway }, { pair });
+  expect(pair).toHaveBeenCalledWith(
+    expect.objectContaining({ kind: "collector", expectedGateway, requireEncryptedStorage: true }),
+    expect.anything(),
+  );
+  expect(pair.mock.calls[0]![0]).not.toHaveProperty("scopes");
+  expect(f.ui.chooseGateway).not.toHaveBeenCalled();
+});

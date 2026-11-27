@@ -7,6 +7,7 @@ import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { ensureBundledExtensions } from "../duckdb-extensions.mjs";
 
 if (!process.env.OMNESIS_TEST_SCHEDULER_ACTIVE && process.env.CI !== "true") {
   throw new Error("Run this fixture through the installed E2E admission queue");
@@ -55,6 +56,8 @@ async function command(args, cancellable = true) {
   });
 }
 try {
+  process.stdout.write("Preparing pinned DuckDB extensions for the isolated account fixture.\n");
+  await ensureBundledExtensions({ packageDir: join(root, "packages/gateway") });
   process.stdout.write("Preparing the isolated browser and Node fixture image.\n");
   await command([
     "build",

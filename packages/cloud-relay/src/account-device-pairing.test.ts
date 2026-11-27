@@ -1,15 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { randomBytes, randomUUID } from "node:crypto";
+import { mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { randomBytes, randomUUID, X509Certificate } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import * as desktop from "./account-desktop-client.js";
 import * as network from "./network.js";
 import { pairAccountDevice } from "./account-device-pairing.js";
-import { gatewayBindingSchema, certificateFingerprint } from "./gateway-binding.js";
+import {
+  gatewayBindingSchema,
+  certificateFingerprint,
+  gatewayBindingNonce,
+  validateCertificateDates,
+} from "./gateway-binding.js";
 import { tlsSpkiFingerprint } from "./pinned-key.js";
 import {
   enrollmentNonce,
@@ -29,7 +34,7 @@ const candidate = gatewayBindingSchema.parse(vectors.gateway),
   accountId = "b".repeat(64);
 let directory = "";
 beforeEach(async () => {
-  directory = await mkdtemp(join(tmpdir(), "account-device-key-"));
+  directory = await realpath(await mkdtemp(join(tmpdir(), "account-device-key-")));
 });
 afterEach(async () => {
   await rm(directory, { recursive: true, force: true });
@@ -154,7 +159,7 @@ function setup(kind: "cli" | "collector" = "cli") {
     gatewayJson,
     selectGateway,
     confirm,
-    run: () =>
+    run: (overrides: Partial<Parameters<typeof pairAccountDevice>[0]> = {}) =>
       pairAccountDevice(
         {
           relayUrl: "https://relay.example.test",
@@ -163,6 +168,7 @@ function setup(kind: "cli" | "collector" = "cli") {
           deviceKeyFile,
           confirm,
           selectGateway,
+          ...overrides,
         },
         { authorize, fetch: transport, gatewayJson, wait },
       ),
@@ -407,3 +413,209 @@ test("an unnamed headless gateway still requires comparison and receives the col
     },
   });
 });
+
+const approvedGateway = () => ({
+  gatewayUrl: candidate.publicOrigin,
+  gatewayFingerprint: certificateFingerprint(candidate.certificate),
+  tlsSpkiFingerprint: tlsSpkiFingerprint(candidate.certificate),
+});
+const directoryChoice = (
+  gatewayId = candidate.gatewayId,
+  publicOrigin = candidate.publicOrigin,
+) => ({ gatewayId, publicOrigin, online: true });
+
+test.each([false, true])(
+  "collector enrollment uses the approved home before issuance without another picker (sibling=%s)",
+  async (sibling) => {
+    const f = setup("collector");
+    f.transport.mockImplementation(async (url) =>
+      Response.json(
+        new URL(String(url)).pathname.endsWith("/gateways")
+          ? {
+              gateways: [
+                directoryChoice(),
+                ...(sibling ? [directoryChoice(randomUUID(), "https://other.example.test")] : []),
+              ],
+            }
+          : f.selected,
+      ),
+    );
+    const result = await f.run({ expectedGateway: approvedGateway() });
+    expect(result.gatewayUrl).toBe(candidate.publicOrigin);
+    expect(result.kind).toBe("collector");
+    expect(f.selectGateway).not.toHaveBeenCalled();
+    expect(f.confirm).toHaveBeenCalledOnce();
+    expect(f.gatewayJson.mock.calls.some(([, path]) => path === "/devices/pair")).toBe(true);
+  },
+);
+
+test.each([
+  "empty",
+  "ambiguous-origin",
+  "ambiguous-canonical-origin",
+  "account-switched",
+  "aborted",
+])("approved collector home refuses %s before any gateway enrollment", async (failure) => {
+  const f = setup("collector");
+  const controller = new AbortController();
+  f.transport.mockImplementation(async (url) => {
+    if (new URL(String(url)).pathname.endsWith("/gateways")) {
+      const gateways =
+        failure === "empty"
+          ? []
+          : failure === "ambiguous-origin" || failure === "ambiguous-canonical-origin"
+            ? [
+                directoryChoice(),
+                directoryChoice(
+                  randomUUID(),
+                  candidate.publicOrigin + (failure === "ambiguous-canonical-origin" ? "/" : ""),
+                ),
+              ]
+            : [directoryChoice()];
+      if (failure === "aborted") controller.abort();
+      return Response.json({ gateways });
+    }
+    return Response.json(f.selected);
+  });
+  if (failure === "account-switched") f.selected.accountId = "c".repeat(64);
+  await expect(
+    f.run({ expectedGateway: approvedGateway(), signal: controller.signal }),
+  ).rejects.toThrow();
+  expect(f.selectGateway).not.toHaveBeenCalled();
+  expect(f.gatewayJson).not.toHaveBeenCalled();
+  expect(f.confirm).not.toHaveBeenCalled();
+  expect(f.requests).toEqual([]);
+});
+
+test.each([
+  null,
+  {},
+  { ...approvedGateway(), gatewayUrl: candidate.publicOrigin + "/path" },
+  { ...approvedGateway(), gatewayUrl: candidate.publicOrigin + "/" },
+  { ...approvedGateway(), gatewayFingerprint: "invalid" },
+  { ...approvedGateway(), tlsSpkiFingerprint: "invalid" },
+])("malformed approved identity refuses before authorization or key creation", async (expected) => {
+  const f = setup("collector");
+  await expect(
+    f.run({
+      expectedGateway: expected as unknown as NonNullable<
+        Parameters<typeof pairAccountDevice>[0]["expectedGateway"]
+      >,
+    }),
+  ).rejects.toThrow();
+  expect(f.authorize).not.toHaveBeenCalled();
+  expect(f.transport).not.toHaveBeenCalled();
+  expect(f.gatewayJson).not.toHaveBeenCalled();
+  await expect(stat(f.deviceKeyFile)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+test("approved identity is copied before asynchronous authorization and cannot be retargeted", async () => {
+  const f = setup("collector");
+  const expected = approvedGateway();
+  const authorize = f.authorize.getMockImplementation()!;
+  f.authorize.mockImplementation(async (...args) => {
+    expected.gatewayUrl = "https://other.example.test";
+    expected.tlsSpkiFingerprint = "0".repeat(64);
+    return authorize(...args);
+  });
+  expect((await f.run({ expectedGateway: expected })).gatewayUrl).toBe(candidate.publicOrigin);
+  expect(f.selectGateway).not.toHaveBeenCalled();
+});
+
+test("the approved collector searches the complete paginated directory without a first-page fallback", async () => {
+  const f = setup("collector"),
+    sibling = directoryChoice(randomUUID(), "https://other.example.test");
+  f.transport.mockImplementation(async (url) => {
+    const target = new URL(String(url));
+    if (!target.pathname.endsWith("/gateways")) return Response.json(f.selected);
+    return Response.json(
+      target.searchParams.has("after")
+        ? { gateways: [directoryChoice()] }
+        : { gateways: [sibling], nextCursor: sibling.gatewayId },
+    );
+  });
+  expect((await f.run({ expectedGateway: approvedGateway() })).gatewayUrl).toBe(
+    candidate.publicOrigin,
+  );
+  expect(f.selectGateway).not.toHaveBeenCalled();
+  expect(
+    f.transport.mock.calls.filter(([url]) => new URL(String(url)).pathname.endsWith("/gateways")),
+  ).toHaveLength(2);
+});
+
+test("unconstrained account enrollment retains its ordinary multi-home picker", async () => {
+  const f = setup();
+  f.transport.mockImplementation(async (url) =>
+    Response.json(
+      new URL(String(url)).pathname.endsWith("/gateways")
+        ? {
+            gateways: [
+              directoryChoice(),
+              directoryChoice(randomUUID(), "https://other.example.test"),
+            ],
+          }
+        : f.selected,
+    ),
+  );
+  expect((await f.run()).gatewayUrl).toBe(candidate.publicOrigin);
+  expect(f.selectGateway).toHaveBeenCalledOnce();
+});
+
+test.each(["only-other", "changed-key"] as const)(
+  "approved collector refuses an otherwise valid %s binding before gateway traffic",
+  async (failure) => {
+    const f = setup("collector"),
+      vector = vectors.spkiVectors[1];
+    const approvedCertificate = new X509Certificate(vector.certificate);
+    const selectedCertificate = new X509Certificate(
+      failure === "changed-key" ? vector.replacementCertificate : vector.certificate,
+    );
+    const now =
+      Math.max(
+        Date.parse(approvedCertificate.validFrom),
+        Date.parse(selectedCertificate.validFrom),
+      ) + 1000;
+    expect(now).toBeLessThan(
+      Math.min(Date.parse(approvedCertificate.validTo), Date.parse(selectedCertificate.validTo)),
+    );
+    vi.setSystemTime(now);
+    f.identity.expiresAt = Math.floor(now / 1000) + 300;
+    f.selected.expiresAt = f.identity.expiresAt;
+    const selected = {
+      ...candidate,
+      gatewayId: failure === "only-other" ? randomUUID() : candidate.gatewayId,
+      publicOrigin: "https://gateway.example.test",
+      certificate: selectedCertificate.toString(),
+    };
+    expect(() => gatewayBindingNonce(selected)).not.toThrow();
+    expect(() => validateCertificateDates(selectedCertificate)).not.toThrow();
+    const expectedGateway =
+      failure === "changed-key"
+        ? {
+            gatewayUrl: selected.publicOrigin,
+            gatewayFingerprint: certificateFingerprint(vector.certificate),
+            tlsSpkiFingerprint: tlsSpkiFingerprint(vector.certificate),
+          }
+        : approvedGateway();
+    if (failure === "changed-key")
+      expect(tlsSpkiFingerprint(selected.certificate)).not.toBe(expectedGateway.tlsSpkiFingerprint);
+    else expect(selected.publicOrigin).not.toBe(expectedGateway.gatewayUrl);
+    f.selected.binding = selected;
+    f.transport.mockImplementation(async (url) =>
+      Response.json(
+        new URL(String(url)).pathname.endsWith("/gateways")
+          ? { gateways: [directoryChoice(selected.gatewayId, selected.publicOrigin)] }
+          : f.selected,
+      ),
+    );
+    await expect(f.run({ expectedGateway })).rejects.toThrow(
+      failure === "changed-key"
+        ? "approved library identity changed"
+        : "approved library is unavailable",
+    );
+    expect(f.selectGateway).not.toHaveBeenCalled();
+    expect(f.gatewayJson).not.toHaveBeenCalled();
+    expect(f.confirm).not.toHaveBeenCalled();
+    expect(f.requests).toEqual([]);
+  },
+);

@@ -497,6 +497,13 @@ export class DesktopCoordinator {
     if (!collector) {
       collector = await this.deps.enroll({
         role: "collector",
+        expectedGateway: {
+          gatewayUrl: interactive.gatewayUrl,
+          gatewayFingerprint: interactive.gatewayFingerprint,
+          ...(interactive.tlsSpkiFingerprint === undefined
+            ? {}
+            : { tlsSpkiFingerprint: interactive.tlsSpkiFingerprint }),
+        },
         relayUrl,
         name: this.deps.name(),
         deviceKeyFile: join(this.profile.configDir, "cloud-relay", "collector.key"),

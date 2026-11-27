@@ -113,9 +113,17 @@ account directory is an error. Only a validated empty list permits first-home
 setup, preventing an outage from offering to create an unintended second home.
 
 `enrollment.ts` uses the existing `pairAccountDevice` flow and keeps interactive
-and collector grants separate. Each role can be persisted independently so
-cancellation during the second enrollment does not discard the first role.
-Browser actions, choice prompts and comparison responses remain abort-aware.
+and collector grants separate. The person chooses a home once; collector enrollment
+is constrained to the approved interactive role's canonical origin and SPKI before
+any gateway challenge or grant request. Legacy pairings without a saved SPKI use
+the exact saved certificate fingerprint; a present invalid SPKI never falls back.
+An absent, ambiguous or changed identity fails before enrollment, including a
+directory containing only another home. Offline status never selects a sibling.
+The two roles still require independent authorization and comparison approvals.
+Each role can be persisted independently so cancellation during the second
+enrollment does not discard the first role. Default headless and Google selection
+remain unchanged without the optional constraint. Browser actions, choice prompts
+and comparison responses remain abort-aware.
 
 Account discovery, Bonjour and transport selection have different trust roles:
 

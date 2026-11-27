@@ -8,7 +8,11 @@ import {
 } from "./device-pairing.js";
 import { authorizeAccountDesktop } from "./account-desktop-client.js";
 import { readOrCreateDeviceKey } from "./device-key-file.js";
-import { selectAccountGateway } from "./gateway-choice-client.js";
+import {
+  selectAccountGateway,
+  snapshotExpectedAccountGateway,
+  type ExpectedAccountGateway,
+} from "./gateway-choice-client.js";
 import { relayOrigin } from "./network.js";
 import type { SecretFileOptions } from "@omnesis/core";
 import type { GatewayChoice } from "./gateway-directory.js";
@@ -17,6 +21,7 @@ import type { GatewayChoice } from "./gateway-directory.js";
 export async function pairAccountDevice(
   options: CloudDevicePairingOptions & {
     relayUrl: string;
+    expectedGateway?: ExpectedAccountGateway;
     deviceKeyFile: string;
     deviceKeySecretOptions?: SecretFileOptions;
     selectGateway(choices: readonly GatewayChoice[], signal: AbortSignal): Promise<string>;
@@ -31,6 +36,7 @@ export async function pairAccountDevice(
     wait?: (signal: AbortSignal) => Promise<void>;
   } = {},
 ) {
+  const expectedGateway = snapshotExpectedAccountGateway(options.expectedGateway);
   const relay = relayOrigin(options.relayUrl);
   let homeName: string | undefined;
   const paired = await pairCloudDevice(options, {
@@ -60,6 +66,7 @@ export async function pairAccountDevice(
         expiresAt: discovery.expiresAt,
         signal,
         select: options.selectGateway,
+        expectedGateway,
         fetch: dependencies.fetch,
       });
       homeName = result.displayName;

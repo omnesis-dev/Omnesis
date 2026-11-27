@@ -35,6 +35,7 @@ export interface DesktopEnrollmentEvent {
 export async function enrollDesktopRole(
   options: {
     role: DesktopEnrollmentRole;
+    expectedGateway?: PairOptions["expectedGateway"];
     relayUrl: string;
     name: string;
     deviceKeyFile: string;
@@ -59,6 +60,9 @@ export async function enrollDesktopRole(
       {
         kind: options.role === "interactive" ? "cli" : "collector",
         requireEncryptedStorage: true,
+        ...(options.expectedGateway === undefined
+          ? {}
+          : { expectedGateway: options.expectedGateway }),
         relayUrl: options.relayUrl,
         name: options.name,
         deviceKeyFile: options.deviceKeyFile,

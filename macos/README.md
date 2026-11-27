@@ -228,7 +228,10 @@ and a question prepared in the composer; Spotlight availability depends on the
 macOS version. Personal library contents are not indexed into system Spotlight.
 
 The first-launch screen separates an existing-account discovery from the explicit
-choice to create a first library. A failed discovery never offers an empty
+choice to create a first library. Joining an existing library asks for one home
+choice; interactive access and background collection keep separate approvals but
+stay bound to that home. An offline home is not replaced by an online sibling.
+A failed discovery never offers an empty
 account as though it were confirmed. Creating a first library requires the
 person to confirm this is their first and choose the Mac that will stay awake.
 The account form supports existing/new accounts, invitation codes and the

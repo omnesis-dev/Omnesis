@@ -38,6 +38,17 @@ import {
 } from "./desktop-account-mixed-fixture.js";
 import { addRestoreMaildirSource } from "./desktop-restore-fixture.js";
 import { waitForCondition } from "./multi-collector-harness.js";
+import {
+  accountHome,
+  sourceAccountHome,
+  homeRoster,
+  assertHomeRosterUnchanged,
+  createAccountJoinedFixture,
+  connectExactAccountHome,
+  joinedRoleMetadata,
+  expectAccountPresence,
+  whileAccountHomeStopped,
+} from "./desktop-account-multihome-fixture.js";
 
 const execute = promisify(execFile);
 const nonce = process.env.OMNESIS_DESKTOP_ACCOUNT_CONTAINER_NONCE;
@@ -52,6 +63,7 @@ describe.skipIf(!nonce)("actual desktop account onboarding and owned collection"
   let authority: Awaited<ReturnType<typeof localAcmeAuthority>>;
   let gatewayHostname: string | undefined;
   let linkedReady = false;
+  const additionalJoined: DesktopRuntimeFixture[] = [];
   const trustFiles = [
     "/usr/local/share/ca-certificates/omnesis-desktop-relay.crt",
     "/usr/local/share/ca-certificates/omnesis-desktop-acme.crt",
@@ -114,6 +126,7 @@ describe.skipIf(!nonce)("actual desktop account onboarding and owned collection"
   afterAll(async () => {
     try {
       await closeEnrollmentFixture(directory, [
+        ...additionalJoined.map((fixture) => () => fixture.close()),
         () => joined?.close(),
         () => sourceGateway?.close(),
         () => home?.close(),
@@ -438,5 +451,89 @@ describe.skipIf(!nonce)("actual desktop account onboarding and owned collection"
       phase: "ready",
       mode: "home",
     });
+  }, 300_000);
+
+  test("a two-home account chooses one home once and grants both roles only at that home", async () => {
+    if (!linkedReady || !sourceGateway)
+      throw new Error("The two real account homes were not established");
+    const managed = await accountHome(home, world.dataPort),
+      source = sourceAccountHome(sourceGateway);
+    const untouched = await homeRoster(source);
+    const fixture = await createAccountJoinedFixture(world.relayOrigin, additionalJoined);
+    await connectExactAccountHome(fixture, owner, world.relayOrigin, [managed, source], managed);
+    await assertHomeRosterUnchanged(source, untouched);
+    expect(await fixture.command("stop")).toMatchObject({ phase: "waiting", mode: "joined" });
+    expect(await sourceGateway.json("/health")).toMatchObject({
+      status: "ok",
+      storageProtection: { atRest: "encrypted" },
+    });
+    const current = await home.command("status");
+    expect({ phase: current.phase, mode: current.mode }).toEqual({ phase: "ready", mode: "home" });
+  }, 180_000);
+
+  test("an offline selected home never falls back to its sibling and explicit retry preserves that home", async () => {
+    if (!linkedReady || !sourceGateway || !joined)
+      throw new Error("The two real account homes and joined client were not established");
+    const gateway = sourceGateway,
+      existingJoined = joined;
+    const managed = await accountHome(home, world.dataPort),
+      source = sourceAccountHome(gateway);
+    const managedBefore = await homeRoster(managed),
+      sourceBefore = await homeRoster(source);
+    const existingIdentity = await joinedRoleMetadata(existingJoined);
+    const fixture = await createAccountJoinedFixture(world.relayOrigin, additionalJoined);
+    await whileAccountHomeStopped(gateway, async () => {
+      await expectAccountPresence(owner, world.relayOrigin, [managed, source], source);
+      const unavailable = await existingJoined.command("status");
+      expect({
+        phase: unavailable.phase,
+        mode: unavailable.mode,
+        noConnection: unavailable.connection === undefined,
+      }).toEqual({ phase: "waiting", mode: "joined", noConnection: true });
+      expect(await joinedRoleMetadata(existingJoined)).toEqual(existingIdentity);
+      await connectExactAccountHome(
+        fixture,
+        owner,
+        world.relayOrigin,
+        [managed, source],
+        source,
+        true,
+      );
+      await assertHomeRosterUnchanged(managed, managedBefore);
+      const healthy = await home.command("status");
+      expect({ phase: healthy.phase, mode: healthy.mode }).toEqual({
+        phase: "ready",
+        mode: "home",
+      });
+    });
+    expect(await gateway.json("/health")).toMatchObject({
+      status: "ok",
+      storageProtection: { atRest: "encrypted" },
+    });
+    await assertHomeRosterUnchanged(source, sourceBefore);
+    await connectExactAccountHome(fixture, owner, world.relayOrigin, [managed, source], source);
+    await assertHomeRosterUnchanged(managed, managedBefore);
+    const resumed = await existingJoined.interactiveCommand("connect", undefined, async () => {
+      throw new Error("An approved same-home session unexpectedly requested another enrollment");
+    });
+    expect({ phase: resumed.phase, mode: resumed.mode }).toEqual({
+      phase: "ready",
+      mode: "joined",
+    });
+    expect(await joinedRoleMetadata(existingJoined)).toEqual(existingIdentity);
+    expect(await joinedRequest(existingJoined, "/whoami")).toMatchObject({
+      deviceId: existingIdentity.interactive!.deviceId,
+    });
+    expect(await fixture.command("stop")).toMatchObject({ phase: "waiting", mode: "joined" });
+    expect(await existingJoined.command("stop")).toMatchObject({
+      phase: "waiting",
+      mode: "joined",
+    });
+    expect(await gateway.json("/health")).toMatchObject({
+      status: "ok",
+      storageProtection: { atRest: "encrypted" },
+    });
+    const current = await home.command("status");
+    expect({ phase: current.phase, mode: current.mode }).toEqual({ phase: "ready", mode: "home" });
   }, 300_000);
 });
