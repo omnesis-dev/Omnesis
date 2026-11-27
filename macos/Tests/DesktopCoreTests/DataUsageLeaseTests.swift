@@ -21,6 +21,10 @@ final class DataUsageLeaseTests: XCTestCase {
     private var catalogChildren: [(CatalogFixtureChild, String)] = []
     private var uncertainChildRegistration = false
     private var setupMilliseconds = 0
+    private var parentObservation: DesktopOwnedUIObservation?
+    private var parentObservationToken: DesktopOwnedUIObservation.Token?
+    /// Unknown child/resource retirement retains exact pipes; a PID grants no later signal authority.
+    private var unconfirmedIsolationProbes: [(pid: Int32, pipe: Pipe)] = []
 
     private static let phaseJournal: DesktopFixturePhaseJournal? = {
         var checkout = URL(fileURLWithPath: #filePath)
@@ -37,6 +41,10 @@ final class DataUsageLeaseTests: XCTestCase {
     }
 
     override func setUpWithError() throws {
+        if let selected = DesktopOwnedUIObservation.dataParentSelection(name) {
+            // Capture this process now, but admit no sample until the Node sampler joins.
+            parentObservation = DesktopOwnedUIObservation(selected)
+        }
         Self.phase("setup-enter")
         // macOS per-user temporary paths can exceed sockaddr_un.sun_path with a fixture suffix.
         home = URL(fileURLWithPath: "/tmp", isDirectory: true).appendingPathComponent("omnesis-data-" + UUID().uuidString)
@@ -69,51 +77,70 @@ final class DataUsageLeaseTests: XCTestCase {
     }
 
     override func tearDown() async throws {
+        parentObservation?.record(.dataTeardown, .entered)
         Self.phase("teardown-enter")
         var readersRetired = false
+        var observerJoined = parentObservation == nil
         defer {
-            if !readersRetired {
+            if DesktopOwnedUIObservation.requiresFixtureRetention(readersRetired: readersRetired, observerJoined: observerJoined) {
                 Self.retentionLock.withLock { Self.retainedFixtures.append(self) }
             }
         }
-        guard !uncertainChildRegistration else {
-            XCTFail("Child ownership registration is uncertain; the owned fixture was retained")
-            throw TestFailure.fixture
-        }
-        var physicallyDrained = Set<String>()
-        for (child, socket) in catalogChildren {
-            do {
-                try await child.cleanup { try self.sendExit(socket) }
-                physicallyDrained.insert(socket)
-            } catch {
-                XCTFail("Catalog child drain is uncertain; the owned fixture was retained")
-                throw error
+        var untrackedSockets: [String] = []
+        do {
+            guard !uncertainChildRegistration else {
+                XCTFail("Child ownership registration is uncertain; the owned fixture was retained")
+                throw TestFailure.fixture
             }
-        }
-        Self.phase("catalog-joined")
-        let untrackedSockets = sockets.filter { !physicallyDrained.contains($0) }
-        for path in untrackedSockets {
-            try? sendExit(path)
-        }
-        for process in processes {
-            let wasRunning = process.isRunning
-            if wasRunning {
-                guard kill(process.processIdentifier, SIGKILL) == 0 || errno == ESRCH else {
-                    throw TestFailure.diagnostics("Owned process cleanup refused; readers retained")
+            var physicallyDrained = Set<String>()
+            for (child, socket) in catalogChildren {
+                do {
+                    try await child.cleanup { try self.sendExit(socket) }
+                    physicallyDrained.insert(socket)
+                } catch {
+                    XCTFail("Catalog child drain is uncertain; the owned fixture was retained")
+                    throw error
                 }
             }
-            Self.phase("process-join-enter")
-            if wasRunning { process.waitUntilExit() }
-            // These exact objects were launched or observed running. Foundation's
-            // termination metadata is their exit receipt once isRunning is false.
-            _ = (status: process.terminationStatus, reason: process.terminationReason)
-            Self.phase("process-join-returned")
+            Self.phase("catalog-joined")
+            untrackedSockets = sockets.filter { !physicallyDrained.contains($0) }
+            for path in untrackedSockets {
+                try? sendExit(path)
+            }
+            for process in processes {
+                let wasRunning = process.isRunning
+                if wasRunning {
+                    guard kill(process.processIdentifier, SIGKILL) == 0 || errno == ESRCH else {
+                        throw TestFailure.diagnostics("Owned process cleanup refused; readers retained")
+                    }
+                }
+                parentObservation?.record(.dataProcessJoin, .entered)
+                Self.phase("process-join-enter")
+                if wasRunning { process.waitUntilExit() }
+                // These exact objects were launched or observed running. Foundation's
+                // termination metadata is their exit receipt once isRunning is false.
+                _ = (status: process.terminationStatus, reason: process.terminationReason)
+                Self.phase("process-join-returned")
+                parentObservation?.record(.dataProcessJoin, .returned)
+            }
+            parentObservation?.record(.dataReaderRetirement, .entered)
+            try closeCapturedReadersAfterJoin()
+            readersRetired = true
+            Self.phase("readers-retired")
+            parentObservation?.record(.dataReaderRetirement, .returned)
+        } catch {
+            observerJoined = await closeParentObservation()
+            if !observerJoined {
+                XCTFail("Parent observation cleanup is unconfirmed; the original fixture failure and exact owner are retained")
+            }
+            throw error
         }
-        try closeCapturedReadersAfterJoin()
-        readersRetired = true
+        observerJoined = await closeParentObservation()
+        guard observerJoined else {
+            throw TestFailure.diagnostics("Parent observation cleanup is unconfirmed; exact readers and fixture retained")
+        }
         processes.removeAll()
         catalogChildren.removeAll()
-        Self.phase("readers-retired")
         // Untracked commands still use their socket as the legacy exit acknowledgement.
         // Tracked children have stronger physical join/incarnation-gone proof above; TERM can
         // leave their owned Unix entry, which the private home removal retires afterward.
@@ -125,6 +152,23 @@ final class DataUsageLeaseTests: XCTestCase {
             XCTAssertFalse(FileManager.default.fileExists(atPath: path), "Owned data-use child did not drain")
         }
         try FileManager.default.removeItem(at: home)
+    }
+
+    private func armParentObservationAfterNodePublication() {
+        guard let parentObservation, parentObservationToken == nil else { return }
+        parentObservationToken = parentObservation.begin(.dataNodeCleanup)
+        parentObservation.record(.dataSamplePublished, .returned)
+    }
+
+    private func closeParentObservation() async -> Bool {
+        guard let parentObservation else { return true }
+        if let parentObservationToken { parentObservation.end(parentObservationToken) }
+        let joined = await parentObservation.close()
+        if joined {
+            parentObservationToken = nil
+            self.parentObservation = nil
+        }
+        return joined
     }
 
     func testFailedLaunchKeepsBothReadersOwnedUntilExplicitRetirement() throws {
@@ -589,7 +633,10 @@ final class DataUsageLeaseTests: XCTestCase {
             guard capture.text.contains("ready") else { throw TestFailure.diagnostics("Sampler target readiness absent") }
             let target = DesktopReadinessFailureDiagnostic.Target(identity: owned, node: node)
             var artifact: URL?
-            let result = await DesktopReadinessFailureDiagnostic.sample(target) { artifact = $0 }
+            let result = await DesktopReadinessFailureDiagnostic.sample(target) {
+                artifact = $0
+                self.armParentObservationAfterNodePublication()
+            }
             // Fixed metadata only; the raw stack is never part of a failing assertion.
             XCTAssertTrue(result.hasPrefix("result=collected,joined=true;"), result)
             XCTAssertTrue((try? DesktopBackgroundProcessIdentity.read(process.processIdentifier)) == owned)
@@ -618,6 +665,150 @@ final class DataUsageLeaseTests: XCTestCase {
         if process.isRunning {
             uncertainChildRegistration = true
             throw TestFailure.diagnostics("Owned sampler target cleanup unconfirmed")
+        }
+        if let failure { throw failure }
+    }
+
+    func testDiagnosticChildIsolationExcludesOwnedPipeIdentityAndPreservesExplicitNullStdio() async throws {
+        try makeRuntime(host: "process.exit(0)")
+        let node = try XCTUnwrap(fixtureNode)
+        struct NodePin: Decodable { let executableSha256: String }
+        let pin = try JSONDecoder().decode(
+            NodePin.self,
+            from: Data(contentsOf: node.deletingLastPathComponent().appendingPathComponent("node-fixture.json"))
+        )
+        guard try hash(Data(contentsOf: node)) == pin.executableSha256 else { throw TestFailure.fixture }
+        let pipe = Pipe()
+        var pid: pid_t = 0
+        var spawned = false, didJoin = false
+        var failure: Error?
+        do {
+            var identities: [[String: Any]] = []
+            for handle in [pipe.fileHandleForReading, pipe.fileHandleForWriting] {
+                let fd = handle.fileDescriptor
+                let flags = fcntl(fd, F_GETFD)
+                guard flags >= 0, fcntl(fd, F_SETFD, flags & ~FD_CLOEXEC) == 0,
+                      fcntl(fd, F_GETFD) & FD_CLOEXEC == 0 else { throw TestFailure.fixture }
+                var info = stat()
+                guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFIFO else { throw TestFailure.fixture }
+                identities.append([
+                    "fd": fd,
+                    "device": String(info.st_dev),
+                    "inode": String(info.st_ino),
+                    "type": String(info.st_mode & S_IFMT),
+                ])
+            }
+            let identityJSON = try String(decoding: JSONSerialization.data(withJSONObject: identities), as: UTF8.self)
+            let script = #"""
+            const fs = require('node:fs');
+            let passed = false;
+            try {
+              const original = JSON.parse(process.argv[1]);
+              const excluded = original.every(entry => {
+                try {
+                  const state = fs.fstatSync(entry.fd, { bigint: true });
+                  return !(String(BigInt.asIntN(32, state.dev)) === entry.device && String(state.ino) === entry.inode && String(state.mode & 61440n) === entry.type);
+                } catch (error) { return error.code === 'EBADF'; }
+              });
+              const nullDevice = fs.statSync('/dev/null', { bigint: true });
+              const explicitStdio = [0, 1, 2].every(fd => {
+                const state = fs.fstatSync(fd, { bigint: true });
+                return state.isCharacterDevice() && state.rdev === nullDevice.rdev;
+              });
+              passed = excluded && explicitStdio && fs.readSync(0, Buffer.alloc(1), 0, 1, null) === 0
+                && fs.writeSync(1, 'owned-stdio-check') === 17 && fs.writeSync(2, 'owned-stdio-check') === 17;
+            } catch {}
+            process.exit(passed ? 0 : 9);
+            """#
+            var actions: posix_spawn_file_actions_t?
+            guard posix_spawn_file_actions_init(&actions) == 0 else { throw TestFailure.fixture }
+            defer { XCTAssertEqual(posix_spawn_file_actions_destroy(&actions), 0) }
+            for fd in [STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO] {
+                guard posix_spawn_file_actions_addopen(&actions, fd, "/dev/null", fd == STDIN_FILENO ? O_RDONLY : O_WRONLY, 0) == 0 else {
+                    throw TestFailure.fixture
+                }
+            }
+            let arguments: [String] = [node.path, "-e", script, identityJSON]
+            let environmentValues = ["PATH=/usr/bin:/bin"]
+            let argv: [UnsafeMutablePointer<CChar>?] = arguments.map { strdup($0) } + [nil]
+            let environment: [UnsafeMutablePointer<CChar>?] = environmentValues.map { strdup($0) } + [nil]
+            defer { argv.forEach { free($0) }
+                environment.forEach { free($0) }
+            }
+            guard argv.dropLast().allSatisfy({ $0 != nil }), environment.dropLast().allSatisfy({ $0 != nil }),
+                  DesktopOwnedUISelfSampler.permitsSoleWaiter() else { throw TestFailure.fixture }
+            // Existing pinned-Node functional initialization allowance, captured before launch.
+            let startupDeadline = FixtureReadiness.bootstrapDeadline()
+            let isolation = DesktopDiagnosticSpawnAttributes.withIsolation { attributes in
+                argv.withUnsafeBufferPointer { args in environment.withUnsafeBufferPointer { env in
+                    posix_spawn(&pid, node.path, &actions, attributes, args.baseAddress!, env.baseAddress!)
+                } }
+            }
+            guard isolation.spawnStatus == 0 else { throw TestFailure.diagnostics("Diagnostic probe spawn or isolation refused") }
+            spawned = true
+            guard pid > 1 else { throw TestFailure.diagnostics("Diagnostic probe child identity unavailable") }
+            var cleanupBegan: ContinuousClock.Instant?
+            if isolation.refusal != nil {
+                failure = TestFailure.diagnostics("Diagnostic probe attribute disposal unconfirmed")
+                cleanupBegan = isolation.lifecycleAnchor
+            }
+            var lifecycle = DesktopOwnedUISelfSampler.SamplerLifecycle()
+            var status: Int32 = 0
+            while !didJoin {
+                guard DesktopOwnedUISelfSampler.permitsSoleWaiter() else {
+                    failure = failure ?? TestFailure.diagnostics("Diagnostic probe waiter policy changed")
+                    break
+                }
+                if cleanupBegan == nil, Task.isCancelled || ContinuousClock.now >= startupDeadline {
+                    if Task.isCancelled { failure = failure ?? CancellationError() }
+                    else { failure = failure ?? TestFailure.diagnostics("Diagnostic probe initialization expired") }
+                    cleanupBegan = .now
+                }
+                let waited = waitpid(pid, &status, WNOHANG)
+                if waited == pid { didJoin = true
+                    break
+                }
+                if waited < 0, errno != EINTR {
+                    failure = failure ?? TestFailure.diagnostics("Diagnostic probe physical join unconfirmed")
+                    break
+                }
+                if let cleanupBegan {
+                    let observation: DesktopOwnedUISelfSampler.SamplerLifecycle.Observation = waited == 0 ? .running : .interrupted
+                    switch lifecycle.advance(observation, elapsed: cleanupBegan.duration(to: .now), refused: true) {
+                    case .terminate: _ = Darwin.kill(pid, SIGTERM)
+                    case .kill: _ = Darwin.kill(pid, SIGKILL)
+                    case .unconfirmed, .finished:
+                        failure = failure ?? TestFailure.diagnostics("Diagnostic probe cleanup unconfirmed")
+                    case .wait, .joined: break
+                    }
+                    if lifecycle.finished { break }
+                }
+                do { try await Task.sleep(for: .milliseconds(10)) }
+                catch {
+                    failure = failure ?? error
+                    if cleanupBegan == nil { cleanupBegan = .now }
+                    usleep(10000)
+                }
+            }
+            if didJoin,
+               status !=
+               0 { failure = failure ?? TestFailure.diagnostics("Diagnostic probe did not verify pipe exclusion and explicit stdio") }
+        } catch { failure = failure ?? error }
+        if spawned, !didJoin {
+            // Never close resources or adopt/signal the retained PID after losing the sole waiter.
+            unconfirmedIsolationProbes.append((pid, pipe))
+            uncertainChildRegistration = true
+            throw failure ?? TestFailure.diagnostics("Diagnostic probe ownership retained after unconfirmed join")
+        }
+        var pipeRetired = true
+        for handle in [pipe.fileHandleForReading, pipe.fileHandleForWriting] {
+            do { try handle.close() } catch { failure = failure ?? error
+                pipeRetired = false
+            }
+        }
+        if !pipeRetired {
+            unconfirmedIsolationProbes.append((pid, pipe))
+            uncertainChildRegistration = true
         }
         if let failure { throw failure }
     }

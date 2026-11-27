@@ -12,6 +12,7 @@ import { rebuildRestoredAnalyticsDatabase } from "./auxiliary-analytics.js";
 import type { AnalyticsTableSchema } from "@omnesis/source-sdk";
 const homes: string[] = [];
 afterEach(async () => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   for (const home of homes.splice(0)) await rm(home, { recursive: true, force: true });
 });
@@ -120,6 +121,108 @@ async function inspect(path: string, key: Buffer) {
     instance.closeSync();
   }
 }
+
+/** Real restore SQL/keyed stores; only the engine's module boundary models a staged build. */
+async function restoreEngine(
+  mode: "built-in" | "inconsistent" | "ineffective" | "upstream" | "missing-offline",
+) {
+  // The upstream test engine needs its pinned module. This preparation is not evidence
+  // that a packaged Mac has that file: the staged model below refuses file loads.
+  const { instance, connection } = await engine();
+  const run = connection.run.bind(connection);
+  const read = connection.runAndReadAll.bind(connection);
+  const [version, platform] = (
+    await read("SELECT version(), (SELECT platform FROM pragma_platform())")
+  ).getRows()[0]!;
+  const offline = join(
+    BUNDLED_DUCKDB_EXTENSION_DIRECTORY,
+    String(version),
+    String(platform),
+    "httpfs.duckdb_extension",
+  );
+  const offlineLoad = `LOAD '${offline.replace(/'/g, "''")}'`;
+  const loads: string[] = [];
+  let loaded = false;
+  vi.spyOn(connection, "runAndReadAll").mockImplementation((sql, values, types) => {
+    if (sql.includes("FROM duckdb_extensions() WHERE extension_name = 'httpfs'")) {
+      if (mode === "upstream" || mode === "missing-offline")
+        return read("SELECT true, 'REPOSITORY', 'invented-offline-module', true");
+      return read(
+        `SELECT ${mode !== "inconsistent"}, 'STATICALLY_LINKED', '(BUILT-IN)', ${loaded}`,
+      );
+    }
+    return read(sql, values, types);
+  });
+  vi.spyOn(connection, "run").mockImplementation((sql, values, types) => {
+    if (/^(?:LOAD|INSTALL)\b/u.test(sql)) {
+      loads.push(sql);
+      if (sql === "LOAD httpfs") {
+        loaded = mode !== "ineffective";
+        return run("SELECT 1");
+      }
+      if (mode === "upstream" && sql === offlineLoad) return run(sql);
+      return Promise.reject(new Error("No external module exists in this staged runtime"));
+    }
+    return run(sql, values, types);
+  });
+  vi.spyOn(instance, "connect").mockResolvedValue(connection);
+  vi.spyOn(DuckDBInstance, "create").mockResolvedValueOnce(instance);
+  return { loads, offlineLoad };
+}
+
+test("a staged built-in restores real encrypted data without an extension file or INSTALL", async () => {
+  const f = await fixture();
+  const before = await readFile(f.sourcePath);
+  const staged = await restoreEngine("built-in");
+  expect(await rebuildRestoredAnalyticsDatabase(f)).toEqual({
+    rowsPreserved: 3,
+    watchesPaused: 0,
+    pendingWorkDiscarded: 1,
+  });
+  expect(staged.loads).toEqual(["LOAD httpfs"]);
+  expect(await readFile(f.sourcePath)).toEqual(before);
+  expect((await inspect(f.destinationPath, f.destinationKey)).rows).toEqual([
+    [1n, "invented private analytics marker", false],
+    [2n, "invented second row", false],
+  ]);
+  expect(
+    (await readFile(f.destinationPath)).includes(Buffer.from("invented private analytics marker")),
+  ).toBe(false);
+});
+
+test.each(["inconsistent", "ineffective"] as const)(
+  "a %s built-in refuses without external fallback or a replacement database",
+  async (mode) => {
+    const f = await fixture();
+    const before = await readFile(f.sourcePath);
+    const staged = await restoreEngine(mode);
+    await expect(rebuildRestoredAnalyticsDatabase(f)).rejects.toThrow(
+      mode === "inconsistent" ? "inconsistent metadata" : "did not load",
+    );
+    expect(staged.loads).toEqual(mode === "inconsistent" ? [] : ["LOAD httpfs"]);
+    expect(await readFile(f.sourcePath)).toEqual(before);
+    await expect(stat(f.destinationPath)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+test("an upstream engine retains the exact bundled offline fallback and real restore", async () => {
+  const f = await fixture();
+  const upstream = await restoreEngine("upstream");
+  expect((await rebuildRestoredAnalyticsDatabase(f)).rowsPreserved).toBe(3);
+  expect(upstream.loads).toEqual([upstream.offlineLoad]);
+  expect((await inspect(f.destinationPath, f.destinationKey)).rows).toHaveLength(2);
+});
+
+test("a missing upstream offline module refuses without installation or destination publication", async () => {
+  const f = await fixture();
+  const before = await readFile(f.sourcePath);
+  const upstream = await restoreEngine("missing-offline");
+  await expect(rebuildRestoredAnalyticsDatabase(f)).rejects.toThrow("No external module");
+  expect(upstream.loads).toEqual([upstream.offlineLoad]);
+  expect(await readFile(f.sourcePath)).toEqual(before);
+  await expect(stat(f.destinationPath)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
 test("encrypted analytics rebuild keeps base rows and constraints under the current key, discarding pending delivery work", async () => {
   const f = await fixture();
   const result = await rebuildRestoredAnalyticsDatabase(f);

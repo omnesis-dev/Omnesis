@@ -8,6 +8,7 @@ import { z } from "zod";
 import { fsyncFileSync } from "@omnesis/core";
 import { normalizeAnalyticsColumnType } from "@omnesis/source-sdk";
 import { BUNDLED_DUCKDB_EXTENSION_DIRECTORY } from "../analytics/connection-pool.js";
+import { loadStaticEncryptionModule } from "../analytics/static-encryption.js";
 import {
   ensureAnalyticsTemporalProjectionSchema,
   TEMPORAL_PROJECTIONS_TABLE,
@@ -97,16 +98,18 @@ export async function rebuildRestoredAnalyticsDatabase(
     });
     connection = await instance.connect();
     options.signal.addEventListener("abort", interrupt, { once: true });
-    const [version, platform] = (
-      await connection.runAndReadAll("SELECT version(), (SELECT platform FROM pragma_platform())")
-    ).getRows()[0]!;
-    const extension = join(
-      BUNDLED_DUCKDB_EXTENSION_DIRECTORY,
-      String(version),
-      String(platform),
-      "httpfs.duckdb_extension",
-    );
-    await connection.run(`LOAD ${literal(extension)}`);
+    if (!(await loadStaticEncryptionModule(connection))) {
+      const [version, platform] = (
+        await connection.runAndReadAll("SELECT version(), (SELECT platform FROM pragma_platform())")
+      ).getRows()[0]!;
+      const extension = join(
+        BUNDLED_DUCKDB_EXTENSION_DIRECTORY,
+        String(version),
+        String(platform),
+        "httpfs.duckdb_extension",
+      );
+      await connection.run(`LOAD ${literal(extension)}`);
+    }
     await connection.run("SET enable_http_metadata_cache=false");
     await connection.run("SET http_proxy=''");
     await connection.run("SET enable_http_logging=false");

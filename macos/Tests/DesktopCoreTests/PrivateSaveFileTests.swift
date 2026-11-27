@@ -42,6 +42,44 @@ final class PrivateSaveFileTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: url), Data("replacement".utf8))
     }
 
+    func testRemovedDestinationCannotFinishAsASuccessfulSave() throws {
+        let url = try directory().appendingPathComponent("fixture.tar")
+        let file = try PrivateSaveFile(url: url)
+        try file.append(Data("fictional archive".utf8))
+        try FileManager.default.removeItem(at: url)
+        XCTAssertThrowsError(try file.finish())
+        file.discard()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    func testReplacedDestinationCannotFinishOrRemoveTheReplacement() throws {
+        let url = try directory().appendingPathComponent("fixture.tar")
+        let file = try PrivateSaveFile(url: url)
+        try file.append(Data("fictional archive".utf8))
+        try FileManager.default.removeItem(at: url)
+        let replacement = Data("keep this replacement".utf8)
+        try replacement.write(to: url)
+        XCTAssertThrowsError(try file.finish())
+        file.discard()
+        XCTAssertEqual(try Data(contentsOf: url), replacement)
+    }
+
+    func testSymlinkReplacementCannotFinishOrChangeTheTarget() throws {
+        let root = try directory()
+        let url = root.appendingPathComponent("fixture.tar")
+        let target = root.appendingPathComponent("keep.txt")
+        let original = Data("keep this target".utf8)
+        try original.write(to: target)
+        let file = try PrivateSaveFile(url: url)
+        try file.append(Data("fictional archive".utf8))
+        try FileManager.default.removeItem(at: url)
+        try FileManager.default.createSymbolicLink(at: url, withDestinationURL: target)
+        XCTAssertThrowsError(try file.finish())
+        file.discard()
+        XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: url.path), target.path)
+        XCTAssertEqual(try Data(contentsOf: target), original)
+    }
+
     func testSymlinkDestinationIsRefusedWithoutChangingTarget() throws {
         let root = try directory()
         let target = root.appendingPathComponent("existing.txt")

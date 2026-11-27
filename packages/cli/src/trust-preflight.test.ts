@@ -133,3 +133,28 @@ it("offline recovery operations do not bootstrap a broken or unavailable gateway
   }
   expect(start).not.toHaveBeenCalled();
 });
+
+it("matches command dispatch through standalone terminators without exempting gateway operations", async () => {
+  const broken = vi.fn(async () => {
+    throw new Error("saved device pin is invalid");
+  });
+  for (const args of [
+    ["--", "desktop", "bridge"],
+    ["--", "--", "desktop", "--", "daemon"],
+    ["--", "devices", "--", "discover"],
+    ["--", "cloud", "--", "recovery-request"],
+  ]) {
+    await bootstrapCliGatewayTransport(args, broken);
+  }
+  expect(broken).not.toHaveBeenCalled();
+  for (const args of [
+    ["--", "status"],
+    ["--", "--", "devices", "--", "list"],
+    ["--", "doctor"],
+    ["--", "search", "--help"],
+    ["--", "--help"],
+    ["search", "--", "--help"],
+  ])
+    await expect(bootstrapCliGatewayTransport(args, broken)).rejects.toThrow("saved device pin");
+  expect(broken).toHaveBeenCalledTimes(6);
+});

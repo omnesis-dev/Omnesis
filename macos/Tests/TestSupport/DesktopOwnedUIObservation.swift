@@ -7,8 +7,21 @@ import Foundation
 
 /// Selected test observation only. No AppKit object or arbitrary control text enters the observer queue.
 final class DesktopOwnedUIObservation: @unchecked Sendable {
-    enum Case: String, Codable { case staleOffMac, currentOffMac, blockedDNS }
-    enum Operation: String, Codable { case save, consent, consentAction, writeReceipt, acknowledgement, blockedDNS }
+    enum Case: String, Codable { case staleOffMac, currentOffMac, blockedDNS, dataNodeCleanup }
+    enum Operation: String, Codable { case save, consent, consentAction, writeReceipt, acknowledgement, blockedDNS, dataNodeCleanup }
+    static func dataParentSelection(_ name: String) -> Case? {
+        switch name {
+        case "DataUsageLeaseTests.testActualPinnedOwnedNodeSamplerPublishesOnlyJoinedBoundedPrivateStack",
+             "DesktopCoreTests.DataUsageLeaseTests.testActualPinnedOwnedNodeSamplerPublishesOnlyJoinedBoundedPrivateStack",
+             "-[DesktopCoreTests.DataUsageLeaseTests testActualPinnedOwnedNodeSamplerPublishesOnlyJoinedBoundedPrivateStack]": .dataNodeCleanup
+        default: nil
+        }
+    }
+
+    static func requiresFixtureRetention(readersRetired: Bool, observerJoined: Bool) -> Bool {
+        !readersRetired || !observerJoined
+    }
+
     struct Trigger {
         let deadline: ContinuousClock.Instant
         init(_ selected: Case, began: ContinuousClock.Instant) {
@@ -27,6 +40,7 @@ final class DesktopOwnedUIObservation: @unchecked Sendable {
         case consentSheet, consentRoot, writeReceipt, acknowledgement, failureDiagnostics
         case observationQueued, observationFired, observationFinished
         case dnsFixture, fulfillment, snapshot, logicalClose, futureJoin, cancellation, explicitRelease, automaticRelease, physicalFinish
+        case dataSamplePublished, dataTeardown, dataProcessJoin, dataReaderRetirement
     }
 
     enum Return: String, Codable { case entered, returned, threw }
@@ -47,6 +61,8 @@ final class DesktopOwnedUIObservation: @unchecked Sendable {
 
     private static let budgetLock = NSLock()
     private static var sampledCases: Set<Case> = []
+    private let owner = getpid()
+    private let refusedToken = Token(id: UUID())
     private let selected: Case
     private let began = ContinuousClock.now
     private let lock = NSLock()
@@ -70,13 +86,15 @@ final class DesktopOwnedUIObservation: @unchecked Sendable {
     }
 
     func begin(_ operation: Operation) -> Token {
+        guard getpid() == owner else { return refusedToken }
         let token = Token(id: UUID())
-        let accepted = lock.withLock { () -> Bool in
-            guard !closing else { return false }
+        let admission = lock.withLock { () -> Bool? in
+            guard !closing else { return nil }
             timer?.cancel()
             active = Active(token: token, operation: operation, trigger: Trigger(selected, began: .now))
             return !spent
         }
+        guard let accepted = admission else { return refusedToken }
         record(.operation, .entered)
         if accepted {
             let work = DispatchWorkItem { [self] in fire(token) }
@@ -96,6 +114,7 @@ final class DesktopOwnedUIObservation: @unchecked Sendable {
     }
 
     func end(_ token: Token) {
+        guard getpid() == owner else { return }
         lock.withLock {
             guard active?.token == token else { return }
             timer?.cancel()
@@ -106,16 +125,19 @@ final class DesktopOwnedUIObservation: @unchecked Sendable {
     }
 
     func nextTreePass() {
+        guard getpid() == owner else { return }
         lock.withLock { pass = min(4096, pass + 1)
             ordinal = 0
         }
     }
 
     func node(_ index: Int) {
+        guard getpid() == owner else { return }
         lock.withLock { ordinal = max(0, min(4096, index)) }
     }
 
     func record(_ phase: Phase, _ result: Return) {
+        guard getpid() == owner else { return }
         lock.withLock { if !closing { append(phase, result) } }
         if selected == .blockedDNS {
             // Fixed scalar facts only. Closing stops journal mutation, but final fixture
@@ -135,6 +157,7 @@ final class DesktopOwnedUIObservation: @unchecked Sendable {
     }
 
     private func fire(_ token: Token) {
+        guard getpid() == owner else { return }
         let before = lock.withLock { () -> (Active, [Entry])? in
             guard !closing, !spent, let active, active.token == token, active.trigger.isDue(at: .now),
                   Self.budgetLock.withLock({ Self.sampledCases.insert(selected).inserted }) else { return nil }
@@ -195,7 +218,8 @@ final class DesktopOwnedUIObservation: @unchecked Sendable {
     }
 
     func close() async -> Bool {
-        await withCheckedContinuation { continuation in
+        guard getpid() == owner else { return false }
+        return await withCheckedContinuation { continuation in
             lock.lock()
             closing = true
             timer?.cancel()
@@ -280,6 +304,56 @@ final class DesktopOwnedUIObservation: @unchecked Sendable {
     }
 }
 
+/// Child-only descriptor isolation for the self sampler and its owned-pipe regression probe.
+enum DesktopDiagnosticSpawnAttributes {
+    enum Refusal: String { case initialize, setFlags, getFlags, flagsMismatch, destroy }
+    struct Outcome {
+        // A successful spawn remains owned even when subsequent attribute disposal fails.
+        let spawnStatus: Int32?
+        let refusal: Refusal?
+        let destructionConfirmed: Bool
+        // Admitted operations anchor their child lifecycle before attribute destruction.
+        let lifecycleAnchor: ContinuousClock.Instant
+    }
+
+    struct Calls {
+        var initialize: (UnsafeMutablePointer<posix_spawnattr_t?>) -> Int32 = { posix_spawnattr_init($0) }
+        var setFlags: (UnsafeMutablePointer<posix_spawnattr_t?>, Int16) -> Int32 = { posix_spawnattr_setflags($0, $1) }
+        var getFlags: (UnsafePointer<posix_spawnattr_t?>, UnsafeMutablePointer<Int16>) -> Int32 = { posix_spawnattr_getflags($0, $1) }
+        var destroy: (UnsafeMutablePointer<posix_spawnattr_t?>) -> Int32 = { posix_spawnattr_destroy($0) }
+    }
+
+    static let requiredFlags = Int16(POSIX_SPAWN_CLOEXEC_DEFAULT)
+
+    /// No process is launched unless the exact isolated flag is read back successfully.
+    static func withIsolation(
+        calls: Calls = Calls(),
+        spawn: (UnsafePointer<posix_spawnattr_t?>) -> Int32
+    )
+        -> Outcome {
+        var attributes: posix_spawnattr_t?
+        guard calls.initialize(&attributes) == 0 else {
+            return Outcome(spawnStatus: nil, refusal: .initialize, destructionConfirmed: true, lifecycleAnchor: .now)
+        }
+        var refusal: Refusal?
+        var spawnStatus: Int32?
+        var flags: Int16 = 0
+        var lifecycleAnchor = ContinuousClock.now
+        if calls.setFlags(&attributes, requiredFlags) != 0 { refusal = .setFlags }
+        else if calls.getFlags(&attributes, &flags) != 0 { refusal = .getFlags }
+        else if flags != requiredFlags { refusal = .flagsMismatch }
+        else {
+            spawnStatus = withUnsafePointer(to: &attributes) { spawn($0) }
+            lifecycleAnchor = .now
+        }
+        let destroyed = calls.destroy(&attributes) == 0
+        return Outcome(
+            spawnStatus: spawnStatus, refusal: refusal ?? (destroyed ? nil : .destroy),
+            destructionConfirmed: destroyed, lifecycleAnchor: lifecycleAnchor
+        )
+    }
+}
+
 /// A fixed self target and fresh POSIX child; never Foundation Process, enumeration or PID adoption.
 enum DesktopOwnedUISelfSampler {
     struct Target {
@@ -344,7 +418,7 @@ enum DesktopOwnedUISelfSampler {
         defaultHandler && !autoReaps
     }
 
-    private static func permitsSoleWaiter() -> Bool {
+    static func permitsSoleWaiter() -> Bool {
         var disposition = sigaction()
         guard sigaction(SIGCHLD, nil, &disposition) == 0 else { return false }
         // Darwin SIG_DFL is the null handler; custom handlers might reap our child.
@@ -572,15 +646,23 @@ enum DesktopOwnedUISelfSampler {
             guard argv.dropLast().allSatisfy({ $0 != nil }), environment.dropLast().allSatisfy({ $0 != nil }),
                   verifies(target) else { throw SampleFailure.refused }
             var pid: pid_t = 0
-            let spawned = argv.withUnsafeBufferPointer { args in environment.withUnsafeBufferPointer { env in
-                posix_spawn(&pid, command, &actions, nil, args.baseAddress!, env.baseAddress!)
-            } }
-            guard spawned == 0, pid > 1 else { return "result=spawn-refused" }
-            physical(false)
-            retainOwner(pid, nil, directory)
+            let isolation = DesktopDiagnosticSpawnAttributes.withIsolation { attributes in
+                argv.withUnsafeBufferPointer { args in environment.withUnsafeBufferPointer { env in
+                    let result = posix_spawn(&pid, command, &actions, attributes, args.baseAddress!, env.baseAddress!)
+                    if result == 0, pid > 1 {
+                        physical(false)
+                        retainOwner(pid, nil, directory)
+                    }
+                    return result
+                } }
+            }
+            guard let spawned = isolation.spawnStatus else {
+                return "result=spawn-attributes-\(isolation.refusal?.rawValue ?? "unknown")-refused"
+            }
+            guard spawned == 0, pid > 1 else { return "result=spawn-refused,attributesDestroyed=\(isolation.destructionConfirmed)" }
             // Optional image/birth metadata gates evidence; cleanup authority is the
             // fresh direct child plus the sole waitpid owner's unreaped relationship.
-            let began = ContinuousClock.now
+            let began = isolation.lifecycleAnchor
             let sampler = try? DesktopBackgroundProcessIdentity.read(pid)
             retainOwner(pid, sampler, directory)
             var acquisition = SamplerIdentityAcquisition(parent: getpid(), firstIdentity: sampler, firstImage: image(pid))
@@ -588,7 +670,9 @@ enum DesktopOwnedUISelfSampler {
             func diagnostic(_ result: String) -> String {
                 result + "; exitReconciled=\(exitReconciled); sampler[" + acquisition.summary(elapsed: began.duration(to: .now)) + "]"
             }
-            var reason: String?, status: Int32 = 0
+            // Disposal failure refuses evidence but never abandons an already-spawned child.
+            var reason: String? = isolation.refusal.map { "spawn-attributes-\($0.rawValue)-refused" }
+            var status: Int32 = 0
             // Retain only this spawned child's kernel binding if join cannot be confirmed.
             // A receipt is diagnostic evidence, never permission to adopt or signal a PID.
             let ownership = Data(
@@ -596,7 +680,7 @@ enum DesktopOwnedUISelfSampler {
                     .utf8
             )
             let written = ownership.withUnsafeBytes { Darwin.write(ownerFD, $0.baseAddress, $0.count) }
-            if written != ownership.count || fsync(ownerFD) != 0 { reason = "owner-refused" }
+            if written != ownership.count || fsync(ownerFD) != 0 { reason = reason ?? "owner-refused" }
             var lifecycle = SamplerLifecycle(), didJoin = false
             while !lifecycle.finished {
                 guard permitsSoleWaiter() else { return diagnostic("result=reaper-changed,joined=false,privateRetained=true") }

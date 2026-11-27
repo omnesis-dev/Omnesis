@@ -28,7 +28,16 @@ export function nativeCheckOptions(args, env = process.env) {
     flags[0] === "--filter" &&
     typeof flags[1] === "string" &&
     /^[A-Za-z_][A-Za-z0-9_.]*(?:\/[A-Za-z_][A-Za-z0-9_]*)?$/.test(flags[1]);
+  const filteredHosted =
+    lane === "test" &&
+    flags.length === 3 &&
+    flags[0] === "--hosted-only" &&
+    flags[1] === "--filter" &&
+    typeof flags[2] === "string" &&
+    !/[\r\n\0]/u.test(flags[2]) &&
+    /^[A-Za-z_][A-Za-z0-9_]{0,127}(?:\/test[A-Za-z0-9_]{0,124})?$/.test(flags[2]);
   const testFlags =
+    filteredHosted ||
     flags.length === 0 ||
     (flags.length === 1 && ["--build-only", "--hosted-only"].includes(flags[0])) ||
     (flags.length === 2 &&
@@ -40,7 +49,7 @@ export function nativeCheckOptions(args, env = process.env) {
     (lane === "logic" ? flags.length > 0 && !filteredLogic : !testFlags)
   ) {
     throw new Error(
-      "Usage: native-check.mjs logic [--filter SuiteName/testName] | test [--build-only [--package]|--hosted-only]",
+      "Usage: native-check.mjs logic [--filter SuiteName/testName] | test [--build-only [--package]|--hosted-only [--filter SuiteName[/testName]]]",
     );
   }
   const host = env.OMNESIS_EPIC_MACOS_HOST;
@@ -60,7 +69,7 @@ export function nativeCheckOptions(args, env = process.env) {
     buildOnly: flags.includes("--build-only"),
     hostedOnly: flags.includes("--hosted-only"),
     package: flags.includes("--package"),
-    filter: filteredLogic ? flags[1] : undefined,
+    filter: filteredLogic ? flags[1] : filteredHosted ? flags[2] : undefined,
     output: env.OMNESIS_MACOS_TEST_OUT,
   };
 }
@@ -98,6 +107,44 @@ for name in ('macos', 'ios', 'evidence', 'package-source', 'package-cache'):
         raise SystemExit('Desktop scratch subdirectories cannot be symbolic links')
     (p / name).mkdir(mode=0o700, exist_ok=True)
 PY
+`;
+
+// A successful Xcode command can select no tests. Qualify only the selected subset.
+const filteredHostedReceipt = String.raw`
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, writeFileSync } from 'node:fs';
+const [result, selector] = process.argv.slice(1);
+const directory = result + '.filtered-hosted';
+mkdirSync(directory, { mode: 0o700 });
+const receipt = { scope: 'filtered-hosted-subset', selector, qualified: false, reason: 'summary-tool-failed' };
+const tool = spawnSync('xcrun', ['xcresulttool', 'get', 'test-results', 'summary', '--path', result], {
+  stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 1024 * 1024, timeout: 30000,
+});
+if (tool.stdout?.length) writeFileSync(directory + '/summary.json', tool.stdout.subarray(0, 1024 * 1024), { mode: 0o600, flag: 'wx' });
+if (tool.stderr?.length) writeFileSync(directory + '/tool-stderr.txt', tool.stderr.subarray(0, 65536), { mode: 0o600, flag: 'wx' });
+if (!tool.error && tool.status === 0 && tool.stdout.length <= 1024 * 1024) {
+  receipt.reason = 'invalid-summary';
+  try {
+    const summary = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(tool.stdout));
+    const keys = ['totalTestCount', 'passedTests', 'failedTests', 'skippedTests'];
+    if (summary && typeof summary === 'object' && !Array.isArray(summary) && keys.every(key =>
+      Object.hasOwn(summary, key) && Number.isSafeInteger(summary[key]) && summary[key] >= 0 && summary[key] <= 1000000)) {
+      const [total, passed, failed, skipped] = keys.map(key => summary[key]);
+      receipt.counts = { total, passed, failed, skipped };
+      if (total === passed + failed + skipped) {
+        receipt.qualified = total > 0 && passed > 0 && failed === 0 && skipped < total;
+        receipt.reason = receipt.qualified ? 'selected-tests-passed' : 'selected-tests-not-passed';
+      }
+    }
+  } catch { /* Invalid external summary remains a failed qualification. */ }
+}
+writeFileSync(directory + '/receipt.json', JSON.stringify(receipt) + '\n', { mode: 0o600, flag: 'wx' });
+if (!receipt.qualified) {
+  process.stderr.write('Filtered hosted subset qualification failed: ' + receipt.reason + '\n');
+  process.exitCode = 1;
+} else {
+  process.stdout.write('Filtered hosted subset executed: ' + receipt.counts.passed + ' passed; ' + receipt.counts.skipped + ' skipped.\n');
+}
 `;
 
 const check = `set -eu
@@ -167,8 +214,14 @@ PYSCREEN
     desktop_xcodebuild build-for-testing
     .node-fixture/node Tests/Support/normalize-test-runner-signature.mjs --products "$PWD/build/Build/Products/Debug"
     if [ "$4" = yes ]; then
-      printf '%s\\n' 'Scope: hosted application integration; external UI runner is a separate check'
-      desktop_xcodebuild -resultBundlePath "$result" -only-testing:OmnesisDesktopTests test-without-building
+      if [ -n "\${6-}" ]; then
+        printf 'Scope: FILTERED hosted application subset OmnesisDesktopTests/%s; NOT the complete hosted/Core/external-UI gate\\n' "$6"
+        desktop_xcodebuild -resultBundlePath "$result" "-only-testing:OmnesisDesktopTests/$6" test-without-building
+        .node-fixture/node --input-type=module --eval ${shellArgument(filteredHostedReceipt)} -- "$result" "$6"
+      else
+        printf '%s\\n' 'Scope: hosted application integration; external UI runner is a separate check'
+        desktop_xcodebuild -resultBundlePath "$result" -only-testing:OmnesisDesktopTests test-without-building
+      fi
     else
       desktop_xcodebuild -resultBundlePath "$result" test-without-building
     fi
@@ -282,7 +335,9 @@ export function runNativeCheck(options, run = spawnSync, sourceRoot = root) {
       options.buildOnly ? "yes" : "no",
       options.hostedOnly ? "yes" : "no",
       options.package ? "yes" : "no",
-      ...(options.lane === "logic" && options.filter ? [options.filter] : []),
+      ...(options.filter && (options.lane === "logic" || options.hostedOnly)
+        ? [options.filter]
+        : []),
     ]);
     if (options.package) {
       remote(

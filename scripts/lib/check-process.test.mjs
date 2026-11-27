@@ -9,7 +9,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createConnection } from "node:net";
 import { afterEach, expect, test, vi } from "vitest";
-import { runCheckCommand } from "./check-process.mjs";
+import { runCheckCommand, waitForChild } from "./check-process.mjs";
 import * as bootstrap from "./bootstrap-platform.mjs";
 import { ownedProcessCleanupReceipt } from "../../packages/platform/src/owned-process-cleanup.ts";
 
@@ -341,3 +341,71 @@ test("finite root exit joins a persistent owned TCP descendant before returning 
   });
   expect(accepts).toBe(false);
 }, 100000);
+
+test("physical join notification follows tree-empty proof, not root close", async () => {
+  const child = new EventEmitter(),
+    signals = new EventEmitter(),
+    onJoined = vi.fn();
+  const groupIsAlive = vi.fn(() => false);
+  const joined = waitForChild(child, { signalEmitter: signals, groupIsAlive, onJoined });
+  child.emit("close", 0, null);
+  expect(onJoined).not.toHaveBeenCalled();
+  child.emit("exit", 7, null);
+  expect(await joined).toBe(7);
+  expect(groupIsAlive).toHaveBeenCalled();
+  expect(onJoined).toHaveBeenCalledTimes(1);
+});
+
+test("semantic cancellation reports physical join before rejecting", async () => {
+  const child = new EventEmitter(),
+    signals = new EventEmitter(),
+    onJoined = vi.fn();
+  const signalFn = vi.fn(() => Promise.resolve());
+  const joined = waitForChild(child, {
+    signalEmitter: signals,
+    groupIsAlive: () => false,
+    signalFn,
+    onJoined,
+  });
+  const outcome = joined.catch((error) => error);
+  signals.emit("SIGTERM");
+  child.emit("exit", null, "SIGTERM");
+  expect(await outcome).toBeInstanceOf(Error);
+  expect(signalFn).toHaveBeenCalledTimes(1);
+  expect(onJoined).toHaveBeenCalledTimes(1);
+});
+
+test("failed descendant observation never reports physical join despite root exit", async () => {
+  const child = new EventEmitter(),
+    onJoined = vi.fn(),
+    failure = Error("invented observation failure");
+  const joined = waitForChild(child, {
+    signalEmitter: new EventEmitter(),
+    groupIsAlive: () => {
+      throw failure;
+    },
+    onJoined,
+  });
+  const outcome = joined.catch((error) => error);
+  child.emit("exit", 0, null);
+  child.emit("close", 0, null);
+  expect(await outcome).toBe(failure);
+  expect(onJoined).not.toHaveBeenCalled();
+});
+
+test("join callback failure cannot turn physical completion into operation success", async () => {
+  const child = new EventEmitter(),
+    failure = Error("invented receipt failure"),
+    onJoined = vi.fn(() => {
+      throw failure;
+    });
+  const joined = waitForChild(child, {
+    signalEmitter: new EventEmitter(),
+    groupIsAlive: () => false,
+    onJoined,
+  });
+  const outcome = joined.catch((error) => error);
+  child.emit("exit", 0, null);
+  expect(await outcome).toBe(failure);
+  expect(onJoined).toHaveBeenCalledTimes(1);
+});

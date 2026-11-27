@@ -38,6 +38,92 @@ final class DesktopSourceSetupTests: XCTestCase {
         )
     }
 
+    func testFailedRegistrationRetryShowsActualProgressThenSuccessWithoutWaitingForSignInAgain() async throws {
+        let gate = SourceSetupMetadataGate()
+        defer { gate.release() }
+        let replies = SourceSetupResponseState()
+        let fixture = try fixture { request in
+            switch request.url?.path {
+            case "/admin/sources", "/admin/source-descriptors": return #"{"items":[]}"#
+            case "/agent/conversations":
+                XCTAssertEqual(request.httpMethod, "GET")
+                return #"{"conversations":[],"nextCursor":null}"#
+            case "/admin/sources/add":
+                if replies.get("attempt") != "retry" {
+                    replies.set("attempt", "retry")
+                    throw URLError(.cannotConnectToHost)
+                }
+                try gate.waitForRelease()
+                return "{}"
+            default: XCTFail("Registration retry must reuse the chosen account, without restarting sign-in")
+                return "{}"
+            }
+        }
+        defer { fixture.close() }
+        let flow = try DesktopSourceFlow(descriptor: basicDescriptor(), api: fixture.api)
+        flow.accounts = ["fictional-account"]
+        flow.selectedAccounts = ["fictional-account"]
+        flow.auth = try decode(AuthSnapshot.self, #"{"state":"completed"}"#)
+        await flow.add()
+        XCTAssertNotNil(flow.error)
+        let store = DesktopStore.preview()
+        store.api = fixture.api
+        let retiringContext = try XCTUnwrap(store.apiContext)
+        let host = NSHostingView(rootView: SourceSetupView(flow: flow).environment(store).omnesisTheme())
+        host.frame = NSRect(x: 0, y: 0, width: 680, height: 600)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        @MainActor func contains(_ identifier: String) throws -> Bool {
+            try DesktopAccessibilityDriver.elements(in: host).contains { $0.accessibilityIdentifier() == identifier }
+        }
+        @MainActor func wait(_ condition: () throws -> Bool) async throws {
+            let deadline = ContinuousClock.now + .seconds(3)
+            while ContinuousClock.now < deadline {
+                if try condition(), ContinuousClock.now < deadline { return }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            throw DesktopAPIError.message("The mounted source setup did not reach its expected state.")
+        }
+        var failure: Error?
+        do {
+            try await DesktopAccessibilityDriver.materializeOwnedApplication()
+            try await wait { try contains("source-auth-attention") }
+            let heading = try DesktopAccessibilityDriver.element("source-auth-attention", in: host)
+            XCTAssertTrue(heading.accessibilityLabel() == "Connection needs attention" || heading
+                .accessibilityTextValue() == "Connection needs attention")
+            XCTAssertTrue(try contains("source-setup-error"))
+            XCTAssertFalse(try contains("source-auth-waiting"))
+            XCTAssertFalse(try contains("source-setup-progress"))
+            let retry = try DesktopAccessibilityDriver.element("source-recovery-registration", in: host)
+            XCTAssertTrue(retry.isAccessibilityEnabled())
+            XCTAssertTrue(retry.accessibilityPerformPress())
+            try await wait { gate.entered && flow.busy }
+            try await wait { try contains("source-setup-progress") && contains("source-auth-complete") }
+            XCTAssertNil(flow.error)
+            XCTAssertEqual(flow.auth?.state, "completed")
+            XCTAssertFalse(try contains("source-auth-attention"))
+            XCTAssertFalse(try contains("source-auth-waiting"), "Registration is running; sign-in is already complete")
+            gate.release()
+            try await wait { flow.complete && !flow.busy && store.sourcesLoaded }
+            XCTAssertTrue(try contains("source-setup-added"))
+            XCTAssertFalse(try contains("source-setup-error"))
+            XCTAssertFalse(try contains("source-auth-waiting"))
+            XCTAssertFalse(try contains("source-setup-progress"))
+            XCTAssertEqual(fixture.script.operationRequests.filter { $0.url?.path == "/admin/sources/add" }.count, 2)
+            XCTAssertFalse(fixture.script.operationRequests.contains { $0.url?.path.hasPrefix("/admin/auth-flows") == true })
+        } catch { failure = error }
+        gate.release()
+        window.contentView = nil
+        window.close()
+        await flow.cancel()
+        store.api = nil
+        // Source completion refreshes real history too; join that retired request scope.
+        await retiringContext.drain()
+        if let failure { throw failure }
+    }
+
     func testChoosingAnotherAccountCancelsRefusedFlowAndCollectsFreshAccountCredentials() async throws {
         let fixture = try fixture { request in
             switch request.url?.path {
@@ -403,6 +489,10 @@ final class DesktopSourceSetupTests: XCTestCase {
                 let elements = try DesktopAccessibilityDriver.elements(in: root)
                 let explanation = try DesktopAccessibilityDriver.element("source-setup-error", in: root)
                 XCTAssertTrue(explanation.accessibilityLabel() == reason || explanation.accessibilityTextValue() == reason)
+                let heading = try DesktopAccessibilityDriver.element("source-auth-attention", in: root)
+                let attention = code == "completed" ? "Connection needs attention" : "Sign-in needs attention"
+                XCTAssertTrue(heading.accessibilityLabel() == attention || heading.accessibilityTextValue() == attention)
+                XCTAssertFalse(elements.contains { $0.accessibilityIdentifier() == "source-auth-waiting" })
                 let window = try XCTUnwrap(root.window)
                 @MainActor func visibleFrame(_ element: DesktopAccessibilityDriver.Element) -> NSRect {
                     let frame = element.accessibilityFrame()
@@ -432,6 +522,45 @@ final class DesktopSourceSetupTests: XCTestCase {
             }
         }
         XCTAssertTrue(fixture.script.operationRequests.isEmpty, "Presentation cannot start, retry or cancel a server operation")
+    }
+
+    func testRenderedInputFailureKeepsThePendingChallengeActionableWithoutClaimingActiveWaiting() async throws {
+        let fixture = try fixture { _ in XCTFail("Rendering sign-in state must not submit an answer")
+            return "{}"
+        }
+        defer { fixture.close() }
+        let challenge = try DesktopSourceFlow(descriptor: basicDescriptor(), api: fixture.api)
+        challenge.auth = try decode(
+            AuthSnapshot.self,
+            #"{"state":"awaiting-user","pendingChallenge":{"id":"fictional-code","expectsAnswer":true,"challenge":{"kind":"code","title":"Confirm this connection"}}}"#
+        )
+        challenge.answer = ["code": "invented-code"]
+        challenge.error = "Enter the confirmation code, then continue."
+        try await renderSource(challenge, name: "source-auth-input-needs-attention") { root in
+            let elements = try DesktopAccessibilityDriver.elements(in: root)
+            XCTAssertTrue(elements.contains { $0.accessibilityIdentifier() == "source-auth-attention" })
+            XCTAssertEqual(challenge.answer["code"], "invented-code")
+            XCTAssertFalse(elements.contains { $0.accessibilityIdentifier() == "source-auth-waiting" })
+            XCTAssertTrue(elements.contains { $0.accessibilityLabel() == "Confirmation code" && $0.accessibilityRole() == .textField })
+            let answer = try XCTUnwrap(elements.first { $0.accessibilityIdentifier() == "source-auth-answer" })
+            XCTAssertEqual(answer.accessibilityRole(), .textField)
+            XCTAssertEqual(answer.accessibilityLabel(), "Confirmation code")
+            XCTAssertTrue(answer.isAccessibilityEnabled())
+            XCTAssertTrue(elements
+                .contains { $0.accessibilityLabel() == "Continue" && $0.accessibilityRole() == .button && $0.isAccessibilityEnabled() })
+            XCTAssertTrue(elements.contains { $0.accessibilityIdentifier() == "source-cancel-sign-in" })
+        }
+        let waiting = try DesktopSourceFlow(descriptor: basicDescriptor(), api: fixture.api)
+        waiting.auth = try decode(
+            AuthSnapshot.self,
+            #"{"state":"awaiting-callback","message":"Finish sign-in in the app you are connecting."}"#
+        )
+        try await renderSource(waiting, name: "source-auth-awaiting-confirmation") { root in
+            let elements = try DesktopAccessibilityDriver.elements(in: root)
+            XCTAssertTrue(elements.contains { $0.accessibilityIdentifier() == "source-auth-waiting" })
+            XCTAssertFalse(elements.contains { $0.accessibilityIdentifier() == "source-auth-attention" })
+        }
+        XCTAssertTrue(fixture.script.operationRequests.isEmpty)
     }
 
     private func renderSource(

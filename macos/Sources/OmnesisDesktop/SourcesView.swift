@@ -279,7 +279,11 @@ struct SourceSetupView: View {
                     }
                     Button("Check source settings") { Task { await flow.prepareSelectedDevice() } }.buttonStyle(DesktopButtonStyle())
                 } else if flow.complete {
-                    Label("Added", systemImage: "checkmark.circle.fill").font(.title2).foregroundStyle(.green)
+                    Label {
+                        Text("Added").accessibilityIdentifier("source-setup-added")
+                    } icon: {
+                        Image(systemName: "checkmark.circle.fill")
+                    }.font(.title2).foregroundStyle(.green)
                     Text("The source is added to your library. It will sync when the source and its device are available.")
                     if flow
                         .keptPausedAfterMove {
@@ -381,7 +385,7 @@ struct SourceSetupView: View {
                         .buttonStyle(DesktopButtonStyle(primary: true)).accessibilityIdentifier("source-review-updated-settings")
                 }
                 if flow.auth != nil, flow.error != nil || flow.auth?.state == "error" { cancelSignIn }
-                if flow.busy { ProgressView("Connecting…") }
+                if flow.busy { ProgressView("Connecting…").accessibilityIdentifier("source-setup-progress") }
                 Button("Open advanced setup") { store.openPortal() }.font(.callout)
                     .accessibilityIdentifier("source-advanced-setup")
             }.padding(28).frame(maxWidth: .infinity, alignment: .leading)
@@ -410,59 +414,70 @@ struct SourceSetupView: View {
     }
 
     @ViewBuilder private func authView(_ auth: AuthSnapshot) -> some View {
-        if auth.state == "error" {
-            Text("Sign-in needs attention").font(.headline)
-        } else if let widget = auth.widget {
-            SourceWidgetView(flow: flow, widget: widget)
-        } else if let challenge = auth.pendingChallenge?.challenge, challenge.kind == "widget",
-                  let renderer = challenge.renderer, let payload = challenge.payload {
-            SourceWidgetView(flow: flow, widget: AuthSnapshot.Widget(kind: renderer, payload: payload))
-        } else if let pending = auth.pendingChallenge {
-            let challenge = pending.challenge
-            Text(challenge.title).font(.headline)
-            if let instructions = challenge.instructions { Text(.init(instructions)) }
-            if challenge.via == "loopback", flow.deviceId != flow.api.connection.collectorDeviceId {
-                Label(
-                    "This sign-in finishes on the device hosting this source. You can complete it there, or paste the completed link below.",
-                    systemImage: "desktopcomputer"
-                )
-                .font(.callout).foregroundStyle(DesktopTheme.secondary)
-            }
-            if let url = challenge
-                .url { Button("Continue in your browser") { store.openBrowser(url) }.buttonStyle(DesktopButtonStyle(primary: true)) }
-            if let data = challenge.data { QRCodeView(payload: data) }
-            if let schema = challenge.schema {
-                ForEach(schema.keys.sorted(), id: \.self) { name in
-                    if let field = schema[name] {
-                        SourceChallengeField(field: field, value: binding(flow.answer, key: name) { flow.answer = $0 })
+        SourceSetupAuthHeading(state: auth.state, hasFailure: flow.error != nil)
+        if auth.state != "error", auth.state != "completed" {
+            if let widget = auth.widget {
+                SourceWidgetView(flow: flow, widget: widget)
+            } else if let challenge = auth.pendingChallenge?.challenge, challenge.kind == "widget",
+                      let renderer = challenge.renderer, let payload = challenge.payload {
+                SourceWidgetView(flow: flow, widget: AuthSnapshot.Widget(kind: renderer, payload: payload))
+            } else if let pending = auth.pendingChallenge {
+                let challenge = pending.challenge
+                Text(challenge.title).font(.headline)
+                if let instructions = challenge.instructions { Text(.init(instructions)) }
+                if challenge.via == "loopback", flow.deviceId != flow.api.connection.collectorDeviceId {
+                    Label(
+                        "This sign-in finishes on the device hosting this source. You can complete it there, or paste the completed link below.",
+                        systemImage: "desktopcomputer"
+                    )
+                    .font(.callout).foregroundStyle(DesktopTheme.secondary)
+                }
+                if let url = challenge
+                    .url { Button("Continue in your browser") { store.openBrowser(url) }.buttonStyle(DesktopButtonStyle(primary: true)) }
+                if let data = challenge.data { QRCodeView(payload: data) }
+                if let schema = challenge.schema {
+                    ForEach(schema.keys.sorted(), id: \.self) { name in
+                        if let field = schema[name] {
+                            SourceChallengeField(field: field, value: binding(flow.answer, key: name) { flow.answer = $0 })
+                        }
                     }
                 }
-            }
-            ForEach(challenge.fields ?? []) { param in
-                SourceParameterField(
-                    param: param,
-                    value: binding(flow.answer, key: param.name) { flow.answer = $0 },
-                    allowsFilePicker: false
-                )
-            }
-            if pending.expectsAnswer, ["redirect", "code", "fields"].contains(challenge.kind) {
-                if challenge.kind == "code" || challenge.kind == "redirect" {
-                    SecureField(
-                        challenge.kind == "code" ? "Confirmation code" : "Completed sign-in link",
-                        text: binding(flow.answer, key: challenge.kind == "code" ? "code" : "url") { flow.answer = $0 }
+                ForEach(challenge.fields ?? []) { param in
+                    SourceParameterField(
+                        param: param,
+                        value: binding(flow.answer, key: param.name) { flow.answer = $0 },
+                        allowsFilePicker: false
                     )
                 }
-                Button("Continue") { Task { await flow.submitAnswer() } }.buttonStyle(DesktopButtonStyle(primary: true))
-            } else if challenge.kind != "widget" { ProgressView("Waiting for confirmation…") }
-        } else {
-            if let url = auth.authUrl { Button("Continue in your browser") { store.openBrowser(url) } }
-            if let data = auth.qrData { QRCodeView(payload: data) }
-            if flow.descriptor.acceptsAuthCode == true {
-                SecureField("Completed sign-in link or confirmation code", text: binding(flow.answer, key: "code") { flow.answer = $0 })
-                Button("Continue") { Task { await flow.submitLegacyCode() } }
+                if pending.expectsAnswer, ["redirect", "code", "fields"].contains(challenge.kind) {
+                    if challenge.kind == "code" || challenge.kind == "redirect" {
+                        let answerLabel = challenge.kind == "code" ? "Confirmation code" : "Completed sign-in link"
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(answerLabel).font(.callout)
+                            SecureField(
+                                answerLabel,
+                                text: binding(flow.answer, key: challenge.kind == "code" ? "code" : "url") { flow.answer = $0 }
+                            )
+                            .accessibilityLabel(answerLabel)
+                            .accessibilityIdentifier("source-auth-answer")
+                        }
+                    }
+                    Button("Continue") { Task { await flow.submitAnswer() } }.buttonStyle(DesktopButtonStyle(primary: true))
+                } else if challenge.kind != "widget", flow.error == nil {
+                    ProgressView("Waiting for confirmation…").accessibilityIdentifier("source-auth-waiting")
+                }
+            } else {
+                if let url = auth.authUrl { Button("Continue in your browser") { store.openBrowser(url) } }
+                if let data = auth.qrData { QRCodeView(payload: data) }
+                if flow.descriptor.acceptsAuthCode == true {
+                    SecureField("Completed sign-in link or confirmation code", text: binding(flow.answer, key: "code") { flow.answer = $0 })
+                    Button("Continue") { Task { await flow.submitLegacyCode() } }
+                }
+                if flow.error == nil {
+                    if let message = auth.message { Text(message).foregroundStyle(DesktopTheme.secondary) }
+                    ProgressView("Waiting for confirmation…").accessibilityIdentifier("source-auth-waiting")
+                }
             }
-            if let message = auth.message { Text(message).foregroundStyle(DesktopTheme.secondary) }
-            ProgressView("Waiting for confirmation…")
         }
         if auth.state != "error", flow.error == nil { cancelSignIn }
     }
@@ -479,6 +494,31 @@ struct SourceSetupView: View {
             update(next)
         })
     }
+}
+
+private struct SourceSetupAuthHeading: View {
+    let state: String
+    let hasFailure: Bool
+    var body: some View {
+        if hasFailure || state == "error" {
+            Text(state == "completed" ? "Connection needs attention" : "Sign-in needs attention")
+                .font(.headline).accessibilityIdentifier("source-auth-attention")
+        } else if state == "completed" {
+            Text("Sign-in complete").font(.headline).accessibilityIdentifier("source-auth-complete")
+        }
+    }
+}
+
+#Preview("Source registration needs attention") {
+    SourceSetupAuthHeading(state: "completed", hasFailure: true).padding(28).omnesisTheme()
+}
+
+#Preview("Source sign-in needs attention") {
+    SourceSetupAuthHeading(state: "awaiting-user", hasFailure: true).padding(28).omnesisTheme()
+}
+
+#Preview("Source sign-in complete") {
+    SourceSetupAuthHeading(state: "completed", hasFailure: false).padding(28).omnesisTheme()
 }
 
 struct SourceParameterField: View {

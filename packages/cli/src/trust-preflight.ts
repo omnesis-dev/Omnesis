@@ -84,11 +84,16 @@ export async function bootstrapCliGatewayTransport(
   rawArgs: readonly string[],
   start: () => Promise<void>,
 ): Promise<void> {
+  // Select commands as main does, but keep help options bounded by the raw terminator.
+  const commandArgs = rawArgs.filter((argument) => argument !== "--");
+  const helpOptions = ["--help", "-h", "--version", "-V"];
   const terminator = rawArgs.indexOf("--");
   const options = rawArgs.slice(0, terminator < 0 ? undefined : terminator);
   if (
-    options.some((value) => ["--help", "-h", "--version", "-V"].includes(value)) ||
-    (rawArgs[0] !== "doctor" && isDefaultGatewayTrustExempt(rawArgs))
+    options.some((value) => helpOptions.includes(value)) ||
+    (commandArgs[0] !== "doctor" &&
+      !helpOptions.includes(commandArgs[0] ?? "") &&
+      isDefaultGatewayTrustExempt(commandArgs))
   )
     return;
   await start();

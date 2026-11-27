@@ -84,13 +84,17 @@ const tickets = () => readdirSync(launcher.E2E_HOST_LOCK_DIR);
 
 describe("E2E lifecycle status artifact", () => {
   test.each([
-    [0, 0],
-    [7, 0],
-    [0, 9],
-    [7, 9],
+    [0, 0, 0],
+    [7, 0, 0],
+    [0, 9, 0],
+    [7, 9, 0],
+    [0, 0, 11],
+    [7, 0, 11],
+    [0, 9, 11],
+    [7, 9, 11],
   ])(
-    "persists three phases and first failure (initial=%i, account=%i), then releases its ticket",
-    async (firstExit, accountExit) => {
+    "persists four phases and first failure (initial=%i, account=%i, released=%i), then releases its ticket",
+    async (firstExit, accountExit, releasedExit) => {
       const result = start();
       await spawned(1);
       expect(readStatus()).toMatchObject({
@@ -114,7 +118,15 @@ describe("E2E lifecycle status artifact", () => {
       expect(tickets()).toEqual([`${process.pid}.json`]);
       expect(children[2].listenerCount("exit")).toBe(1);
       children[2].emit("exit", accountExit, null);
-      const expectedExit = firstExit || accountExit;
+      await spawned(4);
+      expect(readStatus()).toMatchObject({
+        state: "running",
+        phase: "isolated released collector compatibility",
+      });
+      expect(tickets()).toEqual([`${process.pid}.json`]);
+      expect(children[3].listenerCount("exit")).toBe(1);
+      children[3].emit("exit", releasedExit, null);
+      const expectedExit = firstExit || accountExit || releasedExit;
       await expect(result).resolves.toBe(expectedExit);
       expect(readStatus()).toMatchObject({
         state: expectedExit === 0 ? "passed" : "failed",
@@ -127,7 +139,7 @@ describe("E2E lifecycle status artifact", () => {
     },
   );
 
-  test("an unwritable heartbeat warns once and keeps supervising until all three children exit", async () => {
+  test("an unwritable heartbeat warns once and keeps supervising until all four children exit", async () => {
     const result = start();
     let settled = false;
     result.finally(() => {
@@ -160,6 +172,15 @@ describe("E2E lifecycle status artifact", () => {
     });
     expect(tickets()).toEqual([`${process.pid}.json`]);
     children[2].emit("exit", 0, null);
+    await spawned(4);
+    expect(settled).toBe(false);
+    expect(readStatus()).toMatchObject({
+      state: "running",
+      phase: "isolated released collector compatibility",
+    });
+    expect(tickets()).toEqual([`${process.pid}.json`]);
+    expect(children[3].listenerCount("exit")).toBe(1);
+    children[3].emit("exit", 0, null);
     await expect(result).resolves.toBe(0);
     expect(readStatus().state).toBe("passed");
     expect(tickets()).toEqual([]);

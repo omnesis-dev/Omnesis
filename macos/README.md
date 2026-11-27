@@ -112,6 +112,14 @@ tests perform no downloads and never substitute a globally installed Node or Cod
 For a focused bridge run, pass `--filter SuiteName/testName` to
 `scripts/macos-logic.sh`. This narrows execution; it does not replace the complete
 Core lane.
+For one hosted class or case, use `scripts/macos-test.sh --hosted-only --filter DesktopSourceSetupTests`
+or append `/testName` to the class name. The target stays
+`OmnesisDesktopTests`; filtered success covers only that subset, not the full
+hosted, Core or external UI gate. A filtered run also requires a valid xcresult
+summary with at least one passing test and no failures; an empty or entirely
+skipped selection fails. Its bounded summary and subset receipt stay in the
+private evidence directory. Hosted tests open windows on the test Mac:
+notify anyone using it before admitting a run, including a filtered run.
 Hosted GUI integration tests mount the production SwiftUI root and press its own
 accessibility controls against a scripted loopback HTTP/SSE service. This exercises
 sending, streaming, completion and cancellation without model inference; it is

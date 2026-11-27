@@ -44,6 +44,15 @@ public final class PrivateSaveFile: @unchecked Sendable {
         defer { lock.unlock() }
         guard !closed else { throw CocoaError(.fileWriteUnknown) }
         try handle.synchronize()
+        // Check while our descriptor still pins the inode; a replacement is never this save.
+        var destination = stat()
+        guard lstat(url.path, &destination) == 0,
+              destination.st_mode & S_IFMT == S_IFREG,
+              destination.st_dev == identity.st_dev, destination.st_ino == identity.st_ino else {
+            throw CocoaError(.fileWriteUnknown, userInfo: [
+                NSLocalizedDescriptionKey: "The save location changed before saving finished. Choose a location and try again.",
+            ])
+        }
         try handle.close()
         closed = true
         finished = true

@@ -9,6 +9,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -82,6 +83,246 @@ test("logic filters accept a single named suite or case and reject flags or shel
     expect(() => nativeCheckOptions(["logic", ...flags], env)).toThrow(/Usage/);
   }
   expect(() => nativeCheckOptions(["test", "--filter", "Suite"], env)).toThrow(/Usage/);
+});
+
+test("hosted filters accept one bounded class or test method only with hosted-only scope", () => {
+  const env = {
+    OMNESIS_EPIC_MACOS_HOST: "fixture",
+    OMNESIS_EPIC_MACOS_DESKTOP_WORKTREE: "/tmp/owned-fixture",
+  };
+  for (const filter of [
+    "DesktopSourceSetupTests",
+    "DesktopSourceSetupTests/testFailedRegistrationRetainsAnAccountRecoveryActionAfterSignInCompleted",
+    "A".repeat(128) + "/test" + "x".repeat(124),
+  ]) {
+    expect(nativeCheckOptions(["test", "--hosted-only", "--filter", filter], env)).toMatchObject({
+      lane: "test",
+      hostedOnly: true,
+      filter,
+      buildOnly: false,
+      package: false,
+    });
+  }
+  for (const filter of [
+    "",
+    "/testCase",
+    "Suite/",
+    "Suite/otherMethod",
+    "Suite/testCase()",
+    "Module.Suite",
+    "OmnesisDesktopUITests/Suite/testCase",
+    "Suite//testCase",
+    "Suite/../Other",
+    "Suite;touch marker",
+    "$(command)",
+    "Suite\n",
+    "Suite\0",
+    "A".repeat(129),
+    "Suite/test" + "x".repeat(125),
+  ]) {
+    expect(() => nativeCheckOptions(["test", "--hosted-only", "--filter", filter], env)).toThrow(
+      /Usage/,
+    );
+  }
+  for (const flags of [
+    ["--filter", "Suite"],
+    ["--hosted-only", "--filter"],
+    ["--filter", "Suite", "--hosted-only"],
+    ["--hosted-only", "--filter", "Suite", "--filter", "Other"],
+    ["--build-only", "--hosted-only", "--filter", "Suite"],
+    ["--hosted-only", "--filter", "Suite", "--package"],
+  ])
+    expect(() => nativeCheckOptions(["test", ...flags], env)).toThrow(/Usage/);
+});
+
+function hostedShellFixture({ hostedOnly = true, filter, summary, summaryStatus = 0 }) {
+  const { root, options } = fixture();
+  const calls = [],
+    mock = runner(calls);
+  const capture = join(root, "xcode-arguments"),
+    tools = join(root, "tools");
+  const xcrunCapture = join(root, "xcrun-arguments"),
+    summaryPath = join(root, "summary.json");
+  mkdirSync(tools, { mode: 0o700 });
+  writeFileSync(
+    summaryPath,
+    summary ??
+      JSON.stringify({ totalTestCount: 2, passedTests: 1, failedTests: 0, skippedTests: 1 }),
+    { mode: 0o600 },
+  );
+  writeFileSync(
+    join(tools, "xcrun"),
+    `#!/bin/sh
+printf '%s\\0' "$@" > "$FIXTURE_XCRUN_CAPTURE"
+cat "$FIXTURE_SUMMARY"
+exit "$FIXTURE_SUMMARY_STATUS"
+`,
+    { mode: 0o700 },
+  );
+  let execution;
+  const run = (command, args, config) => {
+    if (command === "ssh" && config.input?.includes('if [ "$2" = logic ]')) {
+      calls.push({ command, args, options: config });
+      execution = spawnSync("bash", ["-c", args[1]], {
+        input:
+          `xcodegen() { return 0; }
+xcodebuild() { printf '%s\\0' "$@" >> "$FIXTURE_CAPTURE"; printf '\\0' >> "$FIXTURE_CAPTURE"; }
+python3() { cat >/dev/null; }
+` + config.input,
+        encoding: "utf8",
+        timeout: 10000,
+        env: {
+          ...process.env,
+          FIXTURE_CAPTURE: capture,
+          FIXTURE_TOOLS: tools,
+          FIXTURE_XCRUN_CAPTURE: xcrunCapture,
+          FIXTURE_SUMMARY: summaryPath,
+          FIXTURE_SUMMARY_STATUS: String(summaryStatus),
+        },
+      });
+      return execution;
+    }
+    const result = mock(command, args, config);
+    if (command === "ssh" && config.input?.includes("marker =")) {
+      mkdirSync(join(options.worktree, "macos/.node-fixture"), { recursive: true, mode: 0o700 });
+      writeFileSync(
+        join(options.worktree, "macos/.node-fixture/node"),
+        `#!/bin/sh
+if [ "$1" = --input-type=module ]; then
+  export PATH="$FIXTURE_TOOLS:/usr/bin:/bin"
+  exec ${shellArgument(process.execPath)} "$@"
+fi
+[ "$1" = Tests/Support/normalize-test-runner-signature.mjs ] || exit 99
+`,
+        { mode: 0o700 },
+      );
+    }
+    return result;
+  };
+  return {
+    calls,
+    capture,
+    xcrunCapture,
+    execute: () => runNativeCheck({ ...options, lane: "test", hostedOnly, filter }, run),
+    execution: () => execution,
+    receipt: () => {
+      const args = readFileSync(xcrunCapture, "utf8").split("\0").slice(0, -1);
+      expect(args.slice(0, -1)).toEqual([
+        "xcresulttool",
+        "get",
+        "test-results",
+        "summary",
+        "--path",
+      ]);
+      const directory = join(options.worktree, "macos", args.at(-1) + ".filtered-hosted");
+      expect(statSync(directory).mode & 0o777).toBe(0o700);
+      for (const file of ["summary.json", "receipt.json"])
+        expect(statSync(join(directory, file)).mode & 0o777).toBe(0o600);
+      return JSON.parse(readFileSync(join(directory, "receipt.json"), "utf8"));
+    },
+  };
+}
+
+posixTest.each([
+  { hostedOnly: true, filter: "DesktopSourceSetupTests" },
+  {
+    hostedOnly: true,
+    filter:
+      "DesktopSourceSetupTests/testFailedRegistrationRetainsAnAccountRecoveryActionAfterSignInCompleted",
+  },
+  { hostedOnly: true, filter: undefined },
+  { hostedOnly: false, filter: undefined },
+])(
+  "actual hosted shell preserves the fixed target and subset scope (%j)",
+  ({ hostedOnly, filter }) => {
+    const fixture = hostedShellFixture({ hostedOnly, filter });
+    fixture.execute();
+    const invocations = readFileSync(fixture.capture, "utf8")
+      .split("\0\0")
+      .filter(Boolean)
+      .map((value) => value.split("\0"));
+    expect(invocations).toHaveLength(2);
+    expect(invocations[0].at(-1)).toBe("build-for-testing");
+    expect(invocations[1].at(-1)).toBe("test-without-building");
+    expect(invocations[0].filter((arg) => arg.startsWith("-only-testing:"))).toEqual([]);
+    expect(invocations[1].filter((arg) => arg.startsWith("-only-testing:"))).toEqual(
+      hostedOnly ? [`-only-testing:OmnesisDesktopTests${filter ? "/" + filter : ""}`] : [],
+    );
+    if (filter) {
+      expect(
+        fixture.calls
+          .find(
+            (call) => call.command === "ssh" && call.options.input?.includes('if [ "$2" = logic ]'),
+          )
+          .args[1].endsWith(shellArgument(filter)),
+      ).toBe(true);
+      expect(fixture.execution().stdout).toContain(
+        `FILTERED hosted application subset OmnesisDesktopTests/${filter}`,
+      );
+      expect(fixture.execution().stdout).toContain("NOT the complete hosted/Core/external-UI gate");
+      expect(fixture.receipt()).toMatchObject({
+        qualified: true,
+        selector: filter,
+        counts: { total: 2, passed: 1, failed: 0, skipped: 1 },
+      });
+    } else {
+      expect(fixture.execution().stdout).not.toContain("FILTERED");
+      expect(existsSync(fixture.xcrunCapture)).toBe(false);
+    }
+  },
+);
+
+posixTest("real selected-run validator accepts an entirely passing selected case", () => {
+  const fixture = hostedShellFixture({
+    filter: "Suite/testCase",
+    summary: JSON.stringify({ totalTestCount: 1, passedTests: 1, failedTests: 0, skippedTests: 0 }),
+  });
+  fixture.execute();
+  expect(fixture.execution().status).toBe(0);
+  expect(fixture.receipt()).toMatchObject({
+    qualified: true,
+    counts: { total: 1, passed: 1, failed: 0, skipped: 0 },
+  });
+});
+
+posixTest.each([
+  { totalTestCount: 0, passedTests: 0, failedTests: 0, skippedTests: 0 },
+  { totalTestCount: 2, passedTests: 0, failedTests: 0, skippedTests: 2 },
+  { totalTestCount: 2, passedTests: 1, failedTests: 1, skippedTests: 0 },
+  { totalTestCount: 1, passedTests: "1", failedTests: 0, skippedTests: 0 },
+  { totalTestCount: 1, passedTests: true, failedTests: 0, skippedTests: 0 },
+  { totalTestCount: 1, passedTests: 1, failedTests: -1, skippedTests: 1 },
+  { totalTestCount: 1, passedTests: 0.5, failedTests: 0, skippedTests: 0.5 },
+  { totalTestCount: 1, passedTests: 1, failedTests: 0 },
+  { totalTestCount: 1000001, passedTests: 1000001, failedTests: 0, skippedTests: 0 },
+  { totalTestCount: 2, passedTests: 1, failedTests: 0, skippedTests: 0 },
+  null,
+  [],
+])(
+  "real selected-run validator refuses invalid or nonpassing counts despite Xcode success (%j)",
+  (summary) => {
+    const fixture = hostedShellFixture({
+      filter: "Suite/testCase",
+      summary: JSON.stringify(summary),
+    });
+    expect(() => fixture.execute()).toThrow();
+    expect(fixture.execution().status).not.toBe(0);
+    expect(fixture.receipt().qualified).toBe(false);
+  },
+);
+
+posixTest.each([
+  { summary: "not JSON", summaryStatus: 0 },
+  { summary: " ".repeat(1024 * 1024 + 1), summaryStatus: 0 },
+  {
+    summary: JSON.stringify({ totalTestCount: 1, passedTests: 1, failedTests: 0, skippedTests: 0 }),
+    summaryStatus: 1,
+  },
+])("real selected-run validator refuses malformed, oversized or failed summary tool", (options) => {
+  const fixture = hostedShellFixture({ ...options, filter: "Suite" });
+  expect(() => fixture.execute()).toThrow();
+  expect(fixture.execution().status).not.toBe(0);
+  expect(fixture.receipt().qualified).toBe(false);
 });
 
 posixTest(
