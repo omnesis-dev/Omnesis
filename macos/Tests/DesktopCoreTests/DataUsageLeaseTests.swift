@@ -450,7 +450,7 @@ final class DataUsageLeaseTests: XCTestCase {
         let script = scrubbedBackgroundModesScript(guided: true)
         try makeRuntime(host: script)
         let child = try start(["--data-use", encodedScope(), "--node", "-e", script], readinessStage: "shared-scrub")
-        try await waitReady(child, marker: "scrub-initialized", budget: .nodeStartup)
+        try await waitReady(child, marker: "scrub-initialized", until: child.bootstrapDeadline)
         try child.input.fileHandleForWriting.write(contentsOf: Data((scrubModes[1] + "\n").utf8))
         try await waitExited(child)
         XCTAssertEqual(child.process.terminationStatus, 1)
@@ -462,7 +462,7 @@ final class DataUsageLeaseTests: XCTestCase {
         let script = scrubbedBackgroundModesScript(guided: true)
         try makeRuntime(host: script)
         let child = try start(["--data-use", encodedScope(), "--node", "-e", script], readinessStage: "shared-scrub")
-        try await waitReady(child, marker: "scrub-initialized", budget: .nodeStartup)
+        try await waitReady(child, marker: "scrub-initialized", until: child.bootstrapDeadline)
         try child.input.fileHandleForWriting.close()
         try await waitExited(child)
         XCTAssertEqual(child.process.terminationStatus, 1)
@@ -483,7 +483,7 @@ final class DataUsageLeaseTests: XCTestCase {
         )
         let gateway = try start(["--data-use", encodedScope(), "--node", "-e", script], readinessStage: "raw-descendant-controller")
         let child = try trackChild(gateway, receipt: receipt, socket: socket)
-        try await waitReady(gateway, catalog: child, budget: .twoNodeBootstrap)
+        try await waitReady(gateway, catalog: child, until: gateway.bootstrapDeadline)
         try retire()
         try child.killControllerAfterReady()
         try await waitExited(gateway)
@@ -494,7 +494,7 @@ final class DataUsageLeaseTests: XCTestCase {
         try await child.cleanup { try self.sendExit(socket) }
         try await waitAbsent(socket)
         let available = try start(exclusiveArguments(), readinessStage: "raw-descendant-released")
-        try await waitReady(available, budget: .nodeStartup)
+        try await waitReady(available, until: available.bootstrapDeadline)
     }
 
     func testExclusiveDescriptorSurvivesOperationParentKillThroughWorkerMapping() async throws {
@@ -521,7 +521,7 @@ final class DataUsageLeaseTests: XCTestCase {
         try retire()
         let operation = try start(exclusiveArguments())
         let child = try trackChild(operation, receipt: receipt, socket: socket)
-        try await waitReady(operation, catalog: child, budget: .twoNodeBootstrap)
+        try await waitReady(operation, catalog: child, until: operation.bootstrapDeadline)
         try child.killControllerAfterReady()
         try await waitExited(operation)
         let denied = try start(exclusiveArguments())
@@ -531,7 +531,7 @@ final class DataUsageLeaseTests: XCTestCase {
         try await child.cleanup { try self.sendExit(socket) }
         try await waitAbsent(socket)
         let available = try start(exclusiveArguments())
-        try await waitReady(available, budget: .nodeStartup)
+        try await waitReady(available, until: available.bootstrapDeadline)
     }
 
     private let scrubModes = [
@@ -551,11 +551,15 @@ final class DataUsageLeaseTests: XCTestCase {
         let consumer = try start(["--data-use", encodedScope(), "--node", "-e", script], readinessStage: "shared-scrub")
         // Initial Node startup has its own allowance; then eight commanded native denials.
         // Each spawnSync retains its three-second bound, each observed phase five seconds.
-        // Final ready is required within the eighth phase: maximum declared composition50s.
-        try await waitReady(consumer, marker: "scrub-initialized", budget: .nodeStartup)
+        // Final ready is required within the eighth phase: maximum declared composition130s.
+        try await waitReady(consumer, marker: "scrub-initialized", until: consumer.bootstrapDeadline)
         for (index, mode) in scrubModes.enumerated() {
+            let phaseDeadline = ContinuousClock.now.advanced(by: .seconds(5))
             try consumer.input.fileHandleForWriting.write(contentsOf: Data((mode + "\n").utf8))
-            try await waitReady(consumer, marker: "scrub-after-" + mode, requireFinalReady: index == scrubModes.count - 1)
+            try await waitReady(
+                consumer, marker: "scrub-after-" + mode,
+                requireFinalReady: index == scrubModes.count - 1, until: phaseDeadline
+            )
         }
     }
 
@@ -563,8 +567,31 @@ final class DataUsageLeaseTests: XCTestCase {
         try makeRuntime(host: scrubbedBackgroundModesScript())
         try retire()
         let operation = try start(exclusiveArguments())
-        try await waitReady(operation, marker: "scrub-enter", budget: .nodeStartup)
-        try await waitReady(operation)
+        try await waitReady(operation, marker: "scrub-initialized", until: operation.bootstrapDeadline)
+        let performedBy = ContinuousClock.now.advanced(by: .seconds(5))
+        try operation.input.fileHandleForWriting.write(contentsOf: Data("perform\n".utf8))
+        try await waitReady(operation, until: performedBy)
+    }
+
+    func testExclusiveScrubInitializationRejectsEarlyEOF() async throws {
+        try await refusedExclusiveScrubInstruction(nil)
+    }
+
+    func testExclusiveScrubInitializationRejectsInvalidInstruction() async throws {
+        try await refusedExclusiveScrubInstruction("invalid\n")
+    }
+
+    private func refusedExclusiveScrubInstruction(_ instruction: String?) async throws {
+        try makeRuntime(host: scrubbedBackgroundModesScript())
+        try retire()
+        let operation = try start(exclusiveArguments())
+        try await waitReady(operation, marker: "scrub-initialized", until: operation.bootstrapDeadline)
+        if let instruction { try operation.input.fileHandleForWriting.write(contentsOf: Data(instruction.utf8)) }
+        else { try operation.input.fileHandleForWriting.close() }
+        try await waitExited(operation)
+        XCTAssertNotEqual(operation.process.terminationStatus, 0)
+        XCTAssertFalse(operation.capture.text.contains("ready"))
+        XCTAssertFalse(operation.diagnostics.text.contains("fixture-stage:scrub-before-"))
     }
 
     private func scrubbedBackgroundModesScript(guided: Bool = false) -> String {
@@ -599,6 +626,13 @@ final class DataUsageLeaseTests: XCTestCase {
         import {fstatSync} from 'node:fs';
         process.stderr.write('fixture-stage:scrub-enter\\n');
         if (!fstatSync(7).isFile()) throw new Error('Owned DATA descriptor was not installed');
+        process.stdin.setEncoding('utf8');
+        await new Promise((resolve,reject)=>{
+          const end=()=>reject(new Error('Missing owned instruction'));
+          process.stdin.once('end',end);
+          process.stdin.once('data',chunk=>{process.stdin.removeListener('end',end);if(chunk!=='perform\\n')reject(new Error('Invalid owned instruction'));else resolve();});
+          process.stderr.write('fixture-stage:scrub-initialized\\n');process.stdin.resume();
+        });
         for (const mode of ['--key-recovery','--background-start','--background-daemon','--background-retire','--verify-background-owner','--verify-background-retirement','--background-binding','--background-rebind']) {
           process.stderr.write('fixture-stage:scrub-before-'+mode+'\\n');
           const child=spawnSync(process.execPath,[mode,'invalid'],{env:{},stdio:['ignore','pipe','pipe','ignore','ignore','ignore','ignore',7],timeout:3000});
@@ -659,10 +693,10 @@ final class DataUsageLeaseTests: XCTestCase {
             ["--node", runtime.appendingPathComponent("packages/cli/dist/index.js").path, "desktop", "bridge"],
             readinessStage: "erase-controller"
         )
-        try await waitReady(controller, budget: .nodeStartup)
+        try await waitReady(controller, until: controller.bootstrapDeadline)
         try retire()
         let operation = try start(exclusiveArguments(), readinessStage: "erase-exclusive")
-        try await waitReady(operation, budget: .nodeStartup)
+        try await waitReady(operation, until: operation.bootstrapDeadline)
         XCTAssertTrue(controller.process.isRunning)
     }
 
@@ -807,7 +841,7 @@ final class DataUsageLeaseTests: XCTestCase {
         )
         let controller = try start(["--data-use", encodedScope(), "--node", "-e", script], readinessStage: "catalog-controller")
         let child = try trackChild(controller, receipt: receipt, socket: socket, externalNode: fixtureNode)
-        try await waitReady(controller, catalog: child, budget: .twoNodeBootstrap)
+        try await waitReady(controller, catalog: child, until: controller.bootstrapDeadline)
         let witness = try catalogReceipt()
         try child.killControllerAfterReady()
         try await waitExited(controller)
@@ -936,7 +970,7 @@ final class DataUsageLeaseTests: XCTestCase {
         if sdk.process.isRunning { sdk.process.terminate() }
         try await waitExited(sdk)
         let available = try start(exclusiveArguments())
-        try await waitReady(available, budget: .nodeStartup)
+        try await waitReady(available, until: available.bootstrapDeadline)
     }
 
     func testLegacyIncarnationNeverObtainsDestructiveOrCatalogAuthority() throws {
@@ -1131,6 +1165,7 @@ final class DataUsageLeaseTests: XCTestCase {
         let diagnosticTarget: DesktopReadinessFailureDiagnostic.Target?
         let setupMilliseconds: Int
         let spawnMilliseconds: Int
+        let bootstrapDeadline: ContinuousClock.Instant
     }
 
     private func start(
@@ -1155,6 +1190,7 @@ final class DataUsageLeaseTests: XCTestCase {
         output.fileHandleForReading.readabilityHandler = { capture.append($0.availableData) }
         errors.fileHandleForReading.readabilityHandler = { diagnostics.append($0.availableData) }
         let spawning = ContinuousClock.now
+        let bootstrapDeadline = FixtureReadiness.bootstrapDeadline()
         try process.run()
         let spawnMilliseconds = Self.milliseconds(spawning.duration(to: .now))
         processes.append(process)
@@ -1168,7 +1204,8 @@ final class DataUsageLeaseTests: XCTestCase {
             readinessStage: readinessStage,
             diagnosticTarget: .init(process: process, runtime: runtime),
             setupMilliseconds: setupMilliseconds,
-            spawnMilliseconds: spawnMilliseconds
+            spawnMilliseconds: spawnMilliseconds,
+            bootstrapDeadline: bootstrapDeadline
         )
     }
 
@@ -1241,7 +1278,7 @@ final class DataUsageLeaseTests: XCTestCase {
         catalog: CatalogFixtureChild? = nil,
         marker: String? = nil,
         requireFinalReady: Bool = false,
-        budget: FixtureReadiness.Budget = .postStart
+        until: ContinuousClock.Instant? = nil
     ) async throws {
         let observed: @Sendable () -> Bool = { [capture = running.capture, diagnostics = running.diagnostics] in
             let reached = marker
@@ -1251,7 +1288,7 @@ final class DataUsageLeaseTests: XCTestCase {
         }
         let started = ContinuousClock.now
         try await FixtureReadiness.wait(
-            budget: budget, isRunning: { running.process.isRunning },
+            until: until, isRunning: { running.process.isRunning },
             isReady: {
                 if running.process.isRunning { try catalog?.tryAdopt() }
                 return observed() && (catalog == nil || catalog?.identity != nil)

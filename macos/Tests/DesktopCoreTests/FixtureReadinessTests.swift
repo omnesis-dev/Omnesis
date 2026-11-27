@@ -22,7 +22,7 @@ final class FixtureReadinessTests: XCTestCase {
     func testActivationAllowanceDoesNotExtendCommandBudget() async throws {
         let startup = Scenario()
         try await FixtureReadiness.wait(
-            budget: .nodeStartup,
+            until: FixtureReadiness.bootstrapDeadline(now: startup.now),
             now: { startup.now },
             pause: {
                 startup.elapsed = .seconds(6)
@@ -59,9 +59,9 @@ final class FixtureReadinessTests: XCTestCase {
         let state = Scenario()
         do {
             try await FixtureReadiness.wait(
-                budget: .nodeStartup,
+                until: FixtureReadiness.bootstrapDeadline(now: state.now),
                 now: { state.now },
-                pause: { state.elapsed = .seconds(10)
+                pause: { state.elapsed = .seconds(90)
                     await Task.yield()
                 },
                 isRunning: { state.running }, isReady: { state.ready },
@@ -82,13 +82,13 @@ final class FixtureReadinessTests: XCTestCase {
         var firstNodeInitialized = false
         do {
             try await FixtureReadiness.wait(
-                budget: .twoNodeBootstrap,
+                until: FixtureReadiness.bootstrapDeadline(now: state.now),
                 now: { state.now },
                 pause: {
-                    state.elapsed += .seconds(5)
+                    state.elapsed += .seconds(30)
                     state.pauses += 1
                     firstNodeInitialized = true
-                    if state.elapsed == .seconds(20) { state.ready = true }
+                    if state.elapsed == .seconds(90) { state.ready = true }
                     await Task.yield()
                 },
                 isRunning: { state.running }, isReady: { state.ready },
@@ -98,7 +98,7 @@ final class FixtureReadinessTests: XCTestCase {
         } catch { XCTAssertEqual(error as? FixtureReadiness.Failure, .expired) }
         XCTAssertTrue(firstNodeInitialized)
         XCTAssertTrue(state.ready)
-        XCTAssertEqual(state.pauses, 4)
+        XCTAssertEqual(state.pauses, 3)
         XCTAssertEqual(state.diagnosed, [.expired])
     }
 
@@ -108,7 +108,7 @@ final class FixtureReadinessTests: XCTestCase {
         state.ready = true
         do {
             try await FixtureReadiness.wait(
-                budget: .nodeStartup, now: { state.now },
+                until: FixtureReadiness.bootstrapDeadline(now: state.now), now: { state.now },
                 pause: { state.pauses += 1 },
                 isRunning: { state.running }, isReady: { state.ready },
                 diagnose: { state.diagnosed.append($0) }
@@ -121,7 +121,7 @@ final class FixtureReadinessTests: XCTestCase {
         let stopsDuringObservation = Scenario()
         do {
             try await FixtureReadiness.wait(
-                budget: .nodeStartup, now: { stopsDuringObservation.now },
+                until: FixtureReadiness.bootstrapDeadline(now: stopsDuringObservation.now), now: { stopsDuringObservation.now },
                 pause: { stopsDuringObservation.pauses += 1 },
                 isRunning: { stopsDuringObservation.running },
                 isReady: {
@@ -134,5 +134,42 @@ final class FixtureReadinessTests: XCTestCase {
         } catch { XCTAssertEqual(error as? FixtureReadiness.Failure, .stopped) }
         XCTAssertEqual(stopsDuringObservation.pauses, 0)
         XCTAssertEqual(stopsDuringObservation.diagnosed, [.stopped])
+    }
+
+    func testSeparateInitializationMarkersShareTheOriginalDeadline() async throws {
+        let state = Scenario()
+        let deadline = FixtureReadiness.bootstrapDeadline(now: state.now)
+        try await FixtureReadiness.wait(
+            until: deadline, now: { state.now }, pause: {},
+            isRunning: { true }, isReady: { state.elapsed = .seconds(60)
+                return true
+            }, diagnose: { _ in }
+        )
+        do {
+            try await FixtureReadiness.wait(
+                until: deadline, now: { state.now }, pause: {},
+                isRunning: { true }, isReady: { state.elapsed = .seconds(90)
+                    return true
+                },
+                diagnose: { state.diagnosed.append($0) }
+            )
+            XCTFail("A later initialized child cannot renew the parent's deadline")
+        } catch { XCTAssertEqual(error as? FixtureReadiness.Failure, .expired) }
+        XCTAssertEqual(state.diagnosed, [.expired])
+    }
+
+    func testPostDispatchCommandKeepsItsAbsoluteFiveSecondLimit() async throws {
+        let state = Scenario()
+        let dispatched = state.now
+        state.elapsed = .seconds(4)
+        do {
+            try await FixtureReadiness.wait(
+                until: dispatched.advanced(by: .seconds(5)), now: { state.now }, pause: {},
+                isRunning: { true }, isReady: { state.elapsed = .seconds(5)
+                    return true
+                }, diagnose: { _ in }
+            )
+            XCTFail("Dispatch and slow observation must not grant extra command time")
+        } catch { XCTAssertEqual(error as? FixtureReadiness.Failure, .expired) }
     }
 }

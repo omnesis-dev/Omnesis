@@ -136,6 +136,8 @@ final class SnapshotGcLeaseTests: XCTestCase {
         import{readFileSync,fstatSync}from'node:fs';import{installManagedRuntimeLauncher,assertManagedDesktopSnapshotGcAuthority,managedRuntimeExecutableInvocation}from'../../../../test-inputs/node-command.js';
         let data=JSON.parse(Buffer.from(process.env.OMNESIS_DESKTOP_DATA_CONTEXT,'base64url'));let root=new URL('../../../../',import.meta.url).pathname.replace(/\\/$/,'');
         installManagedRuntimeLauncher({root,launcher:root+'/runtime-exec',preload:root+'/packages/core/dist/managed-runtime-bootstrap.js',data});
+        process.stdout.write('initialized\\n');
+        await new Promise((resolve,reject)=>{const end=()=>reject(new Error('Missing owned instruction'));process.stdin.once('end',end);process.stdin.once('data',chunk=>{process.stdin.removeListener('end',end);if(chunk.toString()!=='perform\\n')reject(new Error('Invalid owned instruction'));else resolve();});process.stdin.resume();});
         assertManagedDesktopSnapshotGcAuthority(data.scope,process.argv[3]);
         try{managedRuntimeExecutableInvocation('/bin/ps',[]);process.exit(93)}catch{}
         process.stdout.write('performed:'+process.pid+'\\n');process.stdin.resume();process.stdin.once('data',()=>process.exit(0));
@@ -194,6 +196,8 @@ final class SnapshotGcLeaseTests: XCTestCase {
         let output: Pipe
         let errors: Pipe
         let diagnostics: Capture
+        let bootstrapDeadline: ContinuousClock.Instant
+        var reserveDeadline: ContinuousClock.Instant?
     }
 
     private final class Capture: @unchecked Sendable {
@@ -235,12 +239,21 @@ final class SnapshotGcLeaseTests: XCTestCase {
         process.standardInput = input
         process.standardOutput = output
         process.standardError = errors
+        let bootstrapDeadline = FixtureReadiness.bootstrapDeadline()
         try process.run()
         startedChildren.insert(ObjectIdentifier(process))
-        return Running(process: process, input: input, output: output, errors: errors, diagnostics: diagnostics)
+        return Running(
+            process: process,
+            input: input,
+            output: output,
+            errors: errors,
+            diagnostics: diagnostics,
+            bootstrapDeadline: bootstrapDeadline,
+            reserveDeadline: nil
+        )
     }
 
-    private func phaseOne(prepare: String = "") throws -> Running {
+    private func phaseOne(prepare: String = "", dispatchReserve: Bool = true) throws -> Running {
         let lock = runtime.appendingPathComponent("test-inputs/gateway-lock.js").absoluteString
         let encoded = try encodedScope()
         let script = """
@@ -248,7 +261,9 @@ final class SnapshotGcLeaseTests: XCTestCase {
         function stage(name){process.stderr.write('fixture-stage:'+name+'\\n');}
         stage('phase-one-enter');stage('install-lock-before');
         await acquireGatewayLock(\(literal(scope.configDir + ".bootstrap")),{waitMs:0});
-        stage('install-lock-held');stage('prepare-before');
+        stage('install-lock-held');process.stdout.write('bootstrap-complete\\n');
+        await new Promise((resolve,reject)=>{const end=()=>reject(new Error('Missing owned instruction'));process.stdin.once('end',end);process.stdin.once('data',chunk=>{process.stdin.removeListener('end',end);if(chunk.toString()!=='reserve\\n')reject(new Error('Invalid owned instruction'));else resolve();});process.stdin.resume();});
+        stage('prepare-before');
         \(prepare)
         stage('prepare-after');stage('reserve-before');
         let result=spawnSync(process.execPath,['--gc-reserve',\(literal(
@@ -260,10 +275,16 @@ final class SnapshotGcLeaseTests: XCTestCase {
             literal(id)
         ),\(literal(encoded))],process.env));
         """
-        return try start(
+        var owner = try start(
             runtime.appendingPathComponent("runtime-exec"),
             ["--data-use", encodedScope(), "--node", "--input-type=module", "-e", script]
         )
+        try requireLine(owner, "bootstrap-complete", until: owner.bootstrapDeadline)
+        if dispatchReserve {
+            owner.reserveDeadline = ContinuousClock.now.advanced(by: .seconds(10))
+            try owner.input.fileHandleForWriting.write(contentsOf: Data("reserve\n".utf8))
+        }
+        return owner
     }
 
     private func competitor() throws -> Running {
@@ -276,15 +297,19 @@ final class SnapshotGcLeaseTests: XCTestCase {
         return try start(node, ["--input-type=module", "-e", script])
     }
 
-    private func line(_ running: Running) throws -> String {
-        let deadline = Date().addingTimeInterval(10), fd = running.output.fileHandleForReading.fileDescriptor
+    private func line(_ running: Running, until: ContinuousClock.Instant? = nil) throws -> String {
+        let deadline = until ?? ContinuousClock.now.advanced(by: .seconds(10))
+        let fd = running.output.fileHandleForReading.fileDescriptor
         var bytes = Data()
-        while Date() < deadline {
+        while ContinuousClock.now < deadline {
             var event = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
             if Darwin.poll(&event, 1, 50) > 0 {
                 var byte: UInt8 = 0
                 if Darwin.read(fd, &byte, 1) != 1 { break }
-                if byte == 10 { return String(decoding: bytes, as: UTF8.self) }
+                if byte == 10 {
+                    guard ContinuousClock.now < deadline else { break }
+                    return String(decoding: bytes, as: UTF8.self)
+                }
                 bytes.append(byte)
                 if bytes.count > 4096 { break }
             }
@@ -292,8 +317,15 @@ final class SnapshotGcLeaseTests: XCTestCase {
         throw FixtureFailure.readiness(readinessDiagnostics(running, partialBytes: bytes.count))
     }
 
-    private func requireLine(_ running: Running, _ expected: String) throws {
-        guard try line(running) == expected else { throw FixtureFailure.unexpectedFixedReply }
+    private func requireLine(_ running: Running, _ expected: String, until: ContinuousClock.Instant? = nil) throws {
+        var deadline = until ?? (expected == "reserved" ? running.reserveDeadline : nil)
+        if expected.hasPrefix("performed:") {
+            // Same composition's absolute deadline includes execve's second initialization.
+            try requireLine(running, "initialized", until: running.bootstrapDeadline)
+            deadline = ContinuousClock.now.advanced(by: .seconds(10))
+            try running.input.fileHandleForWriting.write(contentsOf: Data("perform\n".utf8))
+        }
+        guard try line(running, until: deadline) == expected else { throw FixtureFailure.unexpectedFixedReply }
     }
 
     private func readinessDiagnostics(_ running: Running, partialBytes: Int) -> String {
@@ -373,6 +405,68 @@ final class SnapshotGcLeaseTests: XCTestCase {
         }())
         XCTAssertFalse(continued)
         try exited(child.process)
+    }
+
+    func testInitializedSnapshotOwnerCannotReserveOnInvalidInstruction() throws {
+        let owner = try phaseOne(dispatchReserve: false)
+        let reservation = runtime.deletingLastPathComponent().appendingPathComponent(".snapshot-reservations/" + id + ".json")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: reservation.path))
+        try owner.input.fileHandleForWriting.write(contentsOf: Data("invalid\n".utf8))
+        try exited(owner.process)
+        XCTAssertNotEqual(owner.process.terminationStatus, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: reservation.path))
+    }
+
+    func testInitializedSnapshotOwnerEarlyEOFCannotReserve() throws {
+        let owner = try phaseOne(dispatchReserve: false)
+        try owner.input.fileHandleForWriting.close()
+        try exited(owner.process)
+        XCTAssertNotEqual(owner.process.terminationStatus, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: runtime.deletingLastPathComponent()
+                .appendingPathComponent(".snapshot-reservations/" + id + ".json").path))
+    }
+
+    func testInitializedSnapshotHostCannotPerformOnInvalidInstruction() throws {
+        try refusedSnapshotHostInstruction("invalid\n")
+    }
+
+    func testInitializedSnapshotHostEarlyEOFCannotPerform() throws {
+        try refusedSnapshotHostInstruction(nil)
+    }
+
+    private func refusedSnapshotHostInstruction(_ instruction: String?) throws {
+        let owner = try phaseOne()
+        try requireLine(owner, "reserved")
+        try owner.input.fileHandleForWriting.write(contentsOf: Data("go".utf8))
+        try requireLine(owner, "initialized", until: owner.bootstrapDeadline)
+        if let instruction { try owner.input.fileHandleForWriting.write(contentsOf: Data(instruction.utf8)) }
+        else { try owner.input.fileHandleForWriting.close() }
+        try exited(owner.process)
+        owner.process.waitUntilExit()
+        XCTAssertNotEqual(owner.process.terminationStatus, 0)
+        // The exact initialized line was consumed above. After physical join there
+        // must be no performed reply; use only this still-open owned reader.
+        let reader = owner.output.fileHandleForReading.fileDescriptor
+        let flags = fcntl(reader, F_GETFL)
+        guard flags >= 0, fcntl(reader, F_SETFL, flags | O_NONBLOCK) == 0 else {
+            throw FixtureFailure.readiness("Owned post-join output inspection refused")
+        }
+        var byte: UInt8 = 0
+        let count = Darwin.read(reader, &byte, 1)
+        let failure = errno
+        XCTAssertTrue(
+            count == 0 || (count == -1 && (failure == EAGAIN || failure == EWOULDBLOCK)),
+            "A refused initialized host must publish no performed reply"
+        )
+        let publication = try DesktopSnapshotGcRecords
+            .openPrivate(runtime.deletingLastPathComponent().appendingPathComponent(".publication-lock"))
+        defer { Darwin.close(publication) }
+        XCTAssertEqual(
+            flock(publication, LOCK_EX | LOCK_NB),
+            0,
+            "The physically joined refused host must release its publication lease"
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: scope.configDir))
     }
 
     func testActualExecveRetainsInstallOwnershipAndReestablishesExclusivePublication() throws {

@@ -174,6 +174,7 @@ final class RuntimeUsageLeaseTests: XCTestCase {
         let capture: Capture
         let diagnostics: Capture
         let readinessStage: String
+        let bootstrapDeadline: ContinuousClock.Instant
         let diagnosticTarget: DesktopReadinessFailureDiagnostic.Target?
     }
 
@@ -191,6 +192,7 @@ final class RuntimeUsageLeaseTests: XCTestCase {
         process.standardError = errors
         output.fileHandleForReading.readabilityHandler = { capture.append($0.availableData) }
         errors.fileHandleForReading.readabilityHandler = { diagnostics.append($0.availableData) }
+        let bootstrapDeadline = FixtureReadiness.bootstrapDeadline()
         try process.run()
         startedEpochs.insert(runtime.lastPathComponent)
         return Running(
@@ -201,6 +203,7 @@ final class RuntimeUsageLeaseTests: XCTestCase {
             capture: capture,
             diagnostics: diagnostics,
             readinessStage: readinessStage,
+            bootstrapDeadline: bootstrapDeadline,
             diagnosticTarget: .init(process: process, runtime: runtime)
         )
     }
@@ -225,7 +228,7 @@ final class RuntimeUsageLeaseTests: XCTestCase {
             "exclusive-ready-written", "scrub-enter", "scrub-complete", "catalog-parent-enter", "catalog-child-spawned",
             "catalog-socket-observed", "catalog-ready-written", "fork-parent-enter", "fork-child-spawned",
             "fork-child-enter", "fork-child-sent", "fork-parent-message", "fork-ready-written", "relative-node-enter",
-            "fork-parent-initialized", "fork-child-joined", "fork-child-disconnected", "fork-child-error",
+            "fork-parent-initialized", "fork-child-initialized", "fork-child-joined", "fork-child-disconnected", "fork-child-error",
         ]
         for mode in [
             "key-recovery",
@@ -249,19 +252,25 @@ final class RuntimeUsageLeaseTests: XCTestCase {
         return "image=\(image); stdoutBytes=\(running.capture.text.utf8.count); stderrBytes=\(running.diagnostics.text.utf8.count); stdout[\(pipeState(running.output.fileHandleForReading))]; stderr[\(pipeState(running.errors.fileHandleForReading))]; stages=\(stages); nativeRefusal=\(running.diagnostics.text.contains("The managed runtime lease could not be established")); nativeCode=\(DesktopReadinessFailureDiagnostic.nativeRefusalCode(running.diagnostics.text))"
     }
 
-    private enum ReadinessPhase: String, Sendable { case stdout, forkParent }
+    private enum ReadinessPhase: String, Sendable { case stdout, forkParent, forkChild }
 
     private func waitReady(
         _ running: Running, phase: ReadinessPhase = .stdout,
-        budget: FixtureReadiness.Budget = .postStart
+        budget: FixtureReadiness.Budget = .postStart,
+        catalog: CatalogFixtureChild? = nil,
+        until: ContinuousClock.Instant? = nil
     ) async throws {
         let observed: @Sendable () -> Bool = { [capture = running.capture, diagnostics = running.diagnostics] in
             switch phase {
             case .stdout: return capture.ready
             case .forkParent: return diagnostics.text.split(separator: "\n").contains("fixture-stage:fork-parent-initialized")
+            case .forkChild: return diagnostics.text.split(separator: "\n").contains("fixture-stage:fork-child-initialized")
             }
         }
-        try await FixtureReadiness.wait(budget: budget, isRunning: { running.process.isRunning }, isReady: observed) { _ in
+        try await FixtureReadiness.wait(budget: budget, until: until, isRunning: { running.process.isRunning }, isReady: {
+            try catalog?.tryAdopt()
+            return observed() && (catalog == nil || catalog?.identity != nil)
+        }) { _ in
             let status = running.process.isRunning ? "running" : String(running.process.terminationStatus)
             let detail = "fixture readiness failed (" + status + "); stage=" + running.readinessStage +
                 "; phase=" + phase.rawValue + "; " + readinessDiagnostics(running)
@@ -283,12 +292,12 @@ final class RuntimeUsageLeaseTests: XCTestCase {
         }
     }
 
-    private func waitExited(_ running: Running, timeout: TimeInterval = 5) async throws {
-        let deadline = Date().addingTimeInterval(timeout)
-        while running.process.isRunning, Date() < deadline {
+    private func waitExited(_ running: Running, until: ContinuousClock.Instant? = nil) async throws {
+        let deadline = until ?? ContinuousClock.now.advanced(by: .seconds(5))
+        while running.process.isRunning, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
-        if running.process.isRunning { stop(running)
+        if running.process.isRunning || (until != nil && ContinuousClock.now >= deadline) { stop(running)
             throw FixtureFailure.detail("fixture exit timed out: " + running.diagnostics.text)
         }
     }
@@ -348,7 +357,7 @@ final class RuntimeUsageLeaseTests: XCTestCase {
             ]
         )
         defer { stop(child) }
-        try await waitReady(child, budget: .nodeStartup)
+        try await waitReady(child, until: child.bootstrapDeadline)
         try await assertProbe(from: first, target: second, expected: 3)
         try child.input.fileHandleForWriting.write(contentsOf: Data("stop\n".utf8))
         try await waitExited(child)
@@ -398,7 +407,7 @@ final class RuntimeUsageLeaseTests: XCTestCase {
             readinessStage: "relative-node"
         )
         defer { stop(relative) }
-        try await waitReady(relative, budget: .nodeStartup)
+        try await waitReady(relative, until: relative.bootstrapDeadline)
         XCTAssertTrue(relative.capture.text.contains("runtime-exec"))
         try relative.input.fileHandleForWriting.write(contentsOf: Data("stop\n".utf8))
         try await waitExited(relative)
@@ -406,7 +415,7 @@ final class RuntimeUsageLeaseTests: XCTestCase {
     }
 
     /// Fork is requested only after the first actual Node process has initialized.
-    /// Each cold startup has its own explicit allowance; later messages/drain keep their bounds.
+    /// Parent and child share one absolute bootstrap deadline; later IPC/drain stay five seconds.
     private func forkRecipe() throws -> (code: String, receipt: URL) {
         let entry = home.appendingPathComponent("invented-fork-child.cjs")
         let receipt = home.appendingPathComponent("invented-fork-child.json")
@@ -415,9 +424,15 @@ final class RuntimeUsageLeaseTests: XCTestCase {
         fs.writeSync(2,'fixture-stage:fork-child-enter\\n');
         if(!process.execArgv.includes('--use-system-ca'))process.exit(2);
         process.once('disconnect',()=>{fs.writeSync(2,'fixture-stage:fork-child-disconnected\\n');process.exit(0)});
-        process.once('message',message=>process.exit(message==='stop'?0:2));
-        process.send({ready:true},error=>{if(error)process.exit(1);fs.writeSync(2,'fixture-stage:fork-child-sent\\n')});
-        setTimeout(()=>process.exit(1),5000);
+        if(!process.connected)process.exit(1);
+        let verified=false,timer=null;
+        process.on('message',message=>{
+          if(message==='stop'){if(timer)clearTimeout(timer);process.exit(0)}
+          if(message!=='verify'||verified)process.exit(2);
+          verified=true;timer=setTimeout(()=>process.exit(1),5000);
+          process.send({ready:true},error=>{if(error)process.exit(1);fs.writeSync(2,'fixture-stage:fork-child-sent\\n')});
+        });
+        fs.writeSync(2,'fixture-stage:fork-child-initialized\\n');
         """.utf8).write(to: entry)
         let code = """
         const fs=require('node:fs');
@@ -437,7 +452,11 @@ final class RuntimeUsageLeaseTests: XCTestCase {
                 .path)));stage('fork-child-spawned')}catch{failed=true;stage('fork-child-error');stop()}});
           child.once('message',message=>{if(closing||failed)return;if(!message||message.ready!==true){failed=true;child.kill('SIGKILL');return}stage('fork-parent-message');process.stdout.write('ready',()=>stage('fork-ready-written'))});
           child.once('close',(code,signal)=>{stage('fork-child-joined');process.exit(failed||signal||code===null?1:code)});
-          process.stdin.once('data',stop);
+          process.stdin.once('data',request=>{
+            if(request.toString().trim()!=='verify'){failed=true;stop();return}
+            child.send('verify',error=>{if(error){failed=true;stop()}});
+            process.stdin.once('data',stop);
+          });
         });
         stage('fork-parent-initialized');
         process.stdin.resume();
@@ -445,16 +464,32 @@ final class RuntimeUsageLeaseTests: XCTestCase {
         return (code, receipt)
     }
 
+    private func trackForkChild(_ parent: Running, runtime: URL, receipt: URL) throws -> CatalogFixtureChild {
+        let child = try CatalogFixtureChild(
+            parent: parent.process, receipt: receipt,
+            images: [runtime.appendingPathComponent("runtime-exec").path, runtime.appendingPathComponent("node").path],
+            node: runtime.appendingPathComponent("node"),
+            joined: { parent.diagnostics.text.contains("fixture-stage:fork-child-joined") }
+        )
+        addTeardownBlock { try await child.cleanup(sendExit: {}) }
+        return child
+    }
+
     func testNodeCompatibleDefaultSupportsForkIPCAndStdinEvaluation() async throws {
         let runtime = try fixture(tag: "node-compatible")
         let recipe = try forkRecipe()
         let child = try start(runtime: runtime, arguments: ["-e", recipe.code], readinessStage: "fork-parent")
         defer { stop(child) }
-        try await waitReady(child, phase: .forkParent, budget: .nodeStartup)
+        let forked = try trackForkChild(child, runtime: runtime, receipt: recipe.receipt)
+        try await waitReady(child, phase: .forkParent, until: child.bootstrapDeadline)
         XCTAssertFalse(child.capture.ready)
         XCTAssertFalse(FileManager.default.fileExists(atPath: recipe.receipt.path))
         try child.input.fileHandleForWriting.write(contentsOf: Data("fork\n".utf8))
-        try await waitReady(child, budget: .nodeStartup)
+        try await waitReady(child, phase: .forkChild, catalog: forked, until: child.bootstrapDeadline)
+        XCTAssertFalse(child.capture.ready)
+        let verificationDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+        try child.input.fileHandleForWriting.write(contentsOf: Data("verify\n".utf8))
+        try await waitReady(child, until: verificationDeadline)
         try child.input.fileHandleForWriting.write(contentsOf: Data("stop\n".utf8))
         try await waitExited(child)
         child.process.waitUntilExit()
@@ -472,8 +507,8 @@ final class RuntimeUsageLeaseTests: XCTestCase {
             )
         try stdin.input.fileHandleForWriting.close()
         // Node reads stdin through EOF before applying --import. This one-shot path
-        // includes first startup; post-ready exit and every other exit keep five seconds.
-        try await waitExited(stdin, timeout: 10)
+        // is the sole tiny-invariant terminal bootstrap exception; all ordinary exits keep five seconds.
+        try await waitExited(stdin, until: stdin.bootstrapDeadline)
         XCTAssertEqual(stdin.process.terminationStatus, 0, stdin.diagnostics.text)
     }
 
@@ -483,7 +518,8 @@ final class RuntimeUsageLeaseTests: XCTestCase {
         try Data("occupied".utf8).write(to: URL(fileURLWithPath: recipe.receipt.path + ".partial"))
         let parent = try start(runtime: runtime, arguments: ["-e", recipe.code], readinessStage: "fork-parent")
         defer { stop(parent) }
-        try await waitReady(parent, phase: .forkParent, budget: .nodeStartup)
+        _ = try trackForkChild(parent, runtime: runtime, receipt: recipe.receipt)
+        try await waitReady(parent, phase: .forkParent, until: parent.bootstrapDeadline)
         try parent.input.fileHandleForWriting.write(contentsOf: Data("fork\n".utf8))
         try await waitExited(parent)
         parent.process.waitUntilExit()
@@ -501,23 +537,44 @@ final class RuntimeUsageLeaseTests: XCTestCase {
         )
     }
 
+    func testForkAbortedAfterInitializationBeforeVerificationJoinsWithoutReady() async throws {
+        let runtime = try fixture(tag: "fork-before-verify")
+        let recipe = try forkRecipe()
+        let parent = try start(runtime: runtime, arguments: ["-e", recipe.code], readinessStage: "fork-parent")
+        defer { stop(parent) }
+        let forked = try trackForkChild(parent, runtime: runtime, receipt: recipe.receipt)
+        try await waitReady(parent, phase: .forkParent, until: parent.bootstrapDeadline)
+        try parent.input.fileHandleForWriting.write(contentsOf: Data("fork\n".utf8))
+        try await waitReady(parent, phase: .forkChild, catalog: forked, until: parent.bootstrapDeadline)
+        XCTAssertFalse(parent.capture.ready)
+        parent.process.terminate()
+        try await waitExited(parent)
+        parent.process.waitUntilExit()
+        try await waitCapturedEOF(parent)
+        try await forked.cleanup(sendExit: {})
+        XCTAssertFalse(parent.capture.ready)
+        XCTAssertTrue(parent.diagnostics.text.contains("fixture-stage:fork-child-joined"))
+        XCTAssertEqual(try DesktopRuntimeUsageLease.withReclaimableEpoch(
+            cache: cache, epoch: runtime.lastPathComponent,
+            currentEpoch: String(repeating: "0", count: 64), operation: { _ in true }
+        ), true)
+    }
+
     func testActualForkChildDisconnectDrainsAfterOwnedParentDeathAndReleasesEpoch() async throws {
         let runtime = try fixture(tag: "fork-disconnect")
         let recipe = try forkRecipe()
         let parent = try start(runtime: runtime, arguments: ["-e", recipe.code], readinessStage: "fork-parent")
         defer { stop(parent) }
-        try await waitReady(parent, phase: .forkParent, budget: .nodeStartup)
+        let ownedChild = try trackForkChild(parent, runtime: runtime, receipt: recipe.receipt)
+        try await waitReady(parent, phase: .forkParent, until: parent.bootstrapDeadline)
         try parent.input.fileHandleForWriting.write(contentsOf: Data("fork\n".utf8))
-        try await waitReady(parent, budget: .nodeStartup)
-        let ownedChild = try CatalogFixtureChild(
-            parent: parent.process, receipt: recipe.receipt,
-            images: [runtime.appendingPathComponent("runtime-exec").path, runtime.appendingPathComponent("node").path],
-            node: runtime.appendingPathComponent("node"),
-            joined: { parent.diagnostics.text.contains("fixture-stage:fork-child-joined") }
-        )
+        try await waitReady(parent, phase: .forkChild, catalog: ownedChild, until: parent.bootstrapDeadline)
+        XCTAssertFalse(parent.capture.ready)
+        let verificationDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+        try parent.input.fileHandleForWriting.write(contentsOf: Data("verify\n".utf8))
+        try await waitReady(parent, until: verificationDeadline)
         try ownedChild.tryAdopt()
         XCTAssertNotNil(ownedChild.identity)
-        addTeardownBlock { try await ownedChild.cleanup(sendExit: {}) }
         let current = String(repeating: "0", count: 64)
         XCTAssertNil(try DesktopRuntimeUsageLease.withReclaimableEpoch(
             cache: cache,
@@ -669,7 +726,7 @@ final class RuntimeUsageLeaseTests: XCTestCase {
         let parentCode = "require('node:child_process').spawn(process.execPath,['-e',JSON.parse(\(String(reflecting: encoded)))[0]],{stdio:['ignore','ignore','ignore']});const timer=setInterval(()=>{if(require('node:fs').existsSync(\(String(reflecting: readyPath)))){process.stdout.write('ready');clearInterval(timer);}},10);setInterval(()=>{},1000);"
         let parent = try start(runtime: second, arguments: ["--node", "-e", parentCode])
         defer { stop(parent) }
-        try await waitReady(parent, budget: .twoNodeBootstrap)
+        try await waitReady(parent, budget: .rawOrphanBootstrap)
         kill(parent.process.processIdentifier, SIGKILL)
         try await waitExited(parent)
         try await assertProbe(from: first, target: second, expected: 3)
