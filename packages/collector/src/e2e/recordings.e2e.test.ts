@@ -250,7 +250,8 @@ describe("recorded conversation speakers in experimental mode (E2E)", () => {
     const { items } = await harness.gatewayJson<{
       items: Array<{ id: string; canonicalName: string; isSelf: boolean }>;
     }>("/people/search?q=&limit=10");
-    const guest = items.find((p) => !p.isSelf)!;
+    const [guest, present] = items.filter((p) => !p.isSelf);
+    if (!guest || !present) throw new Error("the universe needs two people besides the owner");
     for (const [speaker, body] of [
       [1, { personId: guest.id }],
       [2, { self: true }],
@@ -261,6 +262,12 @@ describe("recorded conversation speakers in experimental mode (E2E)", () => {
       });
       expect(res.status).toBe(200);
     }
+    // Someone who was there without a voice of their own.
+    const added = await harness.gatewayFetch(`/recordings/${id}/participants`, {
+      method: "POST",
+      body: JSON.stringify({ personId: present.id }),
+    });
+    expect(added.status).toBe(200);
 
     await vi.waitFor(
       async () => {
@@ -271,9 +278,38 @@ describe("recorded conversation speakers in experimental mode (E2E)", () => {
         const { content } = await harness.gatewayJson<{ content: string }>(`/documents/${hit.id}`);
         expect(content).toContain(`${guest.canonicalName}: The mockups are ready for review.`);
         expect(content).toContain("You: Send them over today.");
+        expect(content).toContain(`Also present: ${present.canonicalName}`);
         const { people } = await harness.gatewayJson<{
           people: Array<{ personId: string; role: string }>;
         }>(`/documents/${hit.id}/people`);
+        expect(people).toContainEqual(
+          expect.objectContaining({ personId: guest.id, role: "participant" }),
+        );
+        expect(people).toContainEqual(
+          expect.objectContaining({ personId: present.id, role: "participant" }),
+        );
+      },
+      { timeout: 40_000, interval: 500 },
+    );
+
+    // Removing them rewrites the document without them.
+    const removed = await harness.gatewayFetch(
+      `/recordings/${id}/participants/${encodeURIComponent(`person:${present.id}`)}`,
+      { method: "DELETE" },
+    );
+    expect(removed.status).toBe(200);
+    await vi.waitFor(
+      async () => {
+        const search = await harness.gatewayJson<{
+          results?: Array<{ id: string; source_id: string }>;
+        }>(`/documents/search?q=${encodeURIComponent("mockups")}&limit=10`);
+        const hit = (search.results ?? []).find((r) => r.source_id === "omnesis-recordings")!;
+        const { content } = await harness.gatewayJson<{ content: string }>(`/documents/${hit.id}`);
+        expect(content).not.toContain("Also present");
+        const { people } = await harness.gatewayJson<{
+          people: Array<{ personId: string; role: string }>;
+        }>(`/documents/${hit.id}/people`);
+        expect(people.map((p) => p.personId)).not.toContain(present.id);
         expect(people).toContainEqual(
           expect.objectContaining({ personId: guest.id, role: "participant" }),
         );

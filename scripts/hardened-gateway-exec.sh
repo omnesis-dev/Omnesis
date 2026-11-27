@@ -9,5 +9,9 @@
 
 set -eu
 
+# Installed releases are production; retain a service's explicit test override.
+OMNESIS_RUNTIME_MODE="${OMNESIS_RUNTIME_MODE-production}"
+export OMNESIS_RUNTIME_MODE
+
 RELEASE="$(cd "$(dirname "$0")/.." && pwd -P)"
 exec "$RELEASE/node_modules/.bin/tsx" "$RELEASE/packages/cli/src/index.ts" "$@"

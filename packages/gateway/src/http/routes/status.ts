@@ -35,6 +35,7 @@ import { readScanProgressView } from "../../indexer/scan-progress.js";
 import { resolveSearchSettings } from "../../search/search-config.js";
 import { scope } from "../scope.js";
 import { readTestInstance } from "../services/test-instance.js";
+import { telemetryStatus } from "../services/telemetry.js";
 import { GATEWAY_VERSION } from "../../version.js";
 import { GATEWAY_COMPAT } from "../../compat.js";
 import { BadRequestError, ValidationError } from "../errors.js";
@@ -287,6 +288,8 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
   // is wired in. Mirrors the conditional block at server.ts:739-793.
   if (configStore) {
     const store = configStore;
+
+    app.get("/admin/telemetry", scope.admin(), (c) => c.json(telemetryStatus(store.get())));
 
     app.get("/admin/config", scope.admin(), (c) => {
       return c.json({

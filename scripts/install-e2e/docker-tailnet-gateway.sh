@@ -98,7 +98,7 @@ docker run -d --name "$NAME" --label "$LABEL" --network host --memory 3g --cpus 
   --cap-drop ALL --security-opt no-new-privileges \
   --mount "type=volume,source=$VOLUME,target=/var/lib/omnesis" \
   --mount "type=bind,source=$E2E_WORK/tls,target=/run/t3-tls,readonly" \
-  "${keyring[@]}" -e OMNESIS_MDNS_DISABLE=1 -e "OMNESIS_GATEWAY_URL=$GATEWAY_URL" \
+  "${keyring[@]}" -e OMNESIS_MDNS_DISABLE=1 -e OMNESIS_RUNTIME_MODE=test -e OMNESIS_TELEMETRY=off -e "OMNESIS_GATEWAY_URL=$GATEWAY_URL" \
   -e OMNESIS_TLS_CERT=/run/t3-tls/cert.pem -e OMNESIS_TLS_KEY=/run/t3-tls/key.pem "$IMAGE" >/dev/null
 # A wrapper for shared mint/source helpers: the complete real CLI is in-image.
 cat >"$E2E_WORK/omnesis" <<WRAPPER

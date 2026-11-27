@@ -559,6 +559,9 @@ import {
   type ClosedRecordingConversation,
   setRecordingSpeaker,
   type RecordingSpeakerMapping,
+  addRecordingParticipant,
+  removeRecordingParticipant,
+  type NewRecordingParticipant,
   deleteRecordingSession,
   insertRecordingMark,
   type NewRecordingSession,
@@ -2159,6 +2162,14 @@ export const writerHandlers = {
     speaker: number,
     mapping: RecordingSpeakerMapping,
   ): boolean => setRecordingSpeaker(db, sessionId, speaker, mapping),
+  "recordings.addParticipant": (
+    db: Db,
+    sessionId: string,
+    participant: NewRecordingParticipant,
+    addedAt: string,
+  ): boolean => addRecordingParticipant(db, sessionId, participant, addedAt),
+  "recordings.removeParticipant": (db: Db, sessionId: string, key: string): boolean =>
+    removeRecordingParticipant(db, sessionId, key),
   "recordings.deleteSession": (db: Db, id: string): boolean => deleteRecordingSession(db, id),
   "recordings.addMark": (db: Db, mark: RecordingMark): boolean => insertRecordingMark(db, mark),
   "notes.applyTranscript": (db: Db, id: string, expected: string, text: string, nowIso: string) =>

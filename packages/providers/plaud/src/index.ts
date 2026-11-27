@@ -109,6 +109,9 @@ export default defineProvider<PlaudContext>({
         state: plaudRecordingsStateSpec,
         requires: ["state-envelope"],
       },
+      // No analytics tables: recordings land as documents through
+      // syncStructured(). The empty array is what makes the collector call it.
+      analyticsSchemas: [],
       // No `urlPatterns`: Plaud's web app addresses for a recording are not
       // documented, and a guessed pattern would resolve unrelated links.
       async create({ sourceId, providerId, dataCutoff, host }, ctx) {
@@ -125,6 +128,7 @@ export default defineProvider<PlaudContext>({
           sync: () => Promise.resolve(emptySync()),
           syncStructured: (cursor, opts) =>
             source.syncStructured(validatePlaudRecordingsCursor(cursor), opts),
+          analyticsSchemas: [],
         };
       },
     },

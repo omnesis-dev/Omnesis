@@ -9,8 +9,9 @@
  * on. One recording opens on its speakers, where the owner says who each one
  * is (themselves, a person, or just a name), and on its chunks, whose audio can
  * be played while the operator keeps it (`inference.recordings.keepAudioDays`;
- * by default it is deleted once transcribed). Deleting a recording deletes its
- * chunks, any audio kept and its document.
+ * by default it is deleted once transcribed). People who were there without
+ * being told apart as a speaker are added under "Also present". Deleting a
+ * recording deletes its chunks, any audio kept and its document.
  *
  * Suggestions — attendees and the title of a calendar event the recording
  * overlaps, names heard addressed in it — are offered beside what they would
@@ -25,6 +26,7 @@ import { html } from "htm/preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import {
+  addRecordingParticipant,
   deleteRecording,
   dismissRecordingSuggestion,
   getPeople,
@@ -33,6 +35,7 @@ import {
   getRecordingSpeakers,
   getRecordingSuggestions,
   listRecordings,
+  removeRecordingParticipant,
   setRecordingConversationTitle,
   setRecordingSpeaker,
   setRecordingTitle,
@@ -454,6 +457,88 @@ function SpeakerRow({ recordingId, speaker, suggestions = [], onSpeakers, onDism
   </li>`;
 }
 
+/**
+ * People who were present but are not one of the speakers: added from People
+ * or by name, removed with ×. Calendar attendees not mapped to a speaker are
+ * offered here too.
+ */
+function AlsoPresent({ recordingId, participants, suggestions, onParticipants, onDismiss }) {
+  // null, "person" or "name": which picker is open.
+  const [mode, setMode] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function act(action) {
+    setBusy(true);
+    setError(null);
+    try {
+      const payload = await action();
+      setMode(null);
+      if (Array.isArray(payload?.participants)) onParticipants(payload.participants);
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+  const add = (participant) => act(() => addRecordingParticipant(recordingId, participant));
+
+  return html`<div class="recording-present">
+    ${participants.length > 0
+      ? html`<ul class="recording-participants">
+          ${participants.map(
+            (p) => html`<li key=${p.key} class="recording-participant" data-key=${p.key}>
+              <span>${p.name ?? "Someone from People"}${p.personId ? html`<span class="recording-participant-from">, from People</span>` : null}</span>
+              <button
+                type="button"
+                class="btn-tiny recording-participant-remove"
+                aria-label=${`Remove ${p.name ?? "this person"}`}
+                title="Remove"
+                disabled=${busy}
+                onClick=${() => act(() => removeRecordingParticipant(recordingId, p.key))}
+              >×</button>
+            </li>`,
+          )}
+        </ul>`
+      : html`<p class="privacy-empty">No one added. Add people who were there but did not speak, or were not told apart.</p>`}
+    ${mode === null
+      ? html`<${SpeakerSuggestions}
+          suggestions=${suggestions}
+          disabled=${busy}
+          onAccept=${(s) => add(s.personId ? { personId: s.personId } : { name: s.name })}
+          onDismiss=${async (s) => {
+            setBusy(true);
+            setError(null);
+            try {
+              await onDismiss(s);
+            } catch (err) {
+              setError(errorText(err));
+            } finally {
+              setBusy(false);
+            }
+          }}
+        />`
+      : null}
+    ${mode === "person"
+      ? html`<${PersonSearch}
+          disabled=${busy}
+          onPick=${(person) => add({ personId: person.id })}
+          onCancel=${() => setMode(null)}
+        />`
+      : mode === "name"
+        ? html`<${NameForm} initial="" disabled=${busy} onSave=${(name) => add({ name })} onCancel=${() => setMode(null)} />`
+        : html`<div class="recording-speaker-actions">
+            <button type="button" class="btn-tiny" disabled=${busy} onClick=${() => setMode("person")}>
+              Add a person…
+            </button>
+            <button type="button" class="btn-tiny" disabled=${busy} onClick=${() => setMode("name")}>
+              Type a name…
+            </button>
+          </div>`}
+    ${error ? html`<div class="privacy-banner error" role="alert">${error}</div>` : null}
+  </div>`;
+}
+
 /** The calendar's title for a recording, offered under its own. */
 function TitleSuggestion({ suggestion, onAccept, onDismiss }) {
   const [busy, setBusy] = useState(false);
@@ -661,6 +746,7 @@ async function loadRecording(id) {
       recording: detail.recording,
       chunks: Array.isArray(detail.chunks) ? detail.chunks : [],
       speakers: Array.isArray(speakers?.speakers) ? speakers.speakers : [],
+      participants: Array.isArray(speakers?.participants) ? speakers.participants : [],
       suggestions: await loadAllSuggestions(id, detail.recording),
     };
   } catch (err) {
@@ -704,10 +790,22 @@ function RecordingDetail({ id }) {
     </div>`;
   }
 
-  const { recording, chunks, speakers, suggestions } = loaded;
+  const { recording, chunks, speakers, participants, suggestions } = loaded;
   const conversations = recording.conversations ?? [];
   const sessionSuggestions = suggestions.session ?? [];
   const titleSuggestion = sessionSuggestions.find((s) => s.kind === "title") ?? null;
+  // The people present without a turn are the whole recording's, so a split
+  // recording offers each calendar attendee once, whichever conversation
+  // they were suggested for.
+  const presentSuggestions = [];
+  const offeredPeople = new Set();
+  for (const list of Object.values(suggestions)) {
+    for (const s of list) {
+      if (s.kind !== "person" || s.speaker !== null || offeredPeople.has(s.personId)) continue;
+      offeredPeople.add(s.personId);
+      presentSuggestions.push(s);
+    }
+  }
 
   // Accepting or dismissing one suggestion can settle others (a person named
   // for one speaker is no longer offered for the rest), so they are read again.
@@ -823,6 +921,22 @@ function RecordingDetail({ id }) {
                 The conversation going on now is written once it has been quiet for a while.
               </p>`
             : null}`}
+
+    <section class="privacy-section">
+      <div class="privacy-section-head">
+        <h2>Also present</h2>
+      </div>
+      <${AlsoPresent}
+        recordingId=${id}
+        participants=${participants}
+        suggestions=${presentSuggestions}
+        onDismiss=${dismiss}
+        onParticipants=${(next) => {
+          update({ participants: next });
+          refreshSuggestions();
+        }}
+      />
+    </section>
 
     <section class="privacy-section">
       <div class="privacy-section-head">

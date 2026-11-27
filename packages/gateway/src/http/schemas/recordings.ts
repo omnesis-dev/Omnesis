@@ -100,6 +100,15 @@ export const setRecordingSpeakerBody = z.union([
   z.object({ clear: z.literal(true) }).strict(),
 ]);
 
+// POST /recordings/:id/participants — someone present without a speaking turn.
+export const addRecordingParticipantBody = z.union([
+  z.object({ personId: z.string().min(1).max(128) }).strict(),
+  z.object({ name: z.string().trim().min(1).max(120) }).strict(),
+]);
+
+/** A participant's key, as `GET /recordings/:id/speakers` lists it. */
+export const recordingParticipantKey = z.string().regex(/^(person|name):.{1,128}$/s);
+
 export const listRecordingsQuery = z
   .object({
     limit: z

@@ -1089,3 +1089,148 @@ describe("RecordingTranscriptionService conversations of an all-day session", ()
     expect((await service.suggestions(id, 2))!.suggestions).toEqual([]);
   });
 });
+
+describe("RecordingTranscriptionService participants without a turn", () => {
+  async function finishedSession(): Promise<string> {
+    const id = await start(undefined, "Q4 budget review");
+    transcripts.push({ text: "Let's start with the travel budget." });
+    await service.addChunk(chunk(id, 0));
+    await service.finish(id, 1, at(60_000));
+    await service.idle();
+    return id;
+  }
+
+  function person(name: string, email: string): string {
+    return findOrCreatePerson(
+      db,
+      { role: "sender", name, emails: [email] },
+      "gmail:test",
+      "2026-01-01",
+    )!;
+  }
+
+  test("a person added as present becomes a participant and is named under the header", async () => {
+    const david = person("David Lin", "david@example.com");
+    const id = await finishedSession();
+
+    expect(await service.addParticipant(id, { personId: david })).toBe("added");
+    expect(await service.addParticipant(id, { name: "Sarah Mendez" })).toBe("added");
+    await service.idle();
+
+    const doc = docs.get(id)!;
+    expect(doc.content.split("\n").slice(0, 4)).toEqual([
+      "# Q4 budget review",
+      "",
+      "Recorded conversation · 2026-03-02 10:00 · 1 min",
+      "Also present: David Lin, Sarah Mendez",
+    ]);
+    // A name without a person is text only, as for a speaker.
+    expect(doc.metadata.people).toEqual([
+      { name: "You", role: "participant", isSelf: true },
+      { role: "participant", personId: david, name: "David Lin" },
+    ]);
+    expect(service.participants(id)).toEqual([
+      { key: `person:${david}`, personId: david, name: "David Lin" },
+      { key: "name:sarah mendez", personId: null, name: "Sarah Mendez" },
+    ]);
+  });
+
+  test("adding someone twice changes nothing, and removing them writes the document again", async () => {
+    const david = person("David Lin", "david@example.com");
+    const id = await finishedSession();
+    await service.addParticipant(id, { personId: david });
+    await service.idle();
+    const revision = () =>
+      db
+        .prepare<[string], { revision: number }>(
+          "SELECT revision FROM recording_sessions WHERE id = ?",
+        )
+        .get(id)!.revision;
+    const before = revision();
+
+    expect(await service.addParticipant(id, { personId: david })).toBe("added");
+    expect(revision()).toBe(before);
+    expect(service.participants(id)).toHaveLength(1);
+
+    expect(await service.removeParticipant(id, `person:${david}`)).toBe(true);
+    await service.idle();
+    expect(docs.get(id)!.content).not.toContain("Also present");
+    expect(docs.get(id)!.metadata.people).toEqual([
+      { name: "You", role: "participant", isSelf: true },
+    ]);
+    expect(await service.removeParticipant(id, `person:${david}`)).toBe(false);
+  });
+
+  test("refuses an unknown person and an unknown recording", async () => {
+    const id = await finishedSession();
+    expect(await service.addParticipant(id, { personId: "nobody" })).toBe("no-such-person");
+    expect(await service.addParticipant("missing", { name: "Maya Reeves" })).toBe("missing");
+    expect(service.participants("missing")).toBeNull();
+  });
+
+  test("someone who is also a speaker is linked once and not named again", async () => {
+    separator = new ReplayVoiceSeparator();
+    const maya = person("Maya Reeves", "maya@example.com");
+    const id = await start();
+    const lines = [
+      { startMs: 0, endMs: 3_000, text: "Shall we look at the budget?", voice: "maya" },
+    ];
+    transcripts.push({
+      text: lines[0]!.text,
+      segments: [{ startMs: 0, endMs: 3_000, text: lines[0]!.text }],
+    });
+    await service.addChunk(
+      chunk(id, 0, { audio: new TextEncoder().encode(JSON.stringify({ segments: lines })) }),
+    );
+    await service.finish(id, 1, at(60_000));
+    await service.idle();
+
+    await service.setSpeaker(id, 1, { kind: "person", personId: maya });
+    await service.addParticipant(id, { personId: maya });
+    await service.idle();
+
+    const doc = docs.get(id)!;
+    expect(doc.content).not.toContain("Also present");
+    expect(doc.metadata.people).toEqual([
+      { name: "You", role: "participant", isSelf: true },
+      { role: "participant", personId: maya, name: "Maya Reeves" },
+    ]);
+  });
+
+  test("a calendar attendee already present is not suggested again", async () => {
+    const jamie = person("Jamie Lopez", "jamie@example.com");
+    const id = await finishedSession();
+    calendar = () => [
+      {
+        documentId: "doc-sync",
+        title: "Q4 budget review",
+        start: at(-5 * 60_000),
+        end: at(55 * 60_000),
+        attendees: [{ personId: jamie, name: "Jamie Lopez" }],
+      },
+    ];
+    expect((await service.suggestions(id))!.suggestions).toEqual([
+      expect.objectContaining({
+        kind: "person",
+        source: "calendar",
+        personId: jamie,
+        speaker: null,
+      }),
+    ]);
+
+    await service.addParticipant(id, { personId: jamie });
+    expect((await service.suggestions(id))!.suggestions).toEqual([]);
+  });
+
+  test("deleting the recording deletes its participants", async () => {
+    const id = await finishedSession();
+    await service.addParticipant(id, { name: "Sarah Mendez" });
+    await service.delete(id);
+    const left = db
+      .prepare<[string], { n: number }>(
+        "SELECT COUNT(*) AS n FROM recording_participants WHERE session_id = ?",
+      )
+      .get(id)!.n;
+    expect(left).toBe(0);
+  });
+});

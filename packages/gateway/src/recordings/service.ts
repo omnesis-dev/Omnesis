@@ -52,6 +52,7 @@ import {
   listUnprojectedOpenRecordingSessions,
   type RecordingConversation,
   listRecordingSpeakers,
+  listRecordingParticipants,
   listUngroupedRecordingVoices,
   getRecordingChunk,
   getRecordingSession,
@@ -72,6 +73,7 @@ import {
   type RecordingChunkStatus,
   type RecordingSession,
   type RecordingSpeakerMapping,
+  type NewRecordingParticipant,
 } from "./storage.js";
 import { resolveGivenName } from "./suggestion-reads.js";
 import {
@@ -80,7 +82,11 @@ import {
   type RecordingSuggestion,
   type SuggestionTurn,
 } from "./suggestions.js";
-import type { SpeakerIdentity, ConversationPart } from "../sources/omnesis-recordings/index.js";
+import type {
+  ConversationPart,
+  ParticipantIdentity,
+  SpeakerIdentity,
+} from "../sources/omnesis-recordings/index.js";
 import type { SeparatedVoices, VoiceSeparator, VoiceWindow } from "./voices/voices.js";
 import type {
   TranscriberReadiness,
@@ -134,6 +140,8 @@ export interface RecordingServiceDeps {
     | "closeRecordingConversations"
     | "setRecordingConversationTitle"
     | "markRecordingConversationProjected"
+    | "addRecordingParticipant"
+    | "removeRecordingParticipant"
   >;
   readDb: Database.Database;
   transcribe: (
@@ -156,6 +164,7 @@ export interface RecordingServiceDeps {
     chunks: readonly RecordingChunk[],
     marks: readonly RecordingMark[],
     speakers: readonly SpeakerIdentity[],
+    participants: readonly ParticipantIdentity[],
     conversation?: ConversationPart,
   ) => DocumentInput | null;
   /** The voice separator, or null while speakers are not told apart. */
@@ -251,6 +260,8 @@ export interface RecordingChunkView {
 }
 
 export type SetSpeakerOutcome = "set" | "missing" | "no-such-person";
+
+export type AddParticipantOutcome = "added" | "missing" | "no-such-person";
 
 /** Lines of a speaker shown when the owner reviews who spoke. */
 const SPEAKER_SAMPLES = 3;
@@ -535,6 +546,43 @@ export class RecordingTranscriptionService {
     return "set";
   }
 
+  /**
+   * Who the owner says was present without a speaking turn of their own, or
+   * null when the session does not exist.
+   */
+  participants(id: string): ParticipantIdentity[] | null {
+    if (!getRecordingSession(this.deps.readDb, id)) return null;
+    return this.participantIdentities(id);
+  }
+
+  /** Add someone who was present; the document is written again. */
+  async addParticipant(
+    id: string,
+    participant: NewRecordingParticipant,
+  ): Promise<AddParticipantOutcome> {
+    if (
+      "personId" in participant &&
+      !getPersonNames(this.deps.readDb, [participant.personId]).has(participant.personId)
+    ) {
+      return "no-such-person";
+    }
+    const added = await this.deps.writeGate.addRecordingParticipant(
+      id,
+      participant,
+      this.now().toISOString(),
+    );
+    if (!added) return "missing";
+    this.kick();
+    return "added";
+  }
+
+  /** Remove a participant; false when the session has no such participant. */
+  async removeParticipant(id: string, key: string): Promise<boolean> {
+    const removed = await this.deps.writeGate.removeRecordingParticipant(id, key);
+    if (removed) this.kick();
+    return removed;
+  }
+
   /** Give a session the owner's title, or clear it (null); its document is written again. */
   async setTitle(id: string, title: string | null): Promise<boolean> {
     const set = await this.deps.writeGate.setRecordingTitle(id, title?.trim() || null);
@@ -633,6 +681,11 @@ export class RecordingTranscriptionService {
         speakers.filter((s) => s.isSelf || s.personId || s.name).map((s) => s.speaker),
       ),
       mappedPeople: new Set(speakers.flatMap((s) => (s.personId ? [s.personId] : []))),
+      presentPeople: new Set(
+        listRecordingParticipants(this.deps.readDb, id).flatMap((p) =>
+          p.personId ? [p.personId] : [],
+        ),
+      ),
       dismissed,
       resolveName: (name) => {
         const key = name.toLowerCase();
@@ -860,7 +913,13 @@ export class RecordingTranscriptionService {
     await this.groupVoices(sessionId);
     const chunks = listRecordingChunks(this.deps.readDb, sessionId);
     const marks = listRecordingMarks(this.deps.readDb, sessionId);
-    const doc = this.deps.buildDocument(session, chunks, marks, this.speakerIdentities(sessionId));
+    const doc = this.deps.buildDocument(
+      session,
+      chunks,
+      marks,
+      this.speakerIdentities(sessionId),
+      this.participantIdentities(sessionId),
+    );
     if (doc) await this.deps.ingest([doc]);
     else await this.deps.deleteDocument(sessionId);
     // A delete that landed while the document was written must not leave
@@ -893,6 +952,7 @@ export class RecordingTranscriptionService {
     }
     const chunks = listRecordingChunks(this.deps.readDb, sessionId);
     const speakers = this.speakerIdentities(sessionId);
+    const participants = this.participantIdentities(sessionId);
     const marks = marksByConversation(
       listRecordingMarks(this.deps.readDb, sessionId),
       conversations,
@@ -902,14 +962,21 @@ export class RecordingTranscriptionService {
     const lastN = session.finishedAt !== null ? conversations.at(-1)?.n : undefined;
     let written = 0;
     for (const c of conversations) {
-      const doc = this.deps.buildDocument(session, chunks, marks.get(c.n) ?? [], speakers, {
-        n: c.n,
-        firstSeq: c.firstSeq,
-        lastSeq: c.lastSeq,
-        startedAt: c.startedAt,
-        title: c.title,
-        last: c.n === lastN,
-      });
+      const doc = this.deps.buildDocument(
+        session,
+        chunks,
+        marks.get(c.n) ?? [],
+        speakers,
+        participants,
+        {
+          n: c.n,
+          firstSeq: c.firstSeq,
+          lastSeq: c.lastSeq,
+          startedAt: c.startedAt,
+          title: c.title,
+          last: c.n === lastN,
+        },
+      );
       const hash = doc?.contentHash ?? null;
       if (hash === c.contentHash) continue;
       if (doc) await this.deps.ingest([doc]);
@@ -995,6 +1062,20 @@ export class RecordingTranscriptionService {
       isSelf: s.isSelf,
       personId: s.personId,
       name: s.personId ? (names.get(s.personId) ?? s.name) : s.name,
+    }));
+  }
+
+  /** The session's participants without a turn, with the names of their people. */
+  private participantIdentities(sessionId: string): ParticipantIdentity[] {
+    const participants = listRecordingParticipants(this.deps.readDb, sessionId);
+    const names = getPersonNames(
+      this.deps.readDb,
+      participants.flatMap((p) => (p.personId ? [p.personId] : [])),
+    );
+    return participants.map((p) => ({
+      key: p.key,
+      personId: p.personId,
+      name: p.personId ? (names.get(p.personId) ?? null) : p.name,
     }));
   }
 
