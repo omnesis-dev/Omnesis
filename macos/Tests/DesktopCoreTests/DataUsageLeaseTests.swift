@@ -182,6 +182,76 @@ final class DataUsageLeaseTests: XCTestCase {
         XCTAssertFalse(DesktopReadinessFailureDiagnostic.permitsSoleWaiter(defaultHandler: true, autoReaps: true))
     }
 
+    func testSamplerReceiptDistinguishesMatchingMetadataFromStoredBindingAndLatchesRefusal() {
+        let identity = DesktopBackgroundProcessIdentity(pid: 42, parent: 7, startedSeconds: 1, startedMicroseconds: 2)
+        var acquisition = DesktopReadinessFailureDiagnostic.SamplerIdentityAcquisition(
+            parent: 7, firstIdentity: identity, firstImage: "/usr/bin/sample"
+        )
+        var receipt = DesktopReadinessFailureDiagnostic.SamplerReceipt()
+        receipt.iteration(.milliseconds(1), bound: acquisition.binding != nil, elapsed: .milliseconds(30), reason: nil)
+        XCTAssertEqual(receipt.firstBindingMs, -1)
+        acquisition.observe(identity: identity, image: "/usr/bin/sample", ownedUnreaped: true, elapsed: .milliseconds(40))
+        receipt.iteration(.milliseconds(2), bound: acquisition.binding != nil, elapsed: .milliseconds(40), reason: nil)
+        acquisition.observe(identity: identity, image: "/usr/bin/sample", ownedUnreaped: true, elapsed: .seconds(5))
+        receipt.iteration(.milliseconds(3), bound: acquisition.binding != nil, elapsed: .seconds(5), reason: acquisition.refusal)
+        receipt.iteration(.milliseconds(1), bound: false, elapsed: .seconds(6), reason: "cancelled")
+        XCTAssertEqual(receipt.firstBindingMs, 40)
+        XCTAssertEqual(receipt.firstRefusalMs, 5000)
+        XCTAssertEqual(receipt.refusal, "deadline")
+        XCTAssertFalse(acquisition.hasVerifiedOutputBinding)
+        XCTAssertTrue(receipt.summary.contains("bindingEverAcquired=true"))
+        XCTAssertFalse(receipt.summary.contains("/usr/bin/sample"))
+    }
+
+    func testSamplerReceiptBoundsObservationProgressAndRejectsRawRefusalText() {
+        var receipt = DesktopReadinessFailureDiagnostic.SamplerReceipt()
+        receipt.preloop(spawn: .seconds(100), metadata: .milliseconds(12), write: .milliseconds(20), sync: .milliseconds(8))
+        receipt.file(bytes: 0, elapsed: .zero)
+        receipt.file(bytes: 123, elapsed: .milliseconds(50))
+        receipt.file(bytes: Int64.max, elapsed: .seconds(100))
+        receipt.file(bytes: nil, elapsed: .seconds(101))
+        for _ in 0 ..< 1100 {
+            receipt.observe(.running, elapsed: .milliseconds(10))
+        }
+        receipt.observe(.interrupted, elapsed: .milliseconds(70))
+        receipt.observe(.ownershipLost, elapsed: .seconds(100))
+        receipt.iteration(.seconds(100), bound: false, elapsed: .seconds(100), reason: "/invented/private/tool-output")
+        XCTAssertEqual(receipt.spawnMs, 60000)
+        XCTAssertEqual(receipt.firstWaitMs, 10)
+        XCTAssertEqual(receipt.running, 1024)
+        XCTAssertEqual(receipt.interrupted, 1)
+        XCTAssertEqual(receipt.lost, 1)
+        XCTAssertEqual(receipt.maxGapMs, 59930)
+        XCTAssertEqual(receipt.maxIterationMs, 60000)
+        XCTAssertEqual(receipt.firstNonzeroMs, 50)
+        XCTAssertEqual(receipt.maxBytes, DesktopReadinessFailureDiagnostic.maximumStackBytes + 1)
+        XCTAssertEqual(receipt.lastBytes, -1)
+        XCTAssertTrue(receipt.fileRefused)
+        XCTAssertEqual(receipt.refusal, "other")
+        XCTAssertFalse(receipt.summary.contains("private/tool-output"))
+        XCTAssertLessThan(receipt.summary.utf8.count, 1024)
+    }
+
+    func testSamplerReceiptSeparatesAttemptedSignalsFromObservedJoinStatus() {
+        var receipt = DesktopReadinessFailureDiagnostic.SamplerReceipt()
+        receipt.signal(kill: false, elapsed: .seconds(5), result: -1, error: ESRCH)
+        XCTAssertEqual(receipt.termOutcome, "missing")
+        XCTAssertEqual(receipt.joinMs, -1)
+        XCTAssertEqual(receipt.exit, "unobserved")
+        receipt.signal(kill: true, elapsed: .seconds(6), result: 0, error: EPERM)
+        receipt.observe(.joined, elapsed: .milliseconds(6020))
+        receipt.didJoin(status: SIGKILL, elapsed: .milliseconds(6020))
+        XCTAssertEqual(receipt.killOutcome, "sent")
+        XCTAssertEqual(receipt.joined, 1)
+        XCTAssertEqual(receipt.joinMs, 6020)
+        XCTAssertEqual(receipt.exit, "kill")
+        for (status, expected) in [(Int32(0), "exit0"), (Int32(3 << 8), "exitNonzero"), (SIGTERM, "term"), (SIGABRT, "other")] {
+            var joined = DesktopReadinessFailureDiagnostic.SamplerReceipt()
+            joined.didJoin(status: status, elapsed: .seconds(1))
+            XCTAssertEqual(joined.exit, expected)
+        }
+    }
+
     func testSamplerFirstIdentityCanArriveWithinTheExistingBudget() {
         let parent = Int32(7)
         let identity = DesktopBackgroundProcessIdentity(pid: 42, parent: parent, startedSeconds: 1, startedMicroseconds: 2)

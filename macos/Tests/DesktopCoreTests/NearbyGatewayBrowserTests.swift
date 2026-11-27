@@ -6,6 +6,8 @@ import Foundation
 import XCTest
 
 final class NearbyGatewayBrowserTests: XCTestCase {
+    private static let observationLock = NSLock()
+    private static var retainedObservationResources: [(DesktopOwnedUIObservation, DesktopNearbyGatewayBrowser, Driver)] = []
     private final class Clock: @unchecked Sendable {
         private let lock = NSLock()
         private var value = ContinuousClock.now
@@ -130,11 +132,20 @@ final class NearbyGatewayBrowserTests: XCTestCase {
     private func ownedBrowser(
         driver: Driver,
         now: @escaping @Sendable () -> ContinuousClock.Instant = { .now },
-        closeNow: @escaping @Sendable () -> ContinuousClock.Instant = { .now }
+        closeNow: @escaping @Sendable () -> ContinuousClock.Instant = { .now },
+        observation: DesktopOwnedUIObservation? = nil
     )
         -> DesktopNearbyGatewayBrowser {
         let browser = DesktopNearbyGatewayBrowser(driver: driver, now: now, closeNow: closeNow)
         addTeardownBlock {
+            if let observation {
+                let joined = await observation.close()
+                if !joined {
+                    Self.observationLock.withLock { Self.retainedObservationResources.append((observation, browser, driver)) }
+                    XCTFail("Diagnostic cleanup is unconfirmed; the observation and exact fixture resources are retained")
+                    return
+                }
+            }
             let result = await browser.beginClose().join(until: closeNow().advanced(by: .seconds(1)))
             XCTAssertEqual(result, .confirmed)
         }
@@ -412,29 +423,56 @@ final class NearbyGatewayBrowserTests: XCTestCase {
         let entered = expectation(description: "owned setup entered")
         let release = DispatchSemaphore(value: 0)
         defer { release.signal() }
+        let observation = DesktopOwnedUIObservation(.blockedDNS)
         let driver = Driver()
-        driver.blockBrowse = { entered.fulfill()
+        driver.blockBrowse = {
+            observation.record(.dnsFixture, .entered)
+            entered.fulfill()
             if release.wait(timeout: .now() + 5) == .timedOut {
+                observation.record(.automaticRelease, .entered)
                 XCTFail("The test must explicitly release its blocked DNS setup before fixture cleanup")
             }
+            observation.record(.dnsFixture, .returned)
         }
-        let browser = ownedBrowser(driver: driver)
+        let browser = ownedBrowser(driver: driver, observation: observation)
+        let token = observation.begin(.blockedDNS)
         browser.start()
+        observation.record(.fulfillment, .entered)
         await fulfillment(of: [entered], timeout: 1)
+        observation.record(.fulfillment, .returned)
+        observation.record(.snapshot, .entered)
         let before = browser.snapshot()
+        observation.record(.snapshot, .returned)
+        observation.record(.logicalClose, .entered)
         let handle = browser.beginClose()
         XCTAssertTrue(handle === browser.beginClose())
+        observation.record(.logicalClose, .returned)
+        observation.record(.snapshot, .entered)
         XCTAssertEqual(browser.snapshot().state, .unavailable)
         XCTAssertNotEqual(browser.snapshot().generation, before.generation)
+        observation.record(.snapshot, .returned)
+        observation.record(.futureJoin, .entered)
         let blocked = await handle.join(until: .now.advanced(by: .milliseconds(10)))
+        observation.record(.futureJoin, .returned)
         XCTAssertEqual(blocked, .blocked)
         XCTAssertFalse(handle.isConfirmed)
+        observation.record(.cancellation, .entered)
         let cancelled = Task { await handle.join(until: .now.advanced(by: .seconds(1))) }
         cancelled.cancel()
         let cancelledResult = await cancelled.value
+        observation.record(.cancellation, .returned)
         XCTAssertEqual(cancelledResult, .blocked)
+        observation.record(.explicitRelease, .entered)
         release.signal()
+        observation.record(.explicitRelease, .returned)
+        observation.end(token)
+        let diagnosticJoined = await observation.close()
+        XCTAssertTrue(diagnosticJoined, "Diagnostic cleanup must be confirmed before fixture disposal")
+        // The teardown retains this exact cohort if the diagnostic child could not join.
+        guard diagnosticJoined else { return }
+        observation.record(.physicalFinish, .entered)
         await finish(browser, driver: driver)
+        observation.record(.physicalFinish, .returned)
         let stale = try XCTUnwrap(driver.all("browse").first)
         await stale.emit(.service(.init(name: "TooLate", interface: 1), added: true))
         XCTAssertTrue(browser.snapshot().candidates.isEmpty)

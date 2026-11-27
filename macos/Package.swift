@@ -14,6 +14,12 @@ let package = Package(
     targets: [
         .target(name: "DesktopCore"),
         .executableTarget(name: "OmnesisRuntimeExec", dependencies: ["DesktopCore"]),
-        .testTarget(name: "DesktopCoreTests", dependencies: ["DesktopCore", "OmnesisRuntimeExec"]),
+        .testTarget(
+            name: "DesktopCoreTests",
+            dependencies: ["DesktopCore", "OmnesisRuntimeExec"],
+            path: "Tests",
+            exclude: ["Composition", "OmnesisDesktopTests", "Support"],
+            sources: ["DesktopCoreTests", "TestSupport"]
+        ),
     ]
 )

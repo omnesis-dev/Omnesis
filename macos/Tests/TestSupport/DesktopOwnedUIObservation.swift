@@ -5,15 +5,28 @@ import Darwin
 import DesktopCore
 import Foundation
 
-/// Selected hosted-test observation only. No AppKit object or arbitrary control text leaves MainActor.
+/// Selected test observation only. No AppKit object or arbitrary control text enters the observer queue.
 final class DesktopOwnedUIObservation: @unchecked Sendable {
-    enum Case: String, Codable { case staleOffMac, currentOffMac }
-    enum Operation: String, Codable { case save, consent, consentAction, writeReceipt, acknowledgement }
+    enum Case: String, Codable { case staleOffMac, currentOffMac, blockedDNS }
+    enum Operation: String, Codable { case save, consent, consentAction, writeReceipt, acknowledgement, blockedDNS }
+    struct Trigger {
+        let deadline: ContinuousClock.Instant
+        init(_ selected: Case, began: ContinuousClock.Instant) {
+            deadline = began.advanced(by: selected == .blockedDNS ? .seconds(1) : .seconds(5))
+        }
+
+        func isDue(at time: ContinuousClock.Instant) -> Bool {
+            time >= deadline
+        }
+    }
+
     enum Phase: String, Codable {
         case operation, layout, display, childrenModern, childrenLegacy, subviews, identifierModern, identifierLegacy
         case labelModern, labelLegacy, valueModern, valueLegacy, enabledModern, enabledLegacy, frame, roleModern, roleLegacy
         case actionNames, namedSelector, directSelector, namedDispatch, directDispatch, automaticDiagnostics
         case consentSheet, consentRoot, writeReceipt, acknowledgement, failureDiagnostics
+        case observationQueued, observationFired, observationFinished
+        case dnsFixture, fulfillment, snapshot, logicalClose, futureJoin, cancellation, explicitRelease, automaticRelease, physicalFinish
     }
 
     enum Return: String, Codable { case entered, returned, threw }
@@ -29,7 +42,7 @@ final class DesktopOwnedUIObservation: @unchecked Sendable {
     struct Token: Equatable { let id: UUID }
     private struct Active { let token: Token
         let operation: Operation
-        let deadline: ContinuousClock.Instant
+        let trigger: Trigger
     }
 
     private static let budgetLock = NSLock()
@@ -61,7 +74,7 @@ final class DesktopOwnedUIObservation: @unchecked Sendable {
         let accepted = lock.withLock { () -> Bool in
             guard !closing else { return false }
             timer?.cancel()
-            active = Active(token: token, operation: operation, deadline: .now.advanced(by: .seconds(5)))
+            active = Active(token: token, operation: operation, trigger: Trigger(selected, began: .now))
             return !spent
         }
         record(.operation, .entered)
@@ -70,11 +83,12 @@ final class DesktopOwnedUIObservation: @unchecked Sendable {
             let remaining = lock.withLock { () -> Duration? in
                 guard !closing, let active, active.token == token, !spent else { return nil }
                 timer = work
-                return ContinuousClock.now.duration(to: active.deadline)
+                return ContinuousClock.now.duration(to: active.trigger.deadline)
             }
             if let remaining {
                 let parts = remaining.components
                 let seconds = max(0, Double(parts.seconds) + Double(parts.attoseconds) / 1e18)
+                record(.observationQueued, .entered)
                 queue.asyncAfter(deadline: .now() + seconds, execute: work)
             }
         }
@@ -103,6 +117,14 @@ final class DesktopOwnedUIObservation: @unchecked Sendable {
 
     func record(_ phase: Phase, _ result: Return) {
         lock.withLock { if !closing { append(phase, result) } }
+        if selected == .blockedDNS {
+            // Fixed scalar facts only. Closing stops journal mutation, but final fixture
+            // disposal still needs its own before/after receipt after the sampler joins.
+            let elapsed = began.duration(to: .now).components
+            let ms = Int(max(0, min(7200, elapsed.seconds))) * 1000 + Int(max(0, elapsed.attoseconds) / 1_000_000_000_000_000)
+            let line = "browser-observation:\(phase.rawValue):\(result.rawValue):ms=\(ms)\n"
+            FileHandle.standardError.write(Data(line.utf8))
+        }
     }
 
     private func append(_ phase: Phase, _ result: Return) {
@@ -114,26 +136,37 @@ final class DesktopOwnedUIObservation: @unchecked Sendable {
 
     private func fire(_ token: Token) {
         let before = lock.withLock { () -> (Active, [Entry])? in
-            guard !closing, !spent, let active, active.token == token, ContinuousClock.now >= active.deadline,
+            guard !closing, !spent, let active, active.token == token, active.trigger.isDue(at: .now),
                   Self.budgetLock.withLock({ Self.sampledCases.insert(selected).inserted }) else { return nil }
             spent = true
             running = true
             return (active, entries)
         }
         guard let before else { return }
+        record(.observationFired, .entered)
         var physical = true
         var atSpawn: Entry?
         var atJoin: Entry?
+        var spawnMs: Int?
+        var joinMs: Int?
+        func elapsedMs() -> Int {
+            let elapsed = began.duration(to: .now).components
+            return Int(max(0, min(7200, elapsed.seconds))) * 1000 + Int(max(0, elapsed.attoseconds) / 1_000_000_000_000_000)
+        }
         let result: String = if let target { DesktopOwnedUISelfSampler.sample(target, physical: { confirmed in
             physical = confirmed
             lock.withLock {
                 if confirmed { atJoin = entries.last
+                    joinMs = elapsedMs()
                     unconfirmedSampler = nil
-                } else { atSpawn = entries.last }
+                } else { atSpawn = entries.last
+                    spawnMs = elapsedMs()
+                }
             }
         }, retainOwner: { pid, identity, directory in
             lock.withLock { unconfirmedSampler = (pid, identity, directory) }
         }) } else { "result=target-refused,joined=true" }
+        record(.observationFinished, .returned)
         let after = lock.withLock { (active?.token.id, entries) }
         // The journal is finite metadata. Raw sample publication is independently gated by
         // target identity, zero exit, exact physical join and retained private file checks.
@@ -145,7 +178,9 @@ final class DesktopOwnedUIObservation: @unchecked Sendable {
             physical: physical,
             result: result,
             atSpawn: atSpawn,
-            atJoin: atJoin
+            atJoin: atJoin,
+            spawnMs: spawnMs,
+            joinMs: joinMs
         )
         let pending = lock.withLock { () -> [CheckedContinuation<Bool, Never>] in
             running = false
@@ -183,7 +218,9 @@ final class DesktopOwnedUIObservation: @unchecked Sendable {
         physical: Bool,
         result: String,
         atSpawn: Entry?,
-        atJoin: Entry?
+        atJoin: Entry?,
+        spawnMs: Int?,
+        joinMs: Int?
     ) throws {
         struct Journal: Encodable {
             let selected: Case
@@ -194,6 +231,8 @@ final class DesktopOwnedUIObservation: @unchecked Sendable {
             let samplerResult: String
             let phaseAtSamplerSpawn: Entry?
             let phaseAtSamplerJoin: Entry?
+            let samplerSpawnMs: Int?
+            let samplerJoinMs: Int?
             let before: [Entry]
             let after: [Entry]
         }
@@ -222,6 +261,8 @@ final class DesktopOwnedUIObservation: @unchecked Sendable {
             samplerResult: result,
             phaseAtSamplerSpawn: atSpawn,
             phaseAtSamplerJoin: atJoin,
+            samplerSpawnMs: spawnMs,
+            samplerJoinMs: joinMs,
             before: before,
             after: after
         ))

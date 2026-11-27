@@ -119,6 +119,100 @@ enum DesktopReadinessFailureDiagnostic {
         return nil
     }
 
+    /// Fixed scalar observations only. These facts never grant signal or publication authority.
+    struct SamplerReceipt {
+        enum SignalOutcome: String { case sent, missing, denied, other }
+        private(set) var spawnMs = -1, metadataMs = -1, ownerWriteMs = -1, ownerSyncMs = -1
+        private(set) var firstWaitMs = -1, firstBindingMs = -1, firstRefusalMs = -1, firstNonzeroMs = -1
+        private(set) var running = 0, joined = 0, interrupted = 0, lost = 0
+        private(set) var maxGapMs = 0, maxIterationMs = 0, lastBytes = -1, maxBytes = 0
+        private(set) var fileRefused = false
+        private(set) var refusal = "none", exit = "unobserved"
+        private(set) var termMs = -1, killMs = -1, joinMs = -1
+        private(set) var termOutcome = "unobserved", killOutcome = "unobserved"
+        private var lastWaitMs: Int?
+
+        static func milliseconds(_ duration: Duration) -> Int {
+            guard duration > .zero else { return 0 }
+            guard duration < .seconds(60) else { return 60000 }
+            let components = duration.components
+            return Int(components.seconds * 1000 + components.attoseconds / 1_000_000_000_000_000)
+        }
+
+        mutating func preloop(spawn: Duration? = nil, metadata: Duration? = nil, write: Duration? = nil, sync: Duration? = nil) {
+            if let spawn { spawnMs = Self.milliseconds(spawn) }
+            if let metadata { metadataMs = Self.milliseconds(metadata) }
+            if let write { ownerWriteMs = Self.milliseconds(write) }
+            if let sync { ownerSyncMs = Self.milliseconds(sync) }
+        }
+
+        mutating func observe(_ observation: SamplerLifecycle.Observation, elapsed: Duration) {
+            let now = Self.milliseconds(elapsed)
+            if firstWaitMs < 0 { firstWaitMs = now }
+            if let lastWaitMs { maxGapMs = max(maxGapMs, max(0, now - lastWaitMs)) }
+            lastWaitMs = now
+            switch observation {
+            case .running: running = min(1024, running + 1)
+            case .joined: joined = min(1024, joined + 1)
+            case .interrupted: interrupted = min(1024, interrupted + 1)
+            case .ownershipLost: lost = min(1024, lost + 1)
+            }
+        }
+
+        mutating func iteration(_ duration: Duration, bound: Bool, elapsed: Duration, reason: String?) {
+            maxIterationMs = max(maxIterationMs, Self.milliseconds(duration))
+            if bound, firstBindingMs < 0 { firstBindingMs = Self.milliseconds(elapsed) }
+            if let reason, firstRefusalMs < 0 {
+                firstRefusalMs = Self.milliseconds(elapsed)
+                let allowed = [
+                    "file-refused",
+                    "oversize",
+                    "deadline",
+                    "cancelled",
+                    "identity-changed",
+                    "owner-refused",
+                    "sampler-unverified",
+                    "sampler-identity-refused",
+                    "sampler-parent-refused",
+                    "sampler-identity-reappeared",
+                ]
+                refusal = allowed.contains(reason) ? reason : "other"
+            }
+        }
+
+        mutating func file(bytes: Int64?, elapsed: Duration) {
+            guard let bytes, bytes >= 0 else { fileRefused = true
+                lastBytes = -1
+                return
+            }
+            lastBytes = Int(min(bytes, Int64(maximumStackBytes + 1)))
+            maxBytes = max(maxBytes, lastBytes)
+            if bytes > 0, firstNonzeroMs < 0 { firstNonzeroMs = Self.milliseconds(elapsed) }
+        }
+
+        mutating func signal(kill: Bool, elapsed: Duration, result: Int32, error: Int32) {
+            let outcome: SignalOutcome = result == 0 ? .sent : error == ESRCH ? .missing : error == EPERM ? .denied : .other
+            if kill { killMs = Self.milliseconds(elapsed)
+                killOutcome = outcome.rawValue
+            } else { termMs = Self.milliseconds(elapsed)
+                termOutcome = outcome.rawValue
+            }
+        }
+
+        mutating func didJoin(status: Int32, elapsed: Duration) {
+            joinMs = Self.milliseconds(elapsed)
+            let signal = status & 0x7F
+            if signal == 0 { exit = (status >> 8) & 0xFF == 0 ? "exit0" : "exitNonzero" }
+            else if signal == SIGTERM { exit = "term" }
+            else if signal == SIGKILL { exit = "kill" }
+            else { exit = "other" }
+        }
+
+        var summary: String {
+            "spawnMs=\(spawnMs),metadataMs=\(metadataMs),ownerWriteMs=\(ownerWriteMs),ownerSyncMs=\(ownerSyncMs),firstWaitMs=\(firstWaitMs),bindingEverAcquired=\(firstBindingMs >= 0),firstBindingMs=\(firstBindingMs),running=\(running),joined=\(joined),interrupted=\(interrupted),lost=\(lost),maxGapMs=\(maxGapMs),maxIterationMs=\(maxIterationMs),firstRefusalMs=\(firstRefusalMs),refusal=\(refusal),firstNonzeroMs=\(firstNonzeroMs),lastBytes=\(lastBytes),maxBytes=\(maxBytes),fileRefused=\(fileRefused),termMs=\(termMs),term=\(termOutcome),killMs=\(killMs),kill=\(killOutcome),joinMs=\(joinMs),exit=\(exit)"
+        }
+    }
+
     /// Only the function that freshly posix_spawn'ed the child may use this state.
     /// WNOHANG == 0 proves it is still our unreaped child. No other code reaps it;
     /// its PID cannot be reused between that observation and a cleanup signal.
@@ -332,6 +426,7 @@ enum DesktopReadinessFailureDiagnostic {
         guard permitsSoleWaiter() else { return "result=reaper-refused" }
         let manager = FileManager.default
         var temporary: URL?
+        var receipt = SamplerReceipt()
         do {
             let parent = try URL(fileURLWithPath: DesktopCanonicalPath.resolve(manager.temporaryDirectory.path), isDirectory: true)
             let directory = parent.appendingPathComponent("omnesis-owned-readiness-" + UUID().uuidString, isDirectory: true)
@@ -384,6 +479,7 @@ enum DesktopReadinessFailureDiagnostic {
             guard argv.dropLast().allSatisfy({ $0 != nil }), environment.dropLast().allSatisfy({ $0 != nil }),
                   verifies(target) else { throw SampleFailure.refused }
             var pid: pid_t = 0
+            let spawnBegan = ContinuousClock.now
             let spawned = argv.withUnsafeBufferPointer { args in environment.withUnsafeBufferPointer { env in
                 posix_spawn(&pid, command, &actions, nil, args.baseAddress!, env.baseAddress!)
             } }
@@ -391,11 +487,14 @@ enum DesktopReadinessFailureDiagnostic {
             // Optional image/birth metadata gates evidence; cleanup authority is the
             // fresh direct child plus the sole waitpid owner's unreaped relationship.
             let began = ContinuousClock.now
+            receipt.preloop(spawn: spawnBegan.duration(to: began))
             let sampler = try? DesktopBackgroundProcessIdentity.read(pid)
             var acquisition = SamplerIdentityAcquisition(parent: getpid(), firstIdentity: sampler, firstImage: image(pid))
+            receipt.preloop(metadata: began.duration(to: .now))
             var exitReconciled = false
             func diagnostic(_ result: String) -> String {
-                result + "; exitReconciled=\(exitReconciled); sampler[" + acquisition.summary(elapsed: began.duration(to: .now)) + "]"
+                result + "; exitReconciled=\(exitReconciled); sampler[" + acquisition
+                    .summary(elapsed: began.duration(to: .now)) + "]; receipt[" + receipt.summary + "]"
             }
             var reason: String?, status: Int32 = 0
             // Retain only this spawned child's kernel binding if join cannot be confirmed.
@@ -405,15 +504,25 @@ enum DesktopReadinessFailureDiagnostic {
                     .utf8
             )
             let written = ownership.withUnsafeBytes { Darwin.write(ownerFD, $0.baseAddress, $0.count) }
-            if written != ownership.count || fsync(ownerFD) != 0 { reason = "owner-refused" }
+            receipt.preloop(write: began.duration(to: .now))
+            if written != ownership.count { reason = "owner-refused" }
+            else {
+                let syncBegan = ContinuousClock.now
+                let synced = fsync(ownerFD)
+                receipt.preloop(sync: syncBegan.duration(to: .now))
+                if synced != 0 { reason = "owner-refused" }
+            }
             var lifecycle = SamplerLifecycle(), didJoin = false
             while !lifecycle.finished {
                 guard permitsSoleWaiter() else { return diagnostic("result=reaper-changed,joined=false,privateRetained=true") }
+                let iterationBegan = ContinuousClock.now
                 // This is the sole waitpid owner, from successful spawn until join/loss.
                 let waited = waitpid(pid, &status, WNOHANG)
                 var observation: SamplerLifecycle.Observation = waited == pid ? .joined :
                     waited == 0 ? .running : errno == EINTR ? .interrupted : .ownershipLost
+                receipt.observe(observation, elapsed: began.duration(to: .now))
                 let state = fileState()
+                receipt.file(bytes: state.map { Int64($0.st_size) }, elapsed: began.duration(to: .now))
                 reason = reason ?? refusal(bytes: Int64(state?.st_size ?? -1), elapsed: began.duration(to: .now), ownedFile: state != nil)
                 if Task.isCancelled { reason = reason ?? "cancelled" }
                 if !verifies(target) { reason = reason ?? "identity-changed" }
@@ -429,8 +538,10 @@ enum DesktopReadinessFailureDiagnostic {
                         // Still the same fresh child's sole waiter. Reap only this PID;
                         // ECHILD/lost ownership never grants signal or publication authority.
                         let rechecked = waitpid(pid, &status, WNOHANG)
-                        return rechecked == pid ? .joined :
+                        let reobservation: SamplerLifecycle.Observation = rechecked == pid ? .joined :
                             rechecked == 0 ? .running : errno == EINTR ? .interrupted : .ownershipLost
+                        receipt.observe(reobservation, elapsed: began.duration(to: .now))
+                        return reobservation
                     }
                     exitReconciled = observation == .joined
                     reason = reason ?? acquisition.refusal
@@ -440,10 +551,24 @@ enum DesktopReadinessFailureDiagnostic {
                     exitReconciled = exitReconciled || acquisition.phase == .joinedOwnedExit
                     reason = reason ?? acquisition.refusal
                 }
+                receipt.iteration(
+                    iterationBegan.duration(to: .now),
+                    bound: acquisition.binding != nil,
+                    elapsed: began.duration(to: .now),
+                    reason: reason
+                )
                 switch lifecycle.advance(observation, elapsed: began.duration(to: .now), refused: reason != nil) {
-                case .terminate: _ = Darwin.kill(pid, SIGTERM)
-                case .kill: _ = Darwin.kill(pid, SIGKILL)
-                case .joined: didJoin = true
+                case .terminate:
+                    let result = Darwin.kill(pid, SIGTERM)
+                    let error = errno
+                    receipt.signal(kill: false, elapsed: began.duration(to: .now), result: result, error: error)
+                case .kill:
+                    let result = Darwin.kill(pid, SIGKILL)
+                    let error = errno
+                    receipt.signal(kill: true, elapsed: began.duration(to: .now), result: result, error: error)
+                case .joined:
+                    didJoin = true
+                    receipt.didJoin(status: status, elapsed: began.duration(to: .now))
                 case .unconfirmed: return diagnostic("result=join-unconfirmed,joined=false,privateRetained=true")
                 case .wait, .finished: break
                 }
@@ -454,6 +579,12 @@ enum DesktopReadinessFailureDiagnostic {
             }
             guard didJoin else { return diagnostic("result=join-unconfirmed,joined=false,privateRetained=true") }
             guard acquisition.hasVerifiedOutputBinding else {
+                receipt.iteration(
+                    .zero,
+                    bound: acquisition.binding != nil,
+                    elapsed: began.duration(to: .now),
+                    reason: acquisition.refusal ?? "sampler-unverified"
+                )
                 return diagnostic("result=\(acquisition.refusal ?? "sampler-unverified"),joined=true,privateRetained=true")
             }
             var observed = stat()
@@ -464,6 +595,7 @@ enum DesktopReadinessFailureDiagnostic {
             else { return diagnostic("result=identity-or-file-refused,joined=true,privateRetained=true; " + outputFacts) }
             reason = reason ?? refusal(bytes: Int64(final.st_size), elapsed: began.duration(to: .now), ownedFile: true)
             if let reason {
+                receipt.iteration(.zero, bound: acquisition.binding != nil, elapsed: began.duration(to: .now), reason: reason)
                 if reason == "oversize" { try manager.removeItem(at: output)
                     try manager.removeItem(at: owner)
                     try manager.removeItem(at: directory)
@@ -505,7 +637,7 @@ enum DesktopReadinessFailureDiagnostic {
             didPublish?(published)
             return diagnostic("result=collected,joined=true; " + stackFacts(Data(bytes.prefix(count))))
         } catch {
-            return "result=io-refused,privateRetained=\(temporary != nil)"
+            return "result=io-refused,privateRetained=\(temporary != nil); receipt[" + receipt.summary + "]"
         }
     }
 

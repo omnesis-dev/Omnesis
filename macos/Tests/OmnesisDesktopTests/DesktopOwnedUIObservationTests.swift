@@ -6,6 +6,21 @@ import XCTest
 
 /// Pure policy checks only. Never sample or warm the UI before the selected diagnostic cases.
 final class DesktopOwnedUIObservationTests: XCTestCase {
+    func testCoreObservationHasOneAbsoluteEarlierTriggerWithoutChangingHostedWindows() {
+        let began = ContinuousClock.now
+        let core = DesktopOwnedUIObservation.Trigger(.blockedDNS, began: began)
+        XCTAssertFalse(core.isDue(at: began.advanced(by: .milliseconds(999))))
+        XCTAssertTrue(core.isDue(at: began.advanced(by: .seconds(1))))
+        XCTAssertTrue(core.isDue(at: began.advanced(by: .seconds(2))))
+        for selected in [DesktopOwnedUIObservation.Case.staleOffMac, .currentOffMac] {
+            let hosted = DesktopOwnedUIObservation.Trigger(selected, began: began)
+            XCTAssertFalse(hosted.isDue(at: began.advanced(by: .seconds(1))))
+            XCTAssertFalse(hosted.isDue(at: began.advanced(by: .milliseconds(4999))))
+            XCTAssertTrue(hosted.isDue(at: began.advanced(by: .seconds(5))))
+        }
+        XCTAssertEqual(core.deadline, began.advanced(by: .seconds(1)), "Repeated observations cannot renew the trigger")
+    }
+
     func testUnknownOrAutomaticallyReapedSignalPolicyCannotStartAnOwnedSampler() {
         XCTAssertTrue(DesktopOwnedUISelfSampler.permitsSoleWaiter(defaultHandler: true, autoReaps: false))
         XCTAssertFalse(DesktopOwnedUISelfSampler.permitsSoleWaiter(defaultHandler: false, autoReaps: false))

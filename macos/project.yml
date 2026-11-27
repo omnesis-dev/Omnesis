@@ -93,6 +93,7 @@ targets:
     platform: macOS
     sources:
       - path: Tests/OmnesisDesktopTests
+      - path: Tests/TestSupport
     dependencies:
       - target: OmnesisDesktop
       - package: DesktopCore
