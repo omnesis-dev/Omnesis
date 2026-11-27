@@ -119,6 +119,8 @@ distinct from the external XCUITest runner and from packaged first-run qualifica
 The scheme and admitted test bridge disable parallel testing: these cases share
 application windows and process-local test adapters. Keychain component fixtures
 restore their process-local interaction setting and remove only their own items.
+CI retains application-test evidence after a completed Core-test failure. The
+actual Core outcome still fails the job and blocks unsigned package assembly.
 Window captures use ScreenCaptureKit's current-process-only API, without requesting
 Screen Recording access or capturing another application's windows.
 The Codex fixture is the integrity-checked pinned distribution. Its Keychain test
@@ -210,6 +212,9 @@ daemon exits, preserves ordinary Finder moves, and requests keep-data retirement
 when its application is trashed or deleted. Pending update/restore recovery intent
 is preserved. Packaged Finder and login behavior still need native qualification.
 Stopping Omnesis preserves the library. Removing data is a separate explicit operation.
+Quitting joins the presentation's control connection and prerequisite monitors;
+background collection continues independently. Unconfirmed connection cleanup
+keeps the app open with an error while preserving verified library reads.
 
 Native sources use provider descriptors and the existing discovery, validation,
 credentials, authorization and add endpoints. Chat shares the Apple `AgentClient`

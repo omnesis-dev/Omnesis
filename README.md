@@ -19,7 +19,9 @@
 
 <p align="center"><strong>Index, search, and reason about your entire digital life.<br>On machines you own, with the models you choose.</strong></p>
 
-Omnesis syncs your email, messages, notes, calendars, tasks, contacts, files, health data, finances, meetings, photos, browsing and phone activity — more than 40 sources — into one search index on a machine you own. Search is hybrid: keyword and semantic ranking over the same index, with structured filters and SQL over the numeric data. No Omnesis service stores your data, and no account is required.
+Omnesis syncs your email, messages, notes, calendars, tasks, contacts, files, health data, finances, meetings, photos, browsing and phone activity — more than 40 sources — into one search index on a machine you own. Search is hybrid: keyword and semantic ranking over the same index, with structured filters and SQL over the numeric data. No Omnesis service stores your data. An account is optional for source and Docker installations.
+
+The [native macOS app source](macos/README.md) manages an encrypted library or joins an existing compatible gateway. Its setup uses an Omnesis account. See the build guide for native checks and distribution requirements.
 
 Omnesis also connects what it indexes. A **people graph** resolves every email address, phone number and display name across your sources into one person, so searching for someone finds every conversation with them, on every platform. A **reference graph** links threads, attachments and cited documents, so search ranks well-referenced documents higher and the agent can follow an email to its attachment and on to the meeting notes that cite it.
 
