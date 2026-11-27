@@ -1274,7 +1274,8 @@ omnesis storage cancel JOB_ID --yes</pre>
           gateway through node-llama-cpp, on the GPU through Metal on Apple Silicon. On Windows with
           an Intel CPU that has AMX, llama.cpp cannot free a model without crashing the process, so
           a local GGUF model stays in memory from its first load until the gateway restarts, and
-          loading it again reuses that copy. The <code>transcriber</code> runs whisper.cpp in a
+          loading it again reuses that copy. There, a gateway that stops after closing its stores
+          can still exit with status 0xC0000374. The <code>transcriber</code> runs whisper.cpp in a
           separate process, so a crash in the native code cannot take the gateway down; it uses the
           GPU through Metal on Apple Silicon and the CPU elsewhere. Its engine is compiled from
           source when Omnesis is installed, and an install where that build fails goes ahead without
