@@ -28,6 +28,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -58,7 +59,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.omnesis.android.designsystem.components.EmptyView
 import dev.omnesis.android.designsystem.components.ErrorView
 import dev.omnesis.android.designsystem.components.LoadingView
 import dev.omnesis.android.designsystem.components.OmSpinner
@@ -67,11 +67,15 @@ import dev.omnesis.android.designsystem.components.PersonAvatar
 import dev.omnesis.android.designsystem.theme.OmSpacing
 import dev.omnesis.android.designsystem.theme.OmTheme
 import dev.omnesis.android.transport.dto.PersonSummary
+import dev.omnesis.android.transport.dto.RecordingParticipantDto
 import dev.omnesis.android.transport.dto.RecordingSpeakerDto
 import dev.omnesis.android.transport.dto.SpeakerMapping
 import dev.omnesis.android.transport.dto.displayName
 
-/** Who spoke in a recording, and saying who each speaker is (experimental). */
+/**
+ * Who spoke in a recording, and saying who each speaker is; and who else was
+ * there without a speaking turn of their own (experimental).
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RecordingSpeakersScreen(
@@ -121,6 +125,9 @@ fun RecordingSpeakersScreen(
             onChoosePerson = vm::openPicker,
             onName = { naming = it },
             onClear = vm::clear,
+            onAddPresent = { vm.openPicker(RecordingSpeakersViewModel.ALSO_PRESENT) },
+            onNamePresent = { naming = RecordingSpeakersViewModel.ALSO_PRESENT },
+            onRemovePresent = vm::removeParticipant,
             modifier = Modifier.padding(padding),
         )
     }
@@ -142,6 +149,7 @@ fun RecordingSpeakersScreen(
         NameSpeakerDialog(
             speaker = speaker,
             initial = current?.takeIf { it.personId == null && !it.isSelf }?.name.orEmpty(),
+            alsoPresent = speaker == RecordingSpeakersViewModel.ALSO_PRESENT,
             onDismiss = { naming = null },
             onSave = {
                 vm.name(speaker, it)
@@ -164,41 +172,118 @@ fun RecordingSpeakersContent(
     onName: (Int) -> Unit,
     onClear: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    onAddPresent: () -> Unit = {},
+    onNamePresent: () -> Unit = {},
+    onRemovePresent: (String) -> Unit = {},
 ) {
     val c = OmTheme.colors
     val base = modifier.fillMaxSize().background(c.bgPrimary)
     when (val load = state.load) {
         RecordingSpeakersUiState.Load.Loading -> LoadingView(base)
         is RecordingSpeakersUiState.Load.Failed -> ErrorView(load.message, base, onRetry = onRetry)
-        RecordingSpeakersUiState.Load.Loaded -> if (state.speakers.isEmpty()) {
-            EmptyView(
-                "Speakers were not told apart for this recording. The gateway's speaker setting is off, " +
-                    "or its transcriber gives no timings to tell voices apart.",
-                base,
-            )
-        } else {
-            LazyColumn(
-                modifier = base,
-                verticalArrangement = Arrangement.spacedBy(OmSpacing.md),
-                contentPadding = PaddingValues(OmSpacing.lg),
-            ) {
-                item {
-                    Text(
-                        "Say who each voice is. People you choose become participants of the conversation.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = c.textSecondary,
-                    )
+        RecordingSpeakersUiState.Load.Loaded -> LazyColumn(
+            modifier = base,
+            verticalArrangement = Arrangement.spacedBy(OmSpacing.md),
+            contentPadding = PaddingValues(OmSpacing.lg),
+        ) {
+            item {
+                Text(
+                    if (state.speakers.isEmpty()) {
+                        "Speakers were not told apart for this recording. The gateway's speaker setting is off, " +
+                            "or its transcriber gives no timings to tell voices apart."
+                    } else {
+                        "Say who each voice is. People you choose become participants of the conversation."
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = c.textSecondary,
+                )
+            }
+            items(state.speakers, key = { it.speaker }) { speaker ->
+                SpeakerCard(
+                    speaker = speaker,
+                    saving = speaker.speaker in state.saving,
+                    onSetSelf = onSetSelf,
+                    onChoosePerson = onChoosePerson,
+                    onName = onName,
+                    onClear = onClear,
+                )
+            }
+            item(key = "also-present") {
+                AlsoPresentCard(
+                    participants = state.participants,
+                    hasVoices = state.speakers.isNotEmpty(),
+                    saving = state.savingParticipants,
+                    onAdd = onAddPresent,
+                    onName = onNamePresent,
+                    onRemove = onRemovePresent,
+                )
+            }
+        }
+    }
+}
+
+/** People who were there but are not one of the speakers. */
+@Composable
+private fun AlsoPresentCard(
+    participants: List<RecordingParticipantDto>,
+    hasVoices: Boolean,
+    saving: Boolean,
+    onAdd: () -> Unit,
+    onName: () -> Unit,
+    onRemove: (String) -> Unit,
+) {
+    val c = OmTheme.colors
+    OmnesisCard(modifier = Modifier.fillMaxWidth(), padding = OmSpacing.lg) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Also present", style = MaterialTheme.typography.titleSmall, color = c.textPrimary)
+                Text(
+                    if (hasVoices) {
+                        "People who were there but are not one of the voices above."
+                    } else {
+                        "People who were there during the recording."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = c.textMuted,
+                )
+            }
+            if (saving) OmSpinner(Modifier.size(18.dp), strokeWidth = 2.dp)
+        }
+        if (participants.isNotEmpty()) {
+            Spacer(Modifier.height(OmSpacing.sm))
+            participants.forEach { participant ->
+                val label = participantLabel(participant)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    PersonAvatar(name = label, size = 28.dp)
+                    Spacer(Modifier.width(OmSpacing.md))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = c.textPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            if (participant.personId != null) "one of your people" else "a name you gave",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = c.textMuted,
+                        )
+                    }
+                    IconButton(onClick = { onRemove(participant.key) }, enabled = !saving) {
+                        Icon(Icons.Outlined.Close, contentDescription = "Remove $label", tint = c.textMuted)
+                    }
                 }
-                items(state.speakers, key = { it.speaker }) { speaker ->
-                    SpeakerCard(
-                        speaker = speaker,
-                        saving = speaker.speaker in state.saving,
-                        onSetSelf = onSetSelf,
-                        onChoosePerson = onChoosePerson,
-                        onName = onName,
-                        onClear = onClear,
-                    )
-                }
+            }
+        }
+        Spacer(Modifier.height(OmSpacing.sm))
+        Row(modifier = Modifier.offset(x = -OmSpacing.sm)) {
+            val padding = PaddingValues(horizontal = OmSpacing.sm, vertical = 0.dp)
+            TextButton(onClick = onAdd, enabled = !saving, contentPadding = padding) {
+                Text("Add person…")
+            }
+            TextButton(onClick = onName, enabled = !saving, contentPadding = padding) {
+                Text("Name…")
             }
         }
     }
@@ -315,7 +400,11 @@ fun PersonPickerContent(
     val c = OmTheme.colors
     Column(modifier.fillMaxWidth().padding(bottom = OmSpacing.lg)) {
         Text(
-            "Who is speaker ${picker.speaker}?",
+            if (picker.speaker == RecordingSpeakersViewModel.ALSO_PRESENT) {
+                "Who else was there?"
+            } else {
+                "Who is speaker ${picker.speaker}?"
+            },
             style = MaterialTheme.typography.titleMedium,
             color = c.textPrimary,
             modifier = Modifier.padding(horizontal = OmSpacing.lg),
@@ -388,12 +477,13 @@ private fun NameSpeakerDialog(
     initial: String,
     onDismiss: () -> Unit,
     onSave: (String) -> Unit,
+    alsoPresent: Boolean = false,
 ) {
     var text by rememberSaveable(speaker) { mutableStateOf(initial) }
     val valid = text.trim().length in 1..SpeakerMapping.MAX_NAME_LENGTH
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Name speaker $speaker") },
+        title = { Text(if (alsoPresent) "Someone who was there" else "Name speaker $speaker") },
         text = {
             Column {
                 Text(

@@ -14,7 +14,8 @@
  * silence, a stretch where recording was paused, the microphone taken by a
  * call, a chunk that could not be transcribed, and chunks that never arrived.
  * A moment the owner marked is a line of its own after the transcript it
- * falls in; the marked audio itself was saved as a note.
+ * falls in; the marked audio itself was saved as a note. People the owner
+ * says were present without a speaking turn are named under the header.
  *
  * Pure: the same session, chunks and marks always render the same text.
  */
@@ -80,6 +81,8 @@ export function renderRecording(
   marks: readonly RecordingMark[] = [],
   /** What to call each speaker; an unnamed one is "Speaker N". */
   speakerNames: ReadonlyMap<number, string> = new Map(),
+  /** Who else was present, without a speaking turn of their own. */
+  alsoPresent: readonly string[] = [],
 ): RenderedRecording {
   const label = (speaker: number | undefined): string =>
     speaker === undefined ? "" : `${speakerNames.get(speaker) ?? `Speaker ${speaker}`}: `;
@@ -170,6 +173,7 @@ export function renderRecording(
     `# ${title}`,
     "",
     `${session.origin === "ambient" ? "Conversation captured by a wearable" : "Recorded conversation"} · ${localStart(session)} · ${formatSpan(durationMs)}`,
+    ...(alsoPresent.length > 0 ? [`Also present: ${alsoPresent.join(", ")}`] : []),
   ];
   return {
     title,

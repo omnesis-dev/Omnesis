@@ -8,8 +8,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.omnesis.android.feature.recording.RecordingSessionProvider
+import dev.omnesis.android.feature.recording.RecordingsGateway
 import dev.omnesis.android.transport.GatewayException
+import dev.omnesis.android.transport.dto.NewParticipant
 import dev.omnesis.android.transport.dto.PersonSummary
+import dev.omnesis.android.transport.dto.RecordingParticipantDto
 import dev.omnesis.android.transport.dto.RecordingSpeakerDto
 import dev.omnesis.android.transport.dto.SpeakerMapping
 import dev.omnesis.android.transport.dto.displayName
@@ -22,7 +25,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-/** The person picker for one speaker: a search over `/people?q=`. */
+/**
+ * The person picker for one speaker, or for someone present without a turn
+ * ([ALSO_PRESENT]): a search over `/people?q=`.
+ */
 data class PersonPickerState(
     val speaker: Int,
     val query: String = "",
@@ -35,8 +41,12 @@ data class RecordingSpeakersUiState(
     val title: String = "",
     val load: Load = Load.Loading,
     val speakers: List<RecordingSpeakerDto> = emptyList(),
+    /** People present without a speaking turn of their own. */
+    val participants: List<RecordingParticipantDto> = emptyList(),
     /** Speakers with a change on its way to the gateway; their actions wait. */
     val saving: Set<Int> = emptySet(),
+    /** A change to who was present is on its way to the gateway; the others wait. */
+    val savingParticipants: Boolean = false,
     /** A change that did not save, shown once. */
     val message: String? = null,
     val picker: PersonPickerState? = null,
@@ -80,8 +90,14 @@ class RecordingSpeakersViewModel @Inject constructor(
                 return@launch
             }
             try {
-                val speakers = gateway.speakers(recordingId)
-                _state.update { it.copy(load = RecordingSpeakersUiState.Load.Loaded, speakers = speakers) }
+                val answer = gateway.speakers(recordingId)
+                _state.update {
+                    it.copy(
+                        load = RecordingSpeakersUiState.Load.Loaded,
+                        speakers = answer.speakers,
+                        participants = answer.participants,
+                    )
+                }
             } catch (_: GatewayException.NotFound) {
                 _state.update {
                     it.copy(load = RecordingSpeakersUiState.Load.Failed("This recording is no longer on the gateway."))
@@ -97,6 +113,10 @@ class RecordingSpeakersViewModel @Inject constructor(
 
     fun choosePerson(speaker: Int, person: PersonSummary) {
         closePicker()
+        if (speaker == ALSO_PRESENT) {
+            addParticipant(NewParticipant.Person(person.id), person.displayName)
+            return
+        }
         change(speaker, SpeakerMapping.Person(person.id)) {
             it.copy(isSelf = false, personId = person.id, name = person.displayName)
         }
@@ -106,11 +126,26 @@ class RecordingSpeakersViewModel @Inject constructor(
     fun name(speaker: Int, raw: String) {
         val name = raw.trim()
         if (name.isEmpty() || name.length > SpeakerMapping.MAX_NAME_LENGTH) return
+        if (speaker == ALSO_PRESENT) {
+            addParticipant(NewParticipant.Name(name), name)
+            return
+        }
         change(speaker, SpeakerMapping.Name(name)) { it.copy(isSelf = false, personId = null, name = name) }
     }
 
     fun clear(speaker: Int) =
         change(speaker, SpeakerMapping.Clear) { it.copy(isSelf = false, personId = null, name = null) }
+
+    /** Take someone off the people present without a turn. */
+    fun removeParticipant(key: String) {
+        val current = _state.value
+        if (current.participants.none { it.key == key }) return
+        changeParticipants(
+            optimistic = current.participants.filterNot { it.key == key },
+            notFound = "They were already removed on the gateway.",
+            personRefused = null,
+        ) { gateway -> gateway.removeParticipant(recordingId, key) }
+    }
 
     fun dismissMessage() = _state.update { it.copy(message = null) }
 
@@ -207,9 +242,64 @@ class RecordingSpeakersViewModel @Inject constructor(
         }
     }
 
+    private fun addParticipant(participant: NewParticipant, displayName: String) {
+        val current = _state.value
+        if (current.participants.any { it.key == participant.key }) return
+        val shown = RecordingParticipantDto(
+            key = participant.key,
+            personId = (participant as? NewParticipant.Person)?.personId,
+            name = displayName,
+        )
+        changeParticipants(
+            optimistic = current.participants + shown,
+            notFound = "This recording is no longer on the gateway.",
+            personRefused = "That person is no longer known to the gateway.".takeIf {
+                participant is NewParticipant.Person
+            },
+        ) { gateway -> gateway.addParticipant(recordingId, participant) }
+    }
+
+    /**
+     * One change to who was present at a time: it shows at once, the gateway's
+     * answer replaces it, and a refusal puts the list back as it was.
+     */
+    private fun changeParticipants(
+        optimistic: List<RecordingParticipantDto>,
+        notFound: String,
+        personRefused: String?,
+        send: suspend (RecordingsGateway) -> List<RecordingParticipantDto>,
+    ) {
+        val before = _state.value
+        if (before.savingParticipants) return
+        _state.update { it.copy(participants = optimistic, savingParticipants = true, message = null) }
+        viewModelScope.launch {
+            val failure = try {
+                val gateway = sessions.gateway() ?: throw NotConnected()
+                val answer = send(gateway)
+                _state.update { it.copy(participants = answer, savingParticipants = false) }
+                null
+            } catch (_: NotConnected) {
+                NOT_CONNECTED
+            } catch (_: GatewayException.NotFound) {
+                notFound
+            } catch (e: GatewayException.ServerError) {
+                if (e.status == 400 && personRefused != null) personRefused else SAVE_FAILED
+            } catch (_: GatewayException) {
+                SAVE_FAILED
+            }
+            if (failure != null) {
+                _state.update {
+                    it.copy(participants = before.participants, savingParticipants = false, message = failure)
+                }
+            }
+        }
+    }
+
     private class NotConnected : Exception()
 
     companion object {
+        /** The picker or name target that adds someone present without a turn; speakers start at 1. */
+        const val ALSO_PRESENT = 0
         const val ARG_RECORDING_ID = "recordingId"
         const val ARG_TITLE = "title"
         const val SEARCH_DEBOUNCE_MS = 300L
@@ -218,6 +308,10 @@ class RecordingSpeakersViewModel @Inject constructor(
         private const val SAVE_FAILED = "The change could not be saved. Try again."
     }
 }
+
+/** A participant's name, or a stand-in for a person whose name the gateway does not know. */
+internal fun participantLabel(participant: RecordingParticipantDto): String =
+    participant.name?.takeIf { it.isNotBlank() } ?: "Someone from your people"
 
 /** "You", the speaker's name, or "Speaker N". */
 internal fun speakerLabel(speaker: RecordingSpeakerDto): String =

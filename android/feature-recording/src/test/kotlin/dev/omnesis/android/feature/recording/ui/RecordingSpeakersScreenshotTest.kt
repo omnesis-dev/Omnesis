@@ -23,6 +23,7 @@ import com.github.takahirom.roborazzi.captureRoboImage
 import dev.omnesis.android.designsystem.theme.OmTheme
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
 import dev.omnesis.android.transport.dto.PersonSummary
+import dev.omnesis.android.transport.dto.RecordingParticipantDto
 import dev.omnesis.android.transport.dto.RecordingSpeakerDto
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -33,7 +34,8 @@ import org.robolectric.annotation.GraphicsMode
 /**
  * Render-review screenshots for the speakers of a recording: a mix of named
  * and unnamed speakers with one change saving, the person picker with
- * results, no speakers told apart, and a failed load, light + dark. All
+ * results, no speakers told apart (with and without people added as also
+ * present), and a failed load, light + dark. All
  * fixture data is invented (privacy rule).
  *
  *   ./gradlew :feature-recording:recordRoborazziDebug   ->   feature-recording/src/test/roborazzi/
@@ -103,6 +105,19 @@ class RecordingSpeakersScreenshotTest {
 
     @Test fun empty_light() = capture("recording_speakers_empty_light", false) { content(empty) }
     @Test fun empty_dark() = capture("recording_speakers_empty_dark", true) { content(empty) }
+
+    private val present = RecordingSpeakersUiState(
+        title = "Q4 budget review",
+        load = RecordingSpeakersUiState.Load.Loaded,
+        speakers = speakers.take(2),
+        participants = listOf(
+            RecordingParticipantDto(key = "person:p-david", personId = "p-david", name = "David Lin"),
+            RecordingParticipantDto(key = "name:sarah mendez", name = "Sarah Mendez"),
+        ),
+    )
+
+    @Test fun present_light() = capture("recording_speakers_present_light", false) { content(present) }
+    @Test fun present_dark() = capture("recording_speakers_present_dark", true) { content(present) }
 
     private val failed = RecordingSpeakersUiState(load = RecordingSpeakersUiState.Load.Failed("Speakers could not be loaded."))
 

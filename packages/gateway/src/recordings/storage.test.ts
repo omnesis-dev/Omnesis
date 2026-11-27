@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase } from "../db.js";
 import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import {
+  addRecordingParticipant,
   deleteRecordingSession,
   finishRecordingSession,
   getRecordingSession,
@@ -18,7 +19,9 @@ import {
   insertRecordingSession,
   listRecordingChunks,
   listRecordingMarks,
+  listRecordingParticipants,
   purgeRecordingAudio,
+  removeRecordingParticipant,
   readRecordingChunkAudio,
   settleRecordingChunk,
 } from "./storage.js";
@@ -222,5 +225,30 @@ describe("recording storage", () => {
     expect(insertRecordingMark(db, { ...mark, noteId: "n0", markedAt: NOW })).toBe(true);
     expect(getRecordingSession(db, "s1")!.revision).toBe(before + 1);
     expect(listRecordingMarks(db, "s1").map((m) => m.noteId)).toEqual(["n0", "n1"]);
+  });
+
+  test("a participant is kept once, changes the session only when added or removed, and goes with it", () => {
+    expect(addRecordingParticipant(db, "s1", { name: "Maya" }, NOW)).toBe(false);
+    session("s1");
+    const revision = () => getRecordingSession(db, "s1")!.revision;
+    const before = revision();
+    expect(addRecordingParticipant(db, "s1", { personId: "p-1" }, NOW)).toBe(true);
+    expect(addRecordingParticipant(db, "s1", { name: " Maya Reeves " }, LATER)).toBe(true);
+    expect(revision()).toBe(before + 2);
+    // The same person, or the same name in another case, is not added again.
+    expect(addRecordingParticipant(db, "s1", { personId: "p-1" }, LATER)).toBe(true);
+    expect(addRecordingParticipant(db, "s1", { name: "maya reeves" }, LATER)).toBe(true);
+    expect(revision()).toBe(before + 2);
+    expect(listRecordingParticipants(db, "s1")).toEqual([
+      { key: "person:p-1", personId: "p-1", name: null, addedAt: NOW },
+      { key: "name:maya reeves", personId: null, name: "Maya Reeves", addedAt: LATER },
+    ]);
+
+    expect(removeRecordingParticipant(db, "s1", "person:p-1")).toBe(true);
+    expect(removeRecordingParticipant(db, "s1", "person:p-1")).toBe(false);
+    expect(revision()).toBe(before + 3);
+
+    expect(deleteRecordingSession(db, "s1")).toBe(true);
+    expect(listRecordingParticipants(db, "s1")).toEqual([]);
   });
 });

@@ -246,6 +246,18 @@ export function createRecordingTables(db: Db): void {
       PRIMARY KEY (session_id, key)
     );
   `);
+  // People the owner says were present without being told apart as a
+  // speaker: a person, or a name without one. `key` keeps each one once.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS recording_participants (
+      session_id TEXT NOT NULL REFERENCES recording_sessions(id) ON DELETE CASCADE,
+      key TEXT NOT NULL,
+      person_id TEXT,
+      name TEXT,
+      added_at TEXT NOT NULL,
+      PRIMARY KEY (session_id, key)
+    );
+  `);
   // Only settled chunks whose audio is kept: what the retention sweep reads.
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_recording_chunks_kept_audio
@@ -878,6 +890,93 @@ export function listDismissedRecordingSuggestions(db: Db, sessionId: string): Se
       .all(sessionId)
       .map((row) => row.key),
   );
+}
+
+// ── participants without a speaking turn ────────────────────────────────
+
+/** Someone the owner says was present, though no speaker is theirs. */
+export interface RecordingParticipant {
+  /** `person:<id>` or `name:<lowercased name>`: what removes it. */
+  key: string;
+  personId: string | null;
+  /** The name given without a person; null for a person. */
+  name: string | null;
+  addedAt: string;
+}
+
+/** Who the owner adds: a person, or a name without one. */
+export type NewRecordingParticipant = { personId: string } | { name: string };
+
+export function recordingParticipantKey(participant: NewRecordingParticipant): string {
+  return "personId" in participant
+    ? `person:${participant.personId}`
+    : `name:${participant.name.trim().toLowerCase()}`;
+}
+
+interface ParticipantRow {
+  key: string;
+  person_id: string | null;
+  name: string | null;
+  added_at: string;
+}
+
+/** A session's participants without a speaking turn, in the order they were added. */
+export function listRecordingParticipants(db: Db, sessionId: string): RecordingParticipant[] {
+  return db
+    .prepare<[string], ParticipantRow>(
+      `SELECT key, person_id, name, added_at FROM recording_participants
+        WHERE session_id = ? ORDER BY added_at, rowid`,
+    )
+    .all(sessionId)
+    .map((row) => ({
+      key: row.key,
+      personId: row.person_id,
+      name: row.name,
+      addedAt: row.added_at,
+    }));
+}
+
+/**
+ * Add someone who was present and mark the session changed so its document
+ * is written again. Adding someone already there changes nothing. False when
+ * the session does not exist.
+ */
+export function addRecordingParticipant(
+  db: Db,
+  sessionId: string,
+  participant: NewRecordingParticipant,
+  addedAt: string,
+): boolean {
+  if (!getRecordingSession(db, sessionId)) return false;
+  const inserted = db
+    .prepare(
+      `INSERT OR IGNORE INTO recording_participants (session_id, key, person_id, name, added_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    .run(
+      sessionId,
+      recordingParticipantKey(participant),
+      "personId" in participant ? participant.personId : null,
+      "name" in participant ? participant.name.trim() : null,
+      addedAt,
+    ).changes;
+  if (inserted > 0) {
+    db.prepare(`UPDATE recording_sessions SET revision = revision + 1 WHERE id = ?`).run(sessionId);
+  }
+  return true;
+}
+
+/**
+ * Remove a participant and mark the session changed so its document is
+ * written again. False when the session has no such participant.
+ */
+export function removeRecordingParticipant(db: Db, sessionId: string, key: string): boolean {
+  const removed = db
+    .prepare(`DELETE FROM recording_participants WHERE session_id = ? AND key = ?`)
+    .run(sessionId, key).changes;
+  if (removed === 0) return false;
+  db.prepare(`UPDATE recording_sessions SET revision = revision + 1 WHERE id = ?`).run(sessionId);
+  return true;
 }
 
 /** The most recently started sessions, newest first. */
