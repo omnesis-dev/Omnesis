@@ -139,3 +139,72 @@ test.skipIf(process.platform === "win32").each([
     }
   },
 );
+
+test("desktop UI evidence can follow a completed Core failure but packaging requires the actual Core outcome", () => {
+  const names = job.steps.map((step) => step.name);
+  const core = job.steps.find((step) => step.id === "core");
+  expect(core).toMatchObject({
+    name: "Test portable native models",
+    "continue-on-error": true,
+    "working-directory": "macos",
+    run: "swift test --disable-automatic-resolution",
+  });
+  expect(core).not.toHaveProperty("if");
+  const gate = job.steps.find((step) => step.name === "Require successful portable native models");
+  expect(gate.if).toBe("${{ !cancelled() }}");
+  expect(gate.env).toEqual({ CORE_OUTCOME: "${{ steps.core.outcome }}" });
+  expect(gate).not.toHaveProperty("continue-on-error");
+  const sequence = [
+    "Resolve SwiftPM packages",
+    "Test portable native models",
+    "Install XcodeGen",
+    "Generate native project",
+    "Build and exercise native application",
+    "Require successful portable native models",
+    "Assemble complete unsigned app and exercise bundled runtime",
+    "Upload unsigned app for isolated QA",
+  ];
+  for (let index = 1; index < sequence.length; index++) {
+    expect(names.indexOf(sequence[index])).toBeGreaterThan(names.indexOf(sequence[index - 1]));
+  }
+  // Default success gating keeps earlier setup failures from running UI, and any
+  // UI/gate failure from assembling or uploading a package.
+  const defaultGated = [
+    ...job.steps.filter((step) => step.name?.startsWith("Prepare ")),
+    ...[
+      "Install build dependencies",
+      "Resolve SwiftPM packages",
+      ...sequence.slice(2, 5),
+      ...sequence.slice(6),
+    ].map((name) => job.steps.find((step) => step.name === name)),
+  ];
+  for (const step of defaultGated) {
+    expect(step).toBeDefined();
+    expect(step, step.name).not.toHaveProperty("if");
+    expect(step, step.name).not.toHaveProperty("continue-on-error");
+  }
+});
+
+test.skipIf(process.platform === "win32").each([
+  ["success", 0],
+  ["failure", 1],
+  ["skipped", 1],
+  ["cancelled", 1],
+  ["", 1],
+  ["unknown", 1],
+])("actual Core outcome gate accepts only success (%s)", (outcome, status) => {
+  const gate = job.steps.find((step) => step.name === "Require successful portable native models");
+  const result = spawnSync(
+    "/bin/bash",
+    ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", gate.run],
+    {
+      cwd: fileURLToPath(new URL("../..", import.meta.url)),
+      env: { PATH: "/usr/bin:/bin", CORE_OUTCOME: outcome },
+      encoding: "utf8",
+      timeout: 3000,
+    },
+  );
+  expect(result.error).toBeUndefined();
+  expect(result.status).toBe(status);
+  if (status !== 0) expect(result.stderr).toContain("Portable native models did not pass");
+});

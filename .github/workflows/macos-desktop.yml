@@ -86,6 +86,8 @@ jobs:
             macos/Package.resolved
           key: ${{ steps.swiftpm-cache.outputs.cache-primary-key }}
       - name: Test portable native models
+        id: core
+        continue-on-error: true
         working-directory: macos
         run: swift test --disable-automatic-resolution
       - name: Install XcodeGen
@@ -122,6 +124,15 @@ jobs:
           desktop_xcodebuild build-for-testing
           node Tests/Support/normalize-test-runner-signature.mjs --products "$PWD/build/Build/Products/Debug"
           desktop_xcodebuild -resultBundlePath build/DesktopTests.xcresult test-without-building
+      - name: Require successful portable native models
+        if: ${{ !cancelled() }}
+        env:
+          CORE_OUTCOME: ${{ steps.core.outcome }}
+        run: |
+          if [ "$CORE_OUTCOME" != "success" ]; then
+            printf 'Portable native models did not pass (outcome: %s)\n' "$CORE_OUTCOME" >&2
+            exit 1
+          fi
       - name: Assemble complete unsigned app and exercise bundled runtime
         run: |
           xcodebuild -project macos/OmnesisDesktop.xcodeproj -scheme OmnesisDesktop -configuration Release -destination 'platform=macOS' -derivedDataPath macos/build CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO build
