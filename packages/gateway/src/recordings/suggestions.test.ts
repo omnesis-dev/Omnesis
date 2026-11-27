@@ -79,4 +79,25 @@ describe("buildSuggestions", () => {
     );
     expect(out).toEqual([]);
   });
+
+  test("a calendar attendee marked present is not offered again for a speaker", () => {
+    const out = buildSuggestions(
+      context({
+        title: "Weekly sync",
+        events: [event()],
+        presentPeople: new Set(["p-priya"]),
+      }),
+    );
+    expect(out).toEqual([
+      {
+        key: "person:p-jamie",
+        kind: "person",
+        source: "calendar",
+        speaker: null,
+        personId: "p-jamie",
+        name: "Jamie R.",
+        evidence: "Weekly sync",
+      },
+    ]);
+  });
 });

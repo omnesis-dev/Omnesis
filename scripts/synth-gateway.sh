@@ -2,6 +2,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Adrien Conrath
 
+# Development instances never acquire the production telemetry capability.
+export OMNESIS_RUNTIME_MODE=development
+export OMNESIS_TELEMETRY=off
+
 # Boot an isolated synthetic-providers gateway + collector for portal demos
 # and ad-hoc inspection. Spawns its own processes — never touches the live
 # setup. Logs / PIDs / DBs live under $OMNESIS_CONFIG_DIR.

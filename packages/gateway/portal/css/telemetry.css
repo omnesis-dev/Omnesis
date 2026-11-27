@@ -1,0 +1,81 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* Copyright (c) 2026 Adrien Conrath */
+
+.telemetry-notice {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 180;
+  width: min(420px, calc(100vw - 32px));
+  box-sizing: border-box;
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 22%);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.telemetry-eyebrow {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.telemetry-notice h2 {
+  margin: 6px 0 14px;
+  color: var(--text-primary);
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.telemetry-notice p { margin: 0 0 12px; }
+.telemetry-notice .telemetry-notice-settings { font-size: 12px; }
+.telemetry-notice-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+.telemetry-notice-actions button { font-size: 12px; }
+.telemetry-error { color: var(--danger); }
+
+.telemetry-settings {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 20px;
+  padding: 16px 20px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.telemetry-settings h2 { margin: 0 0 6px; font-size: 13px; color: var(--text-primary); }
+.telemetry-settings p { margin: 4px 0; max-width: 720px; }
+.telemetry-settings-actions { display: flex; flex-shrink: 0; flex-direction: column; align-items: flex-end; gap: 10px; }
+.telemetry-settings-actions button { font-size: 12px; }
+
+.telemetry-preference {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+  margin-bottom: 20px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.telemetry-preference .telemetry-settings-actions { flex-direction: row; align-items: center; }
+
+@media (max-width: 600px) {
+  .telemetry-notice { right: 16px; bottom: 16px; padding: 20px; }
+  .telemetry-settings { flex-direction: column; gap: 8px; }
+  .telemetry-settings-actions { align-items: flex-start; }
+  .telemetry-preference { align-items: flex-start; flex-direction: column; }
+}

@@ -100,6 +100,7 @@ function Require-RecordedRefusal([string]$queryName,[string]$program) {
 Require-RecordedRefusal 'native.windows-network-probe.example.test' $lookup
 Require-RecordedRefusal 'cares.windows-network-probe.example.test' $resolve
 Require-RecordedRefusal 'relay.omnesis.app' $lookup
+Require-RecordedRefusal 'telemetry.omnesis.app' $lookup
 Require-RecordedRefusal 'omnesis.dev' $lookup
 & node -e 'require("node:dns").lookup("github.com",e=>process.exit(e?1:0));setTimeout(()=>process.exit(2),5000).unref();'
 if ($LASTEXITCODE -ne 0) { throw 'Unrelated DNS stopped working' }

@@ -283,9 +283,28 @@ describe("declaration versus implementation", () => {
           cursor: {},
           hasMore: false,
         }),
+        analyticsSchemas: [],
       }),
     });
     expect(errorsOf(report)).toEqual([]);
+  });
+
+  test("an instance with syncStructured but no schema array fails, because the collector would call sync()", async () => {
+    const def = defineSource({
+      id: "documents-only-structured",
+      name: "Documents-only structured",
+      description: "Writes documents through syncStructured",
+      authType: "local",
+      analyticsSchemas: [],
+      create: async () => ({ sync: async () => emptySync() }),
+    });
+    const report = await runSourceConformance(def, {
+      instantiate: () => ({
+        sync: async () => emptySync(),
+        syncStructured: async () => ({ records: [], documents: [], cursor: {}, hasMore: false }),
+      }),
+    });
+    expect(errorsOf(report)).toEqual(["capability.structured-routing"]);
   });
 
   test("suspend without resume fails, because disabling would be irreversible", async () => {

@@ -6,7 +6,8 @@
  * Never applied on their own — the owner accepts or dismisses each one.
  *
  * An event on the owner's calendar that overlaps the recording offers its
- * attendees as likely participants, and its title as the recording's title.
+ * attendees as likely participants — for an unnamed speaker or as present
+ * without a turn — and its title as the recording's title.
  * Names are not guessed from the transcript: in speech, the words a sentence
  * opens or closes with are mostly fillers ("Beh, …", "…, cioè."), not names.
  *
@@ -37,7 +38,7 @@ export type RecordingSuggestion =
       key: string;
       kind: "person";
       source: "calendar";
-      /** An attendee is offered for any unnamed speaker, not for one in particular. */
+      /** An attendee is offered for any unnamed speaker or as present without a turn. */
       speaker: null;
       personId: string;
       name: string;
@@ -52,6 +53,8 @@ export interface SuggestionContext {
   events: readonly CalendarEventCandidate[];
   /** People already mapped to a speaker of this recording. */
   mappedPeople: ReadonlySet<string>;
+  /** People the owner already said were present without a turn. */
+  presentPeople?: ReadonlySet<string>;
   /** Keys the owner dismissed. */
   dismissed: ReadonlySet<string>;
 }
@@ -92,10 +95,10 @@ export function buildSuggestions(context: SuggestionContext): RecordingSuggestio
     }
   }
 
-  // Attendees not already mapped to a speaker.
+  // Attendees not already mapped to a speaker or marked present.
   for (const [personId, a] of attendees) {
     const key = personKey(personId);
-    if (context.mappedPeople.has(personId)) continue;
+    if (context.mappedPeople.has(personId) || context.presentPeople?.has(personId)) continue;
     if (context.dismissed.has(key)) continue;
     out.push({
       key,

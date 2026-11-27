@@ -1,0 +1,15 @@
+{
+  "name": "@omnesis/telemetry",
+  "version": "0.7.8",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.1.1",
+    "tsx": "^4.19.0",
+    "zod": "^4.6.7"
+  }
+}

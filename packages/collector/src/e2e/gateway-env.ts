@@ -31,6 +31,9 @@ const E2E_GATEWAY_DEFAULTS: Readonly<NodeJS.ProcessEnv> = {
 };
 
 const E2E_INTERNAL_DEFAULTS: Readonly<NodeJS.ProcessEnv> = {
+  // This authority is fixed after inherited defaults, even if a test enables telemetry.
+  OMNESIS_RUNTIME_MODE: "test",
+  OMNESIS_TELEMETRY: "off",
   // Spawned gateways must never turn a test run into a release-network probe.
   OMNESIS_E2E_DISABLE_RELEASE_CHECK: "1",
   // Nor wait on a third-party icon host: synthetic sources inherit their real

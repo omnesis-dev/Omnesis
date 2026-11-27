@@ -163,6 +163,21 @@ describe("renderRecording", () => {
     ]);
   });
 
+  test("names who else was present under the header", () => {
+    const r = renderRecording(
+      session({ endedAt: "2026-03-02T09:01:00.000Z" }),
+      [chunk(0, 0, "First minute.")],
+      [],
+      new Map(),
+      ["David Lin", "Sarah Mendez"],
+    );
+    expect(r.body.split("\n").slice(2, 5)).toEqual([
+      "Recorded conversation · 2026-03-02 10:00 · 1 min",
+      "Also present: David Lin, Sarah Mendez",
+      "",
+    ]);
+  });
+
   test("formats offsets and spans", () => {
     expect(formatOffset(3_725_000)).toBe("01:02:05");
     expect(formatSpan(45_000)).toBe("45 s");

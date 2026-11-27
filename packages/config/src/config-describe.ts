@@ -151,6 +151,14 @@ export const CONFIG_PATHS_BACKEND_ONLY: readonly {
   reason: string;
 }[] = [
   {
+    path: ["telemetry", "acknowledged"],
+    reason: "The telemetry notice records acknowledgement through its gateway action.",
+  },
+  {
+    path: ["telemetry", "noticeShown"],
+    reason: "The portal records disclosure when the installation telemetry notice is displayed.",
+  },
+  {
     path: ["agent", "useBrainKnowledgeMode"],
     reason:
       "Maintained knowledge retrieval comparisons are configured through the CLI or config file.",

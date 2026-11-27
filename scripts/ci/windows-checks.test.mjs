@@ -452,6 +452,12 @@ describe("Windows CI coverage", () => {
     );
     expect(step.run).toContain('if ($env:SHARD) { $checkArgs += "--shard=$env:SHARD" }');
     expect(step.run).toContain("node @checkArgs");
+    // A native crash prints nothing of its own, so the step names the real status.
+    expect(step.run).toContain("$status = $LASTEXITCODE");
+    expect(step.run).toContain(
+      "if ($status -ne 0) { Write-Host ('[step] with-test-embedder.mjs exited {0} (0x{0:X8})' -f $status) }",
+    );
+    expect(step.run).toMatch(/exit \$status\s*$/);
     expect(step.env.SHARD).toBe("${{ matrix.shard }}");
     expect(step.env).toHaveProperty("OMNESIS_TEST_EMBEDDER_CACHE");
   });

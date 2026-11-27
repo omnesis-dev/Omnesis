@@ -197,11 +197,44 @@
             <a href="#source-icons">Source icons</a>).
           </li>
           <li>
-            No account is required to use Omnesis, and it sends no usage telemetry by default. Some
-            builds offer an optional Omnesis account for reaching your gateway through the Omnesis
-            relay; see <a href="#omnesis-account">Optional Omnesis account</a>.
+            No account is required to use Omnesis. Production gateways send minimal installation
+            telemetry by default, with an easy opt-out; see
+            <a href="#installation-telemetry">Installation telemetry</a>. An optional Omnesis
+            account provides access through the relay; see
+            <a href="#omnesis-account">Optional Omnesis account</a>.
           </li>
         </ul>
+
+        <h2 id="installation-telemetry">Installation telemetry</h2>
+        <p>
+          Once a day, a participating production gateway sends its version, verified public Git
+          commit (or <code>custom</code>), operating-system family, CPU architecture, schema version
+          and UTC rotation month, together with an identifier that changes every month, derived from
+          a persistent random local secret. The secret itself is never sent. This census is
+          independent of accounts, gateway registration and the relays. It never includes personal
+          content, connected accounts, indexed data, conversations or feature usage.
+        </p>
+        <p>
+          The ingestion service and its ingress do not retain IP addresses, user agents or other
+          identifying HTTP metadata for analytics or access logs. Network providers necessarily
+          process transport information to deliver a request. Individual daily records expire at the
+          first hourly cleanup after their UTC rotation month ends; identifier-free statistics
+          remain for historical adoption analysis. We do not link identifiers across months. The
+          figures describe active participating gateways, not total users or lifetime installations.
+        </p>
+        <p>
+          The installer discloses reporting before first startup, and a small first-visit portal
+          notice offers an opt-out. Change it in Settings → Config or run
+          <code>omnesis config set /telemetry/enabled false</code>. The gateway cancels pending
+          reporting immediately. <code>OMNESIS_TELEMETRY=off</code> in the gateway environment
+          overrides the saved preference. Re-enable with
+          <code>omnesis config set /telemetry/enabled true</code> after removing that override. Read
+          the complete
+          <a href="https://github.com/omnesis-dev/Omnesis/blob/main/TELEMETRY.md"
+            >telemetry specification</a
+          >. A rotating identifier is pseudonymous; default-enabled reporting still requires
+          assessment of applicable privacy and consent rules.
+        </p>
 
         <h2>Email updates</h2>
         <p>

@@ -59,6 +59,9 @@ case "$(node --version 2>/dev/null)" in
     done
     ;;
 esac
+# Only an installed source launcher grants production runtime authority.
+OMNESIS_RUNTIME_MODE="\${OMNESIS_RUNTIME_MODE-production}"
+export OMNESIS_RUNTIME_MODE
 RUNTIME_CONFIG_DIR="\${OMNESIS_CONFIG_DIR:-$DEFAULT_CONFIG_DIR}"
 UPDATE_LOCK_ACQUIRED=0
 UPDATE_LOCK_HANDOFF=0

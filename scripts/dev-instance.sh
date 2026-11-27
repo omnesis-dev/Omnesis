@@ -2,6 +2,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Adrien Conrath
 
+# Development instances never acquire the production telemetry capability.
+export OMNESIS_RUNTIME_MODE=development
+export OMNESIS_TELEMETRY=off
+
 # One command to stand up ONE observable, isolated HTTPS Omnesis instance the
 # agent can immediately drive `cli`/curl against — replacing the multi-step
 # worktree dance (manual OMNESIS_CONFIG_DIR / port / DB-path / token wiring).

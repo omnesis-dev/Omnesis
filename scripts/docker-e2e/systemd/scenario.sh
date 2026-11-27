@@ -16,6 +16,16 @@ PASS=/etc/omnesis-gateway/keyring.pass
 SEED=/var/cache/omnesis-npm-seed
 export OMNESIS_HARDENED_NPM_CACHE_SEED=$SEED
 
+# systemd does not inherit the scenario environment. Persist the isolation in
+# a drop-in before any installation can start its gateway service.
+mkdir -p /etc/systemd/system/omnesis-gateway.service.d
+cat > /etc/systemd/system/omnesis-gateway.service.d/telemetry-isolation.conf <<'EOF'
+[Service]
+Environment=OMNESIS_RUNTIME_MODE=test
+Environment=OMNESIS_TELEMETRY=off
+EOF
+systemctl daemon-reload
+
 assert() {
   local msg="$1"; shift
   if "$@"; then echo "  ok: $msg"; else echo "  FAILED: $msg" >&2; exit 1; fi

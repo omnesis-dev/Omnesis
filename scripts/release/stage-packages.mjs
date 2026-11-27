@@ -28,6 +28,7 @@ import {
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { transformManifest } from "./transform-manifest.mjs";
+import { telemetryBuildCommit } from "./telemetry-build.mjs";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -233,6 +234,14 @@ export function stagePackage({ dir, pkg }, outBase, opts = {}) {
     recursive: true,
     filter: (src) => !TEST_FILE.test(relative(distDir, src)),
   });
+
+  if (pkg.name === "@omnesis/gateway") {
+    writeFileSync(
+      join(stageDir, "dist", "telemetry-build.json"),
+      JSON.stringify({ gitCommit: telemetryBuildCommit(repoRoot, { allowArchiveProof: true }) }) +
+        "\n",
+    );
+  }
 
   for (const asset of runtimeAssetsFor(pkg.name)) {
     const assetSource = join(srcDir, asset.from);

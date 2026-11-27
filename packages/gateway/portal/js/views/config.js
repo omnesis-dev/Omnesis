@@ -25,6 +25,7 @@ import {
 } from "../api.js";
 import { JsonEditor } from "../lib/json-editor.js";
 import { Segmented } from "../components/segmented.js";
+import { TelemetrySettings } from "../components/telemetry.js";
 import { ConfirmModal } from "../components/confirm-modal.js";
 import { StructuredForm } from "./config-structured-form.js";
 import { PrivacyPolicyDiff } from "./policies/policy.js";
@@ -530,6 +531,7 @@ export function ConfigView() {
       </header>
 
       ${flashBanner}
+      <${TelemetrySettings} draftPending=${hasStagedEdits} />
       ${externalNotice && hasStagedEdits ? html`
         <div class="config-banner notice">
           The config changed elsewhere (CLI, file edit, or another tab) while

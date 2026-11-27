@@ -10465,6 +10465,51 @@ describe("admin config endpoints", () => {
     rmSync(configDir, { recursive: true, force: true });
   });
 
+  test("telemetry acknowledgement and opt-out persist at the gateway across config-store reloads", async () => {
+    const result = await cfgReq("/admin/config", {
+      method: "PATCH",
+      body: JSON.stringify({ telemetry: { enabled: false, acknowledged: true } }),
+    });
+    expect(result.status).toBe(200);
+    const status = await cfgReq("/admin/telemetry");
+    expect(status.status).toBe(200);
+    expect(await status.json()).toMatchObject({
+      enabled: false,
+      configuredEnabled: false,
+      acknowledged: true,
+    });
+    const reloaded = new ConfigStore({ filePath: configPath });
+    try {
+      await reloaded.load();
+      expect(reloaded.get().telemetry).toMatchObject({ enabled: false, acknowledged: true });
+    } finally {
+      reloaded.stop();
+    }
+    const agree = await cfgReq("/admin/config", {
+      method: "PATCH",
+      body: JSON.stringify({ telemetry: { acknowledged: true } }),
+    });
+    expect(agree.status).toBe(200);
+    expect(configStore.get().telemetry?.enabled).toBe(false);
+  });
+
+  test("telemetry preferences require admin scope and expose no local identifiers", async () => {
+    const token = mintToken([SCOPE_READ]).token;
+    const denied = await cfgApp.request("/admin/telemetry", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(denied.status).toBe(403);
+    const response = await cfgReq("/admin/telemetry");
+    expect(Object.keys(await response.json()).sort()).toEqual([
+      "acknowledged",
+      "configuredEnabled",
+      "enabled",
+      "forcedDisabled",
+      "noticeShown",
+      "runtimeAllowed",
+    ]);
+  });
+
   // `/config` is the read-scope view. Its `resolvedSearch` is what a caller
   // recording the settings behind a measurement reads (the eval runner's
   // system snapshot), so the contract is pinned here: present and populated
