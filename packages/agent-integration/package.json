@@ -37,7 +37,7 @@
     "@omnesis/platform": "*",
     "@omnesis/types": "*",
     "@types/ws": "^8.18.2",
-    "openclaw": "2026.11.6"
+    "openclaw": "2026.11.8"
   },
   "files": [
     "dist",

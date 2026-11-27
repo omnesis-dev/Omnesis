@@ -8,7 +8,7 @@
     "start": "tsx src/main.ts"
   },
   "dependencies": {
-    "better-sqlite3": "^13.1.1",
+    "better-sqlite3": "^13.2.0",
     "tsx": "^4.19.0",
     "zod": "^4.6.7"
   }
