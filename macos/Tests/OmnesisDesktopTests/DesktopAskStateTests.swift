@@ -116,6 +116,48 @@ private final class DesktopChatScrollObservationCapture: @unchecked Sendable {
 
 @MainActor
 final class DesktopAskStateTests: XCTestCase {
+    func testLocalWheelTimingRejectsZeroAndUnrepresentableUptime() {
+        for value in [0.0, -1, .nan, .infinity, Double(UInt64.max) / 1_000_000_000] {
+            XCTAssertThrowsError(try DesktopScrollInput.EventTiming.nanoseconds(from: value))
+        }
+        let zero = DesktopScrollInput.EventTiming(
+            creationUptime: 100, occurrenceUptime: 100, intendedNanoseconds: 0,
+            rawNanoseconds: 0, convertedNanoseconds: 0, nativeSeconds: 0
+        )
+        XCTAssertThrowsError(try zero.validate(preDispatchUptime: 100))
+    }
+
+    func testLocalWheelTimingRejectsClockConversionMismatch() throws {
+        let intended = try DesktopScrollInput.EventTiming.nanoseconds(from: 100)
+        for (raw, converted, native) in [(intended + 1, intended, 100.0), (intended, intended + 1, 100.0), (intended, intended, 101.0)] {
+            let timing = DesktopScrollInput.EventTiming(
+                creationUptime: 100, occurrenceUptime: 100, intendedNanoseconds: intended,
+                rawNanoseconds: raw, convertedNanoseconds: converted, nativeSeconds: native
+            )
+            XCTAssertThrowsError(try timing.validate(preDispatchUptime: 101))
+        }
+    }
+
+    func testLocalWheelTimingRejectsNonAdvancingSequenceAndInvalidBracket() throws {
+        let intended = try DesktopScrollInput.EventTiming.nanoseconds(from: 100)
+        let timing = DesktopScrollInput.EventTiming(
+            creationUptime: 99, occurrenceUptime: 100, intendedNanoseconds: intended,
+            rawNanoseconds: intended, convertedNanoseconds: intended, nativeSeconds: 100
+        )
+        XCTAssertNoThrow(try timing.validate(preDispatchUptime: 101, previousSeconds: 99, previousNanoseconds: intended - 1))
+        XCTAssertThrowsError(try timing.validate(preDispatchUptime: 101, previousSeconds: 100))
+        XCTAssertThrowsError(try timing.validate(preDispatchUptime: 101, previousSeconds: 101))
+        XCTAssertThrowsError(try timing.validate(preDispatchUptime: 101, previousNanoseconds: intended))
+        XCTAssertThrowsError(try timing.validate(preDispatchUptime: 101, previousNanoseconds: intended + 1))
+        XCTAssertThrowsError(try timing.validate(preDispatchUptime: 99))
+        XCTAssertThrowsError(try timing.validate(preDispatchUptime: .nan))
+        let reversed = DesktopScrollInput.EventTiming(
+            creationUptime: 101, occurrenceUptime: 100, intendedNanoseconds: intended,
+            rawNanoseconds: intended, convertedNanoseconds: intended, nativeSeconds: 100
+        )
+        XCTAssertThrowsError(try reversed.validate(preDispatchUptime: 102))
+    }
+
     func testJumpVisibilityKeepsActualViewportStableThroughScrollAndResize() async throws {
         try await runJumpViewportScenario(instrumented: false)
     }

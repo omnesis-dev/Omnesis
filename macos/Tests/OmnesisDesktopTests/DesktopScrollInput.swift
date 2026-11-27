@@ -23,6 +23,45 @@ private final class DesktopLiveScrollCounts: @unchecked Sendable {
 enum DesktopScrollInput {
     struct Failure: Error, CustomStringConvertible { let description: String }
 
+    struct EventTiming {
+        let creationUptime: TimeInterval
+        let occurrenceUptime: TimeInterval
+        let intendedNanoseconds: UInt64
+        let rawNanoseconds: UInt64
+        let convertedNanoseconds: UInt64
+        let nativeSeconds: TimeInterval
+
+        static func nanoseconds(from uptime: TimeInterval) throws -> UInt64 {
+            let scaled = uptime * 1_000_000_000
+            guard uptime.isFinite, uptime > 0, scaled.isFinite, scaled >= 1, scaled < Double(UInt64.max) else {
+                throw Failure(description: "Local event uptime cannot be represented as positive Quartz nanoseconds")
+            }
+            return UInt64(scaled)
+        }
+
+        func validate(preDispatchUptime: TimeInterval, previousSeconds: TimeInterval? = nil, previousNanoseconds: UInt64? = nil) throws {
+            guard creationUptime.isFinite, creationUptime > 0,
+                  occurrenceUptime.isFinite, occurrenceUptime >= creationUptime,
+                  preDispatchUptime.isFinite, preDispatchUptime >= occurrenceUptime,
+                  intendedNanoseconds > 0, rawNanoseconds == intendedNanoseconds,
+                  convertedNanoseconds == intendedNanoseconds,
+                  try intendedNanoseconds == (Self.nanoseconds(from: occurrenceUptime)),
+                  nativeSeconds.isFinite, nativeSeconds > 0 else {
+                throw Failure(description: "Local event clocks must match their positive creation-to-dispatch uptime bracket")
+            }
+            let expectedSeconds = Double(intendedNanoseconds) / 1_000_000_000
+            // Account only for integer-to-Double, division and native Double representation.
+            let roundingBound = Double(intendedNanoseconds).ulp / 1_000_000_000 + expectedSeconds.ulp + nativeSeconds.ulp
+            guard abs(nativeSeconds - expectedSeconds) <= roundingBound,
+                  nativeSeconds >= creationUptime - roundingBound - 1e-9,
+                  nativeSeconds <= preDispatchUptime + roundingBound,
+                  previousSeconds.map({ $0.isFinite && nativeSeconds > $0 }) ?? true,
+                  previousNanoseconds.map({ convertedNanoseconds > $0 }) ?? true else {
+                throw Failure(description: "Local event timestamps must correspond across Quartz and AppKit and strictly advance")
+            }
+        }
+    }
+
     static func scrollUp(_ scroll: NSScrollView, in window: NSWindow, evidence name: String) async throws {
         func require(_ condition: Bool, _ message: String) throws {
             if !condition { throw Failure(description: message) }
@@ -58,7 +97,8 @@ enum DesktopScrollInput {
         guard let source = CGEventSource(stateID: .privateState) else {
             throw Failure(description: "The private local event source could not be created")
         }
-        func event(_ phase: CGScrollPhase, expected: NSEvent.Phase, delta: Int32) throws -> NSEvent {
+        func event(_ phase: CGScrollPhase, expected: NSEvent.Phase, delta: Int32) throws -> (native: NSEvent, timing: EventTiming) {
+            let creationUptime = ProcessInfo.processInfo.systemUptime
             guard let raw = CGEvent(
                 scrollWheelEvent2Source: source,
                 units: .pixel,
@@ -72,6 +112,9 @@ enum DesktopScrollInput {
             raw.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(phase.rawValue))
             raw.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
             raw.setIntegerValueField(.scrollWheelEventMomentumPhase, value: 0)
+            let occurrenceUptime = ProcessInfo.processInfo.systemUptime
+            let intendedNanoseconds = try EventTiming.nanoseconds(from: occurrenceUptime)
+            raw.timestamp = intendedNanoseconds
             guard let native = NSEvent(cgEvent: raw) else { throw Failure(description: "The public native event conversion failed") }
             try require(
                 native.type == .scrollWheel && native.phase == expected && native.momentumPhase.isEmpty,
@@ -85,7 +128,15 @@ enum DesktopScrollInput {
                 delta == 0 ? native.scrollingDeltaY == 0 : native.scrollingDeltaY > 0 && native.scrollingDeltaY <= viewport,
                 "Converted deltaY=\(native.scrollingDeltaY) requested=\(delta) viewport=\(viewport)"
             )
-            return native
+            guard let convertedNanoseconds = native.cgEvent?.timestamp else {
+                throw Failure(description: "The converted local event has no Quartz timestamp")
+            }
+            let timing = EventTiming(
+                creationUptime: creationUptime, occurrenceUptime: occurrenceUptime,
+                intendedNanoseconds: intendedNanoseconds, rawNanoseconds: raw.timestamp,
+                convertedNanoseconds: convertedNanoseconds, nativeSeconds: native.timestamp
+            )
+            return (native, timing)
         }
         struct Packet {
             let phase: CGScrollPhase
@@ -132,31 +183,43 @@ enum DesktopScrollInput {
         var previousCGTimestamp: CGEventTimestamp?
         func deliver(_ packet: Packet) throws {
             try require(ownsTarget(), "The local input target changed before packet delivery")
-            let event = try event(packet.phase, expected: packet.expected, delta: packet.delta)
+            let generated = try event(packet.phase, expected: packet.expected, delta: packet.delta)
+            let event = generated.native
             let timestamp = event.timestamp
-            guard let cgTimestamp = event.cgEvent?.timestamp else {
-                throw Failure(description: "The converted local event has no Quartz timestamp")
-            }
+            let cgTimestamp = generated.timing.convertedNanoseconds
             let elapsed = deliveryOrigin.duration(to: .now).components
             let deliveryMilliseconds = Double(elapsed.seconds) * 1000 + Double(elapsed.attoseconds) / 1e15
-            try require(
-                timestamp.isFinite && timestamp >= 0 && deliveryMilliseconds.isFinite && deliveryMilliseconds >= 0,
-                "Local event timing must be finite and nonnegative"
-            )
-            try require(
-                previousEventTimestamp.map { timestamp >= $0 } ?? true,
-                "Native event occurrence times must not move backwards"
-            )
-            try require(
-                previousCGTimestamp.map { cgTimestamp >= $0 } ?? true,
-                "Quartz event occurrence times must not move backwards"
-            )
+            let preDispatchUptime = ProcessInfo.processInfo.systemUptime
+            let timingReceipt: [String: Any] = [
+                "creationUptime": generated.timing.creationUptime,
+                "occurrenceUptime": generated.timing.occurrenceUptime,
+                "preDispatchUptime": preDispatchUptime,
+                "intendedTimestampNanoseconds": generated.timing.intendedNanoseconds,
+                "rawTimestampNanoseconds": generated.timing.rawNanoseconds,
+                "cgTimestampNanoseconds": cgTimestamp,
+                "eventTimestamp": timestamp.isFinite ? timestamp as Any : NSNull(),
+            ]
+            do {
+                try require(
+                    deliveryMilliseconds.isFinite && deliveryMilliseconds >= 0,
+                    "Local delivery time must be finite and nonnegative"
+                )
+                try generated.timing.validate(
+                    preDispatchUptime: preDispatchUptime,
+                    previousSeconds: previousEventTimestamp, previousNanoseconds: previousCGTimestamp
+                )
+            } catch {
+                packets.append(timingReceipt.merging(["phase": packet.name, "delivered": false, "timingAccepted": false]) { _, new in new })
+                throw error
+            }
             previousEventTimestamp = timestamp
             previousCGTimestamp = cgTimestamp
             let before = topDistance()
             scroll.scrollWheel(with: event)
-            packets.append([
+            packets.append(timingReceipt.merging([
                 "phase": packet.name,
+                "delivered": true,
+                "timingAccepted": true,
                 "eventType": event.type.rawValue,
                 "eventTimestamp": timestamp,
                 "cgTimestampNanoseconds": cgTimestamp,
@@ -170,7 +233,7 @@ enum DesktopScrollInput {
                 "clipBoundsAfter": rectangle(clip.bounds),
                 "documentBoundsAfter": rectangle(document.bounds),
                 "visibleRectAfter": rectangle(document.visibleRect),
-            ])
+            ]) { _, new in new })
         }
         var beganDelivered = false, endedDelivered = false
         var firstMovementUp: Bool?
