@@ -108,7 +108,7 @@ final class BackgroundDelegate: NSObject, NSApplicationDelegate {
 }
 
 let app = NSApplication.shared
-let delegate = BackgroundDelegate()
+let delegate = MainActor.assumeIsolated { BackgroundDelegate() }
 app.delegate = delegate
 app.setActivationPolicy(.prohibited)
 app.run()

@@ -34,7 +34,6 @@ final class DataUsageLeaseTests: XCTestCase {
         if let phase = DesktopFixturePhaseJournal.Phase(rawValue: String(describing: name)) {
             phaseJournal?.record(phase)
         }
-        FileHandle.standardError.write(Data("data-fixture:\(name)\n".utf8))
     }
 
     override func setUpWithError() throws {
