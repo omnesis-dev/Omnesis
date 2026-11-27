@@ -60,8 +60,11 @@
  *     vector is kept. 409 `SELF_VOICE_OFF` while the setting is off, 503
  *     `VOICES_UNAVAILABLE` while voices cannot be separated, 422
  *     `SELF_VOICE_UNREADABLE`, `SELF_VOICE_TOO_SHORT` or
- *     `SELF_VOICE_SEVERAL_VOICES` for a clip that cannot be enrolled.
- *   - `DELETE /recordings/self-voice` deletes it.
+ *     `SELF_VOICE_SEVERAL_VOICES` for a clip that cannot be enrolled, and 409
+ *     `SELF_VOICE_SUPERSEDED` when the voice was deleted, switched off or
+ *     enrolled again by a later request while the clip was being read.
+ *   - `DELETE /recordings/self-voice` deletes it, and refuses enrolments still
+ *     under way.
  *
  * Scope: `write:omnesis-recordings` (satisfied by admin).
  */
@@ -316,6 +319,12 @@ export function mountRecordingRoutes(app: RouteApp, deps: RecordingRoutesDeps): 
             422,
             "SELF_VOICE_SEVERAL_VOICES",
             "More than one voice is heard in the recording; record yourself alone.",
+          );
+        case "superseded":
+          throw new HttpError(
+            409,
+            "SELF_VOICE_SUPERSEDED",
+            "Your voice was deleted, switched off or enrolled again while this recording was being read; nothing was stored.",
           );
         default:
           return assertNever(outcome);

@@ -84,13 +84,16 @@ export const LONG_SESSION_SPEAKER_SHARE = 0.05;
 
 /**
  * A speaker whose mean vector is at least this similar to the owner's
- * enrolled voice is the owner. Provisional, set above
- * `SAME_SPEAKER_SIMILARITY` because the errors are not symmetric: a missed
- * match leaves the speaker for the owner to name, as before, while a false
- * one names somebody else as the owner. Not yet calibrated against
- * enrolment clips and conversations recorded on different microphones.
+ * enrolled voice is the owner. Calibrated with `evals/speakers` (RESULTS.md,
+ * "Owner profile"): the owner's own speaker scored 0.80 or more and everybody
+ * else 0.63 or less, and at 0.5 someone else was named owner in 17 % of
+ * sessions the owner was not in, against none from 0.6 to 0.7. It sits at the
+ * low end of that gap because an enrolment recorded on another device or in
+ * another room scores lower than the eval's same-room profiles. The errors are
+ * not symmetric: a missed match leaves the speaker for the owner to name, as
+ * before, while a false one names somebody else as the owner.
  */
-export const SELF_VOICE_SIMILARITY = 0.5;
+export const SELF_VOICE_SIMILARITY = 0.6;
 
 /**
  * Cut the stretches a separator found (one voice each) into voice windows:

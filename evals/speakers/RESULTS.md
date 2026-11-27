@@ -195,7 +195,8 @@ with C1.
 ### Naming the owner (`matchSelf`)
 
 The self-voice branch names the speaker whose mean vector is at least
-`SELF_VOICE_SIMILARITY` (provisionally 0.5) similar to the profile.
+`SELF_VOICE_SIMILARITY` similar to the profile (0.5 when this was measured,
+0.6 since, from the results below).
 
 | threshold | owner named: in-session Vox / AMI, cross-session AMI | false match, owner present | false match, impostor: Vox / AMI |
 | --------- | ---------------------------------------------------- | -------------------------- | -------------------------------- |

@@ -2344,6 +2344,17 @@ export function createServer(
       ),
     });
     recordings.start();
+    // Switching recognition off also refuses enrolments under way, even if it
+    // is switched on again before they finish; a pass alone could miss that.
+    opts.configStore?.onChange((before, after) => {
+      if (before.inference?.recordings?.selfVoice !== after.inference?.recordings?.selfVoice) {
+        recordings.selfVoiceSettingChanged().catch((err: unknown) => {
+          log.warn(
+            `Deleting the owner's voice failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+      }
+    });
 
     const getDictationStatus = opts.getDictationStatus;
     mountVoiceNoteRoutes(app, {

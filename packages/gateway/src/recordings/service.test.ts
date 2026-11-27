@@ -12,7 +12,7 @@ import { existsSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { createFreshTestDatabase } from "../testing/fresh-database.js";
 import { directWriteGate } from "../write-gate.js";
@@ -63,6 +63,8 @@ let keepDays: number;
 let selfVoice: "off" | "match";
 /** What the owner's calendar holds for any window; a function to see the window asked for. */
 let calendar: (from: string, to: string) => CalendarEventCandidate[];
+/** While set, storing the owner's voice waits for `until`; `reached` once it does. */
+let voiceWrite: { until: Promise<void>; reached: boolean } | null;
 
 const START = "2026-03-02T09:00:00.000Z";
 const at = (offsetMs: number) => new Date(Date.parse(START) + offsetMs).toISOString();
@@ -130,8 +132,19 @@ beforeEach(() => {
   keepDays = 0;
   selfVoice = "off";
   calendar = () => [];
+  voiceWrite = null;
+  const writeGate = directWriteGate(db);
   service = new RecordingTranscriptionService({
-    writeGate: directWriteGate(db),
+    writeGate: {
+      ...writeGate,
+      setRecordingVoiceProfile: async (profile) => {
+        if (voiceWrite) {
+          voiceWrite.reached = true;
+          await voiceWrite.until;
+        }
+        return writeGate.setRecordingVoiceProfile(profile);
+      },
+    },
     readDb: db,
     transcribe: async (_audio, mimeType, opts) => {
       calls.push({ mimeType, opts });
@@ -1246,5 +1259,118 @@ describe("RecordingTranscriptionService recognising the owner's voice", () => {
     expect(await service.deleteSelfVoice()).toBe(false);
     const id = await recorded();
     expect(service.speakers(id)!.some((s) => s.isSelf)).toBe(false);
+  });
+
+  /**
+   * A separator that reads each clip only when the test lets it: `read(n)`
+   * lets the n-th clip it was given (from 0) be read, and resolves once
+   * `started` clips are waiting.
+   */
+  function deferredSeparator() {
+    const replay = new ReplayVoiceSeparator();
+    const waiting: (() => void)[] = [];
+    separator = {
+      name: replay.name,
+      model: replay.model,
+      separate: async (audio, mimeType) => {
+        await new Promise<void>((resolve) => waiting.push(resolve));
+        return replay.separate(audio, mimeType);
+      },
+      group: (vectors, durations) => replay.group(vectors, durations),
+      dispose: async () => {},
+    };
+    return {
+      started: (n: number) => vi.waitFor(() => expect(waiting).toHaveLength(n)),
+      read: (n: number) => waiting[n]!(),
+    };
+  }
+
+  test("an enrolment under way when the owner deletes the voice stores nothing", async () => {
+    await service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    const clips = deferredSeparator();
+    const again = service.enrollSelfVoice(clip("owner", 32), "audio/webm");
+    await clips.started(1);
+
+    expect(await service.deleteSelfVoice()).toBe(true);
+    expect(getRecordingVoiceProfile(db)).toBeNull();
+    clips.read(0);
+    expect(await again).toEqual({ kind: "superseded" });
+    expect(getRecordingVoiceProfile(db)).toBeNull();
+
+    // Enrolling again after the deletion works.
+    const next = service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    await clips.started(2);
+    clips.read(1);
+    expect(await next).toMatchObject({ kind: "enrolled" });
+    expect(getRecordingVoiceProfile(db)).toMatchObject({ speechMs: 24_000 });
+  });
+
+  test("a deletion asked for while the voice is being stored lands after it", async () => {
+    let store!: () => void;
+    voiceWrite = { until: new Promise((resolve) => (store = resolve)), reached: false };
+    const enrolment = service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    // Past its last check, at the writer.
+    await vi.waitFor(() => expect(voiceWrite!.reached).toBe(true));
+    const deletion = service.deleteSelfVoice();
+    store();
+    expect(await enrolment).toMatchObject({ kind: "enrolled" });
+    expect(await deletion).toBe(true);
+    expect(getRecordingVoiceProfile(db)).toBeNull();
+  });
+
+  test("switching recognition off refuses an enrolment under way, even once on again", async () => {
+    const clips = deferredSeparator();
+    const whileOff = service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    await clips.started(1);
+    selfVoice = "off";
+    await service.selfVoiceSettingChanged();
+    clips.read(0);
+    expect(await whileOff).toEqual({ kind: "off" });
+    expect(getRecordingVoiceProfile(db)).toBeNull();
+
+    selfVoice = "match";
+    await service.selfVoiceSettingChanged();
+    const offAndOn = service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    await clips.started(2);
+    selfVoice = "off";
+    await service.selfVoiceSettingChanged();
+    selfVoice = "match";
+    await service.selfVoiceSettingChanged();
+    clips.read(1);
+    expect(await offAndOn).toEqual({ kind: "superseded" });
+    expect(getRecordingVoiceProfile(db)).toBeNull();
+
+    // Off with no change heard yet: the write reads the setting itself.
+    const unheard = service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    await clips.started(3);
+    selfVoice = "off";
+    clips.read(2);
+    expect(await unheard).toEqual({ kind: "off" });
+    expect(getRecordingVoiceProfile(db)).toBeNull();
+  });
+
+  test("of two enrolments under way, the one started later is the voice kept", async () => {
+    const clips = deferredSeparator();
+    // The later one is read first: the earlier, finishing after it, stores nothing.
+    const older = service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    await clips.started(1);
+    const newer = service.enrollSelfVoice(clip("owner", 32), "audio/webm");
+    await clips.started(2);
+    clips.read(1);
+    expect(await newer).toMatchObject({ kind: "enrolled" });
+    clips.read(0);
+    expect(await older).toEqual({ kind: "superseded" });
+    expect(getRecordingVoiceProfile(db)).toMatchObject({ speechMs: 32_000 });
+
+    // Read in the order they started, the later one replaces the earlier.
+    const first = service.enrollSelfVoice(clip("owner", 40), "audio/webm");
+    await clips.started(3);
+    const last = service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    await clips.started(4);
+    clips.read(2);
+    expect(await first).toMatchObject({ kind: "enrolled" });
+    clips.read(3);
+    expect(await last).toMatchObject({ kind: "enrolled" });
+    expect(getRecordingVoiceProfile(db)).toMatchObject({ speechMs: 24_000 });
   });
 });

@@ -69,6 +69,7 @@ import {
   type RecordingSession,
   type RecordingSpeakerMapping,
   type NewRecordingParticipant,
+  type RecordingVoiceProfile,
 } from "./storage.js";
 import { resolveGivenName } from "./suggestion-reads.js";
 import {
@@ -220,7 +221,13 @@ export type EnrollSelfVoiceOutcome =
   /** Too little speech; `speechMs` is what the clip held. */
   | { kind: "too-short"; speechMs: number }
   /** No one voice holds most of the clip. */
-  | { kind: "several-voices" };
+  | { kind: "several-voices" }
+  /**
+   * The voice was deleted, the setting switched off and on, or a later
+   * enrolment stored its voice while this clip was being read: nothing was
+   * stored.
+   */
+  | { kind: "superseded" };
 
 /** What a recording's suggestions are offered against: its window, and the suggestions. */
 export interface RecordingSuggestions {
@@ -323,6 +330,14 @@ export class RecordingTranscriptionService {
   private draining: Promise<void> | null = null;
   private rerun = false;
   private disposed = false;
+  /** Deletions of the owner's voice, and the setting switched off, so far. */
+  private selfVoiceRevocations = 0;
+  /** Enrolments started so far; each is numbered in the order it started. */
+  private selfVoiceEnrolments = 0;
+  /** The number of the enrolment whose voice was stored last. */
+  private selfVoiceStored = 0;
+  /** The tail of the self-voice writes, which run one at a time. */
+  private selfVoiceQueue: Promise<unknown> = Promise.resolve();
 
   constructor(deps: RecordingServiceDeps) {
     this.deps = deps;
@@ -542,6 +557,12 @@ export class RecordingTranscriptionService {
     if (this.selfVoiceSetting() !== "match") return { kind: "off" };
     const separator = this.deps.voices?.() ?? null;
     if (!separator) return { kind: "unavailable" };
+    // Reading the clip takes a while; what happens meanwhile decides whether
+    // its voice may still be stored (see storeSelfVoice).
+    const admitted = {
+      revocations: this.selfVoiceRevocations,
+      enrolment: ++this.selfVoiceEnrolments,
+    };
     let separated: SeparatedVoices;
     try {
       separated = await separator.separate(audio, mimeType);
@@ -565,23 +586,72 @@ export class RecordingTranscriptionService {
     const [main, mainMs] = [...talk].reduce((a, b) => (b[1] > a[1] ? b : a));
     if (mainMs < total * ENROLMENT_MAIN_VOICE_SHARE) return { kind: "several-voices" };
     if (mainMs < MIN_ENROLMENT_SPEECH_MS) return { kind: "too-short", speechMs: mainMs };
-    await this.deps.writeGate.setRecordingVoiceProfile({
+    return this.storeSelfVoice(admitted, {
       model: separator.model,
       vector: meanVoice(separated.vectors.filter((_, i) => labels[i] === main)),
       speechMs: mainMs,
-      enrolledAt: this.now().toISOString(),
     });
-    log.info(
-      `Enrolled the owner's voice: ${Math.round(mainMs / 1000)}s of speech (${separator.model})`,
-    );
-    return { kind: "enrolled", status: this.selfVoiceStatus() };
   }
 
-  /** Delete the owner's enrolled voice. False when none was enrolled. */
-  async deleteSelfVoice(): Promise<boolean> {
-    const deleted = await this.deps.writeGate.deleteRecordingVoiceProfile();
-    if (deleted) log.info("Deleted the owner's enrolled voice");
-    return deleted;
+  /**
+   * Store an enrolment's voice, admitted again at the write: one the owner
+   * deleted, switched off or enrolled over since it started is refused, so an
+   * older clip can never bring back a voice the owner removed. Runs in the
+   * self-voice queue, so no deletion lands between the check and the write.
+   */
+  private storeSelfVoice(
+    admitted: { revocations: number; enrolment: number },
+    voice: Omit<RecordingVoiceProfile, "enrolledAt">,
+  ): Promise<EnrollSelfVoiceOutcome> {
+    return this.inSelfVoiceQueue(async (): Promise<EnrollSelfVoiceOutcome> => {
+      if (this.selfVoiceSetting() !== "match") return { kind: "off" };
+      if (
+        this.selfVoiceRevocations !== admitted.revocations ||
+        this.selfVoiceStored > admitted.enrolment
+      ) {
+        log.info("Voice enrolment not stored: the voice was deleted or enrolled again meanwhile");
+        return { kind: "superseded" };
+      }
+      await this.deps.writeGate.setRecordingVoiceProfile({
+        ...voice,
+        enrolledAt: this.now().toISOString(),
+      });
+      this.selfVoiceStored = admitted.enrolment;
+      log.info(
+        `Enrolled the owner's voice: ${Math.round(voice.speechMs / 1000)}s of speech (${voice.model})`,
+      );
+      return { kind: "enrolled", status: this.selfVoiceStatus() };
+    });
+  }
+
+  /**
+   * Delete the owner's enrolled voice, and refuse every enrolment already
+   * under way. False when none was enrolled.
+   */
+  deleteSelfVoice(): Promise<boolean> {
+    // Counted at once, so an enrolment not yet at its write sees it.
+    this.selfVoiceRevocations++;
+    return this.inSelfVoiceQueue(async () => {
+      const deleted = await this.deps.writeGate.deleteRecordingVoiceProfile();
+      if (deleted) log.info("Deleted the owner's enrolled voice");
+      return deleted;
+    });
+  }
+
+  /**
+   * The operator changed `inference.recordings.selfVoice`. Switched off, the
+   * enrolled voice is deleted and every enrolment under way is refused, even
+   * one that finishes after it is switched on again.
+   */
+  async selfVoiceSettingChanged(): Promise<void> {
+    if (this.selfVoiceSetting() === "off") await this.deleteSelfVoice();
+  }
+
+  /** Runs self-voice writes one at a time, in the order they were asked for. */
+  private inSelfVoiceQueue<T>(op: () => Promise<T>): Promise<T> {
+    const run = this.selfVoiceQueue.then(op);
+    this.selfVoiceQueue = run.catch(() => undefined);
+    return run;
   }
 
   private selfVoiceSetting(): SelfVoiceSetting {
