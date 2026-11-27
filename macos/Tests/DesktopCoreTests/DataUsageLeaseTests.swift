@@ -8,8 +8,11 @@ import Foundation
 import XCTest
 
 final class DataUsageLeaseTests: XCTestCase {
+    private static let retentionLock = NSLock()
+    private static var retainedFixtures: [DataUsageLeaseTests] = []
     private var home: URL!
     private var processes: [Process] = []
+    private var capturedReaders: [(FileHandle, Capture)] = []
     private var sockets: [String] = []
     private var scope: DesktopDataUsageLease.Scope!
     private var operationId: String!
@@ -50,6 +53,12 @@ final class DataUsageLeaseTests: XCTestCase {
     }
 
     override func tearDown() async throws {
+        var readersRetired = false
+        defer {
+            if !readersRetired {
+                Self.retentionLock.withLock { Self.retainedFixtures.append(self) }
+            }
+        }
         guard !uncertainChildRegistration else {
             XCTFail("Child ownership registration is uncertain; the owned fixture was retained")
             throw TestFailure.fixture
@@ -68,10 +77,18 @@ final class DataUsageLeaseTests: XCTestCase {
         for path in untrackedSockets {
             try? sendExit(path)
         }
-        for process in processes where process.isRunning {
-            kill(process.processIdentifier, SIGKILL)
+        for process in processes {
+            if process.isRunning {
+                guard kill(process.processIdentifier, SIGKILL) == 0 || errno == ESRCH else {
+                    throw TestFailure.diagnostics("Owned process cleanup refused; readers retained")
+                }
+            }
             process.waitUntilExit()
         }
+        try closeCapturedReadersAfterJoin()
+        readersRetired = true
+        processes.removeAll()
+        catalogChildren.removeAll()
         // Untracked commands still use their socket as the legacy exit acknowledgement.
         // Tracked children have stronger physical join/incarnation-gone proof above; TERM can
         // leave their owned Unix entry, which the private home removal retires afterward.
@@ -83,6 +100,44 @@ final class DataUsageLeaseTests: XCTestCase {
             XCTAssertFalse(FileManager.default.fileExists(atPath: path), "Owned data-use child did not drain")
         }
         try FileManager.default.removeItem(at: home)
+    }
+
+    func testFailedLaunchKeepsBothReadersOwnedUntilExplicitRetirement() throws {
+        runtime = home.appendingPathComponent("missing-fixture-runtime", isDirectory: true)
+        XCTAssertThrowsError(try start([]))
+        XCTAssertTrue(processes.isEmpty)
+        XCTAssertEqual(capturedReaders.count, 2)
+        let retained = capturedReaders
+        for (_, capture) in retained {
+            XCTAssertFalse(capture.readerClosed)
+        }
+        try closeCapturedReadersAfterJoin()
+        XCTAssertTrue(capturedReaders.isEmpty)
+        for (reader, capture) in retained {
+            XCTAssertNil(reader.readabilityHandler)
+            XCTAssertTrue(capture.readerClosed)
+        }
+    }
+
+    func testOwnedPipeEOFDisarmsItsHandlerBeforePublishingEOFAndKeepsCaptureBounded() async throws {
+        let pipe = Pipe(), capture = Capture()
+        installCapture(capture, on: pipe.fileHandleForReading)
+        defer { try? pipe.fileHandleForWriting.close() }
+        XCTAssertNotNil(pipe.fileHandleForReading.readabilityHandler)
+        try pipe.fileHandleForWriting.write(contentsOf: Data(String(repeating: "x", count: 12000).utf8))
+        try pipe.fileHandleForWriting.close()
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while !capture.reachedEOF, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        guard capture.reachedEOF, ContinuousClock.now < deadline else {
+            XCTFail("The owned pipe must observe EOF and unregister its handler before its fixed deadline")
+            return
+        }
+        XCTAssertNil(pipe.fileHandleForReading.readabilityHandler)
+        XCTAssertEqual(capture.text.count, 8192)
+        XCTAssertEqual(capture.pendingCount, 4096)
+        XCTAssertFalse(capture.readerClosed, "EOF cancels observation; the owner closes the reader after child joins")
     }
 
     func testReadinessTimingKeepsOnlyBoundedFixedRelativePhases() {
@@ -1175,6 +1230,9 @@ final class DataUsageLeaseTests: XCTestCase {
         private let lock = NSLock()
         private var value = ""
         private var pending = ""
+        private var eof = false
+        private var stopped = false
+        private var closed = false
         private let began = ContinuousClock.now
         private var arrivals: [String: Int] = [:]
         private var uptimes: [String: Int] = [:]
@@ -1191,9 +1249,51 @@ final class DataUsageLeaseTests: XCTestCase {
             "catalog-ready-written",
             "catalog-child-joined",
         ]
-        func append(_ data: Data) {
+        func receive(_ reader: FileHandle) {
+            // One gate covers actual file I/O and retirement: a queued callback cannot
+            // read a closed handle, and close waits for an already-running read to finish.
             lock.lock()
             defer { lock.unlock() }
+            guard !stopped, !eof else { return }
+            let data = reader.availableData
+            if data.isEmpty {
+                reader.readabilityHandler = nil
+                eof = true
+                return
+            }
+            appendLocked(data)
+        }
+
+        func close(_ reader: FileHandle) throws {
+            reader.readabilityHandler = nil
+            lock.lock()
+            defer { lock.unlock() }
+            stopped = true
+            guard !closed else { return }
+            try reader.close()
+            closed = true
+        }
+
+        var reachedEOF: Bool {
+            lock.withLock { eof }
+        }
+
+        var readerClosed: Bool {
+            lock.withLock { closed }
+        }
+
+        var pendingCount: Int {
+            lock.withLock { pending.count }
+        }
+
+        func append(_ data: Data) {
+            guard !data.isEmpty else { return }
+            lock.lock()
+            defer { lock.unlock() }
+            appendLocked(data)
+        }
+
+        private func appendLocked(_ data: Data) {
             let text = String(decoding: data, as: UTF8.self)
             value = String((value + text).suffix(8192))
             let lines = (pending + text).split(separator: "\n", omittingEmptySubsequences: false)
@@ -1239,6 +1339,23 @@ final class DataUsageLeaseTests: XCTestCase {
         let bootstrapDeadline: ContinuousClock.Instant
     }
 
+    private func closeCapturedReadersAfterJoin() throws {
+        guard !processes.contains(where: \.isRunning) else {
+            throw TestFailure.diagnostics("Owned process is still running; readers retained")
+        }
+        // The caller has physically joined all catalog children and launched processes.
+        // Capture's gate also joins any already-running file I/O before closing the reader.
+        for (reader, capture) in capturedReaders {
+            try capture.close(reader)
+        }
+        capturedReaders.removeAll()
+    }
+
+    private func installCapture(_ capture: Capture, on reader: FileHandle) {
+        capturedReaders.append((reader, capture))
+        reader.readabilityHandler = { capture.receive($0) }
+    }
+
     private func start(
         _ arguments: [String],
         environment: [String: String] = [:],
@@ -1258,11 +1375,16 @@ final class DataUsageLeaseTests: XCTestCase {
         process.standardInput = input
         process.standardOutput = output
         process.standardError = errors
-        output.fileHandleForReading.readabilityHandler = { capture.append($0.availableData) }
-        errors.fileHandleForReading.readabilityHandler = { diagnostics.append($0.availableData) }
+        installCapture(capture, on: output.fileHandleForReading)
+        installCapture(diagnostics, on: errors.fileHandleForReading)
         let spawning = ContinuousClock.now
         let bootstrapDeadline = FixtureReadiness.bootstrapDeadline()
-        try process.run()
+        do { try process.run() }
+        catch {
+            // Readers were registered before launch, including the no-child error path.
+            if process.isRunning { processes.append(process) }
+            throw error
+        }
         let spawnMilliseconds = Self.milliseconds(spawning.duration(to: .now))
         processes.append(process)
         return Running(
