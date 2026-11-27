@@ -121,9 +121,21 @@ final class GatewayAdaptiveSocketTests: XCTestCase {
         let http = independent.session
         defer { independent.retireRouting() }
         await socket.stop()
-        let (data, _) = try await http.data(from: origin.appendingPathComponent("probe"))
+        let local = expectation(description: "Independent HTTP request uses the local route")
+        let observer = try XCTUnwrap(independent.observeRoutePath { path in
+            if path == .local { local.fulfill() }
+        })
+        defer { independent.removeRoutePathObserver(observer) }
+        let (data, response) = try await http.data(from: origin.appendingPathComponent("probe"))
         XCTAssertFalse(data.isEmpty)
-        XCTAssertEqual(independent.connectionPath, .local)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+        // The fixture sends Connection: close. Observe the request's route rather
+        // than racing its completed stream's valid transition to reconnecting.
+        await fulfillment(of: [local], timeout: 5)
+        independent.removeRoutePathObserver(observer)
+        let (nextData, nextResponse) = try await http.data(from: origin.appendingPathComponent("probe"))
+        XCTAssertFalse(nextData.isEmpty)
+        XCTAssertEqual((nextResponse as? HTTPURLResponse)?.statusCode, 200)
     }
 
     func testLateProbeAndObserverCannotReconnectAfterUnpairOrAffectAnotherSocket() async throws {
