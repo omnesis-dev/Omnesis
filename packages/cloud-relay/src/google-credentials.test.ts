@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdtemp, readFile, rm, stat, writeFile, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile, symlink } from "node:fs/promises";
 import * as files from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -57,6 +57,74 @@ async function credentials(
     .sign(key);
   return { idToken, refreshToken, identity: { issuer: "omnesis-local-test", subject, expiresAt } };
 }
+
+test("a managed credential scope with no wrapping key cannot publish or replace a plaintext credential", async () => {
+  const root = await realpath(dir),
+    target = join(root, "retained.json"),
+    absent = join(root, "not-created.json"),
+    previous = JSON.stringify({ token: "fictional retained credential" });
+  await writeFile(target, previous, { mode: 0o600 });
+  const options = {
+    configDir: root,
+    service: `dev.omnesis.desktop.${"a".repeat(64)}`,
+    backend: "file" as const,
+  };
+  core.clearSecretFileKeyCacheForTests();
+  try {
+    for (const path of [target, absent]) {
+      await expect(
+        savePrivateJson(path, { token: "fictional replacement" }, options),
+      ).rejects.toThrow("require an unlocked installation key");
+    }
+    expect(await readFile(target, "utf8")).toBe(previous);
+    await expect(stat(absent)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    core.clearSecretFileKeyCacheForTests();
+  }
+});
+
+test("service fallback requires managed encryption while an unscoped file credential remains compatible", async () => {
+  const root = await realpath(dir),
+    path = join(root, "credential.json"),
+    options = { configDir: root, backend: "file" as const },
+    value = { token: "fictional compatibility credential" };
+  core.clearSecretFileKeyCacheForTests();
+  vi.stubEnv("OMNESIS_DESKTOP_MANAGED", undefined);
+  vi.stubEnv("OMNESIS_SECRET_SERVICE", `dev.omnesis.desktop.${"b".repeat(64)}`);
+  try {
+    await expect(savePrivateJson(path, value, options)).rejects.toThrow(
+      "require an unlocked installation key",
+    );
+    await expect(stat(path)).rejects.toMatchObject({ code: "ENOENT" });
+    vi.stubEnv("OMNESIS_SECRET_SERVICE", undefined);
+    await savePrivateJson(path, value, options);
+    expect(await readPrivateJson(path, options)).toEqual(value);
+    expect(core.isEncryptedSecretFile(await readFile(path, "utf8"))).toBe(false);
+  } finally {
+    vi.unstubAllEnvs();
+    core.clearSecretFileKeyCacheForTests();
+  }
+});
+
+test("managed plaintext refusal stays scoped to the installation's own directory", async () => {
+  const root = await realpath(dir),
+    managed = join(root, "managed"),
+    outside = join(root, "external.json"),
+    inside = join(managed, "internal.json"),
+    value = { token: "fictional external credential" },
+    bytes = JSON.stringify(value),
+    options = {
+      configDir: managed,
+      service: `dev.omnesis.desktop.${"c".repeat(64)}`,
+      backend: "file" as const,
+    };
+  await mkdir(managed, { mode: 0o700 });
+  for (const path of [outside, inside]) await writeFile(path, bytes, { mode: 0o600 });
+  expect(await readPrivateJson(outside, options)).toEqual(value);
+  await expect(readPrivateJson(inside, options)).rejects.toThrow("must be encrypted");
+  expect(await readFile(outside, "utf8")).toBe(bytes);
+  expect(await readFile(inside, "utf8")).toBe(bytes);
+});
 
 test("tunnel renewal waits through the real Google session cache without replaying the accepted credential", async () => {
   const first = await credentials();

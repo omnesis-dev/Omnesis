@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdtemp, readFile, readdir, rm, stat, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat, writeFile, mkdir, realpath } from "node:fs/promises";
 import * as files from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,7 +25,7 @@ vi.mock(import("node:fs/promises"), async (original) => {
 
 let directory = "";
 beforeEach(async () => {
-  directory = await mkdtemp(join(tmpdir(), "device-key-file-"));
+  directory = await realpath(await mkdtemp(join(tmpdir(), "device-key-file-")));
   if (process.platform === "win32") await core.ensurePrivateDirs([directory]);
 });
 afterEach(async () => {
@@ -276,3 +276,21 @@ test.skipIf(process.platform === "win32")(
     expect(await readdir(directory)).toEqual([]);
   },
 );
+
+test("a corrupt managed signing key is never replaced or rewritten", async () => {
+  const path = join(directory, "managed-corrupt.key");
+  const options: core.SecretFileOptions = {
+    configDir: directory,
+    backend: "file",
+    service: "invented-corrupt-device",
+  };
+  await core.ensureInstallRootKey(options);
+  await core.writeSecretTextFile(path, "invented-invalid-private-key", options);
+  const original = await readFile(path);
+  const write = vi.spyOn(core, "writeSecretTextFile");
+  await expect(readOrCreateDeviceKey(path, options)).rejects.toThrow(
+    "saved device key could not be read",
+  );
+  expect(write).not.toHaveBeenCalled();
+  expect(await readFile(path)).toEqual(original);
+});

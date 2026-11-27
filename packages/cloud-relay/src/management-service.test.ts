@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { mkdir, mkdtemp, realpath, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import * as files from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateKeyPairSync } from "node:crypto";
@@ -27,6 +28,9 @@ import { GatewayAccountLink } from "./gateway-account-link.js";
 import { GatewayUnregistered, readOrCreateGatewayOwnerKey } from "./gateway-key-client.js";
 import * as privateCredentials from "./google-credentials.js";
 import { readGatewayTlsPrivateKey } from "./gateway-private-key.js";
+import { PublicRouteProbe } from "./public-route-probe.js";
+
+vi.mock("node:fs/promises", { spy: true });
 
 let directory: string, manager: GatewayCloudRelayManagement | undefined;
 /** Requests no test answered; any one fails the test, even when the gateway swallows the error. */
@@ -3757,6 +3761,133 @@ test("disabling joins a noncooperative periodic route probe and cannot overlap a
     expect((await manager.status()).publicMcp.checkedAt).toBeUndefined();
   } finally {
     release(false);
+    vi.useRealTimers();
+  }
+});
+
+test("a periodic probe's owned cleanup failure is joined during disable and permanently closes admission", async () => {
+  directory = await realpath(directory);
+  const probe = vi.fn(async (_origin: string, _signal: AbortSignal) => true),
+    f = fixture({
+      probe,
+      env: { OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test", OMNESIS_DESKTOP_MANAGED: "1" },
+    });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await manager.configure(input);
+  await issuedRouteCertificate();
+  // This boundary failure owns no real native operation; the fixture actors still join normally.
+  const failure = markedFileError("EPRIVATE", "own");
+  let rejectProbe = (_error: unknown) => {};
+  vi.useFakeTimers();
+  try {
+    await manager.enable();
+    await idle();
+    probe.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((_resolve, reject) => {
+          rejectProbe = reject;
+        }),
+    );
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(2));
+    // Observe the real join so rejection cannot race ahead of shutdown's physical wait.
+    const joinProbe = vi.spyOn(PublicRouteProbe.prototype, "join");
+    const disabling = manager.disable();
+    const rejected = expect(disabling).rejects.toBeDefined();
+    await vi.waitFor(() => expect(joinProbe).toHaveBeenCalledOnce());
+    rejectProbe(failure);
+    await rejected;
+    expect(manager.cleanupFailure()).toBe(failure);
+    await expect(manager.enable()).rejects.toBe(failure);
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(probe).toHaveBeenCalledTimes(2);
+    expect(f.stop).toHaveBeenCalled();
+    expect(f.close).toHaveBeenCalled();
+    await expect(manager.close()).rejects.toSatisfy(
+      (error: unknown) => core.ownedProcessCleanupReceipt(error)?.pending === false,
+    );
+    manager = undefined;
+  } finally {
+    rejectProbe(failure);
+    vi.useRealTimers();
+  }
+});
+
+test("an ordinary periodic probe rejection joins cleanly and allows a fresh generation after disable", async () => {
+  const probe = vi.fn(async (_origin: string, _signal: AbortSignal) => true),
+    f = fixture({
+      probe,
+      env: { OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test", OMNESIS_DESKTOP_MANAGED: "1" },
+    });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await manager.configure(input);
+  await issuedRouteCertificate();
+  let rejectProbe = (_error: unknown) => {};
+  const failure = new Error("Invented unavailable public route");
+  vi.useFakeTimers();
+  try {
+    await manager.enable();
+    await idle();
+    probe.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((_resolve, reject) => {
+          rejectProbe = reject;
+        }),
+    );
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(2));
+    const joinProbe = vi.spyOn(PublicRouteProbe.prototype, "join"),
+      disabling = manager.disable();
+    await vi.waitFor(() => expect(joinProbe).toHaveBeenCalledOnce());
+    rejectProbe(failure);
+    await disabling;
+    expect(manager.cleanupFailure()).toBeUndefined();
+    expect((await manager.status()).publicMcp.checkedAt).toBeUndefined();
+    await manager.enable();
+    await idle();
+    expect(probe).toHaveBeenCalledTimes(3);
+    expect((await manager.status()).publicMcp.ready).toBe(true);
+  } finally {
+    rejectProbe(failure);
+    vi.useRealTimers();
+  }
+});
+
+test("owned certificate-read uncertainty stops the periodic route check before any new probe", async () => {
+  directory = await realpath(directory);
+  const probe = vi.fn(async () => true),
+    f = fixture({
+      probe,
+      env: { OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test", OMNESIS_DESKTOP_MANAGED: "1" },
+    });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await manager.configure(input);
+  await issuedRouteCertificate();
+  const failure = markedFileError("EPRIVATE", "own"),
+    actualRead = (await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises"))
+      .readFile,
+    certificatePath = join(directory, "cloud-relay/public.pem"),
+    readFileMock = vi.mocked(files.readFile),
+    previousRead = readFileMock.getMockImplementation() ?? actualRead;
+  vi.useFakeTimers();
+  try {
+    await manager.enable();
+    await idle();
+    readFileMock.mockImplementation((...args) =>
+      String(args[0]) === certificatePath ? Promise.reject(failure) : actualRead(...args),
+    );
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.waitFor(() => expect(manager!.cleanupFailure()).toBe(failure));
+    expect(probe).toHaveBeenCalledOnce();
+    await expect(manager.enable()).rejects.toBe(failure);
+    await expect(manager.close()).rejects.toSatisfy(
+      (error: unknown) => core.ownedProcessCleanupReceipt(error)?.pending === false,
+    );
+    manager = undefined;
+    expect(f.stop).toHaveBeenCalled();
+    expect(f.close).toHaveBeenCalled();
+  } finally {
+    readFileMock.mockImplementation(previousRead);
     vi.useRealTimers();
   }
 });

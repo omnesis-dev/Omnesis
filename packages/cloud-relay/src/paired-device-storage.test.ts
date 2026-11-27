@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -16,6 +16,7 @@ import { saveDirectCandidates } from "./device-file-hints.js";
 import { readPrivateJson, savePrivateJson } from "./google-credentials.js";
 import {
   readPairedDeviceFile,
+  pairedDeviceSecretOptions,
   savePairedDeviceFile,
   type pairedDeviceSchema,
 } from "./paired-device-storage.js";
@@ -24,7 +25,7 @@ import type { z } from "zod";
 
 let directory: string;
 beforeEach(async () => {
-  directory = await mkdtemp(join(tmpdir(), "omnesis-sealed-pairing-"));
+  directory = await realpath(await mkdtemp(join(tmpdir(), "omnesis-sealed-pairing-")));
 });
 afterEach(async () => {
   await rm(directory, { recursive: true, force: true });
@@ -215,4 +216,44 @@ test("an unjoined credential read is not treated as an absent automatic pairing"
   } finally {
     read.mockRestore();
   }
+});
+
+test("pairing secret selectors come only from the supplied environment", () => {
+  expect(pairedDeviceSecretOptions({})).toBeUndefined();
+  expect(() =>
+    pairedDeviceSecretOptions({ OMNESIS_SECRET_SERVICE: "invented-scoped-pairing" }),
+  ).toThrow("configuration directory");
+  expect(pairedDeviceSecretOptions({ OMNESIS_CONFIG_DIR: directory })).toEqual({
+    configDir: directory,
+    service: core.OMNESIS_SECRET_SERVICE,
+    backend: "auto",
+  });
+  expect(
+    pairedDeviceSecretOptions({
+      OMNESIS_CONFIG_DIR: directory,
+      OMNESIS_SECRET_SERVICE: "invented-explicit-pairing",
+      OMNESIS_SECRET_STORE: "file",
+    }),
+  ).toEqual({ configDir: directory, service: "invented-explicit-pairing", backend: "file" });
+  expect(() =>
+    pairedDeviceSecretOptions({
+      OMNESIS_CONFIG_DIR: directory,
+      OMNESIS_SECRET_STORE: "invented-unsupported",
+    }),
+  ).toThrow("Invalid OMNESIS_SECRET_STORE");
+  expect(() =>
+    pairedDeviceSecretOptions({
+      OMNESIS_CONFIG_DIR: directory,
+      OMNESIS_SECRET_SERVICE: "../foreign",
+    }),
+  ).toThrow("Invalid OMNESIS_SECRET_SERVICE");
+});
+
+test("legacy pairing reads validate the full schema without requiring a scoped key", async () => {
+  const path = join(directory, "legacy-pairing.json");
+  await savePrivateJson(path, pair);
+  expect(await readPairedDeviceFile(path)).toEqual(pair);
+  await savePrivateJson(path, { ...pair, homeName: "Invented\u0000hidden" });
+  await expect(readPairedDeviceFile(path)).rejects.toThrow();
+  expect(JSON.parse(await readFile(path, "utf8")).homeName).toBe("Invented\u0000hidden");
 });

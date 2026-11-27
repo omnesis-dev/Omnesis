@@ -359,3 +359,51 @@ test("a malformed challenge reply refuses to send the enrollment request", async
   await expect(f.run()).rejects.toThrow();
   expect(f.requests).toEqual([]);
 });
+
+test("an unnamed headless gateway still requires comparison and receives the collector's storage requirement", async () => {
+  const f = setup("collector"),
+    original = f.transport.getMockImplementation()!;
+  f.transport.mockImplementation(async (url, init) => {
+    const response = await original(url, init);
+    return new URL(String(url)).pathname.endsWith("/gateways")
+      ? Response.json({
+          gateways: [
+            { gatewayId: candidate.gatewayId, publicOrigin: candidate.publicOrigin, online: true },
+          ],
+        })
+      : response;
+  });
+  const result = await pairAccountDevice(
+    {
+      relayUrl: "https://relay.example.test",
+      kind: "collector",
+      name: "Fictional collector",
+      deviceKeyFile: f.deviceKeyFile,
+      requireEncryptedStorage: true,
+      confirm: f.confirm,
+      selectGateway: f.selectGateway,
+    },
+    {
+      authorize: f.authorize,
+      fetch: f.transport,
+      gatewayJson: f.gatewayJson,
+      wait: async () => {},
+    },
+  );
+  expect(result).not.toHaveProperty("homeName");
+  expect(result).toMatchObject({
+    kind: "collector",
+    gatewayUrl: candidate.publicOrigin,
+    token: "stable-device-credential",
+  });
+  expect(f.confirm).toHaveBeenCalledOnce();
+  expect(f.requests[0]).toMatchObject({ requireApproval: true });
+  expect(f.gatewayJson.mock.calls.find(([, path]) => path === "/devices/pair")?.[2]).toMatchObject({
+    pairingCode: "approved-only-code",
+    capabilities: {
+      requiresEncryptedStorage: true,
+      platform: "collector",
+      tls: { mode: "pinned-key-strict" },
+    },
+  });
+});

@@ -44,10 +44,14 @@ test("the compiled smoke environment retains unrelated profile probes and denies
 });
 
 test("importing the smoke helper is inert while direct CLI execution still requires the runtime argument", () => {
+  const env = { ...process.env };
+  // Inherited color controls can emit warnings before the imported module runs.
+  delete env.FORCE_COLOR;
+  delete env.NO_COLOR;
   const imported = spawnSync(
     process.execPath,
     ["--input-type=module", "--eval", 'await import("./scripts/desktop/smoke-runtime.mjs")'],
-    { cwd: root, encoding: "utf8", timeout: 10000 },
+    { cwd: root, env, encoding: "utf8", timeout: 10000 },
   );
   expect(imported.error).toBeUndefined();
   expect(imported.status).toBe(0);
@@ -55,6 +59,7 @@ test("importing the smoke helper is inert while direct CLI execution still requi
   expect(imported.stderr).toBe("");
   const direct = spawnSync(process.execPath, ["scripts/desktop/smoke-runtime.mjs"], {
     cwd: root,
+    env,
     encoding: "utf8",
     timeout: 10000,
   });

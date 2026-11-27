@@ -141,3 +141,38 @@ test("abort clears evidence immediately but join retains a noncooperative physic
   await drained;
   expect(joined).toBe(true);
 });
+
+test("a superseded queued route never probes or publishes after an older physical check rejects", async () => {
+  const f = fixture();
+  let rejectOld!: (error: Error) => void;
+  const failed = new Error("Invented old route connection failure"),
+    oldProbe = vi.fn(
+      () =>
+        new Promise<boolean>((_resolve, reject) => {
+          rejectOld = reject;
+        }),
+    ),
+    old = f.probe.check(f.binding, signal(), oldProbe),
+    oldResult = expect(old).rejects.toBe(failed);
+  await vi.waitFor(() => expect(oldProbe).toHaveBeenCalledOnce());
+  const obsoleteProbe = vi.fn(async () => true),
+    obsolete = f.probe.check(
+      { ...f.binding, identity: "superseded-route" },
+      signal(),
+      obsoleteProbe,
+    ),
+    current = { ...f.binding, identity: "current-route" },
+    currentProbe = vi.fn(async () => true),
+    newest = f.probe.check(current, signal(), currentProbe);
+  await Promise.resolve();
+  expect(obsoleteProbe).not.toHaveBeenCalled();
+  expect(currentProbe).not.toHaveBeenCalled();
+  rejectOld(failed);
+  await oldResult;
+  expect(await obsolete).toBe(false);
+  expect(obsoleteProbe).not.toHaveBeenCalled();
+  expect(await newest).toBe(true);
+  expect(currentProbe).toHaveBeenCalledOnce();
+  expect(f.probe.snapshot(current)).toEqual({ checkedAt: 1000, validUntil: 91000 });
+  await f.probe.join();
+});

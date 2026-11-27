@@ -351,6 +351,72 @@ test("managed saves refuse loss of the real wrapping key without replacing encry
   expect((await readFile(f.options.metadataFile, "utf8")) === before).toBe(true);
 });
 
+test("an unprovisioned managed account cannot publish an unencrypted link record", async () => {
+  directory = await realpath(directory);
+  const f = await fixture(),
+    service = "fictional-unprovisioned-account",
+    previousOwner = await readFile(f.env.OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE!, "utf8"),
+    actualOptions = credentialScope.gatewayCredentialOptions;
+  Object.assign(f.env, {
+    OMNESIS_DESKTOP_MANAGED: "1",
+    OMNESIS_CONFIG_DIR: directory,
+    OMNESIS_SECRET_SERVICE: service,
+  });
+  vi.spyOn(credentialScope, "gatewayCredentialOptions").mockImplementation((configDir, env) => {
+    const selected = actualOptions(configDir, env);
+    return selected ? { ...selected, backend: "file" } : undefined;
+  });
+  const serialize = vi.spyOn(core, "serializeSecretFileValue");
+  await f.link();
+  expect(serialize).toHaveBeenCalledOnce();
+  expect(serialize).toHaveBeenCalledWith(f.options.metadataFile, expect.any(String), {
+    configDir: directory,
+    service,
+    backend: "file",
+  });
+  expect(f.manager.status()).toMatchObject({ linked: false, lastError: "account-link-failed" });
+  expect(f.manager.verifiedAccountId()).toBeUndefined();
+  await expect(stat(f.options.metadataFile)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await readFile(f.env.OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE!, "utf8")).toBe(previousOwner);
+});
+
+test("oversized managed decline history preserves the last encrypted record and remains readable after restart", async () => {
+  const f = await managedFixture();
+  await f.link();
+  const committed: string[] = [];
+  let previous = await readFile(f.options.metadataFile, "utf8"),
+    refused: unknown,
+    refusedId = "";
+  for (let index = 0; index < 40; index++) {
+    const id = String(index).padStart(4, "0") + "p".repeat(2044);
+    try {
+      await f.manager.removeTrustedSignIn(id);
+      committed.push(id);
+      previous = await readFile(f.options.metadataFile, "utf8");
+    } catch (error) {
+      refused = error;
+      refusedId = id;
+      break;
+    }
+  }
+  expect(refused).toBeInstanceOf(Error);
+  expect(String(refused)).toContain("private credential bound");
+  expect(committed.length).toBeGreaterThan(0);
+  expect(committed.length).toBeLessThan(40);
+  expect(await readFile(f.options.metadataFile, "utf8")).toBe(previous);
+  expect(core.isEncryptedSecretFile(previous)).toBe(true);
+  const saved = await core.readSecretJsonFile<{ declinedPasskeys: string[] }>(
+    f.options.metadataFile,
+    f.secrets,
+  );
+  expect(saved?.declinedPasskeys).toEqual(committed);
+  expect(saved?.declinedPasskeys).not.toContain(refusedId);
+  const restored = new GatewayAccountLink(f.options);
+  await restored.initialize();
+  expect(restored.status().linked).toBe(true);
+  expect(restored.verifiedAccountId()).toBe(f.accountId);
+});
+
 test("a verified account link persists privately across restart and unlink leaves gateway identity intact", async () => {
   const f = await fixture();
   expect(f.manager.accountModeActivated()).toBe(false);

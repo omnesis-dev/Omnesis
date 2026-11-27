@@ -299,9 +299,40 @@ final class DesktopAPIContextTests: XCTestCase {
         try await assertNoWrites(pair)
     }
 
-    func testOffMacModelConfirmationCannotAuthorizeReplacementContext() async throws {
+    func testControlTimeoutEndsAnActualHeldRequestAndKeepsItsSessionUsable() async throws {
         let pair = try await ContextHTTPPair.start()
         defer { pair.stop() }
+        try await pair.configureA([
+            "GET /fixture-owned-held-response": ["hold": true, "body": ["released": true]],
+        ])
+        let began = ContinuousClock.now
+        do {
+            try await pair.heldControlA()
+            XCTFail("The actual held control response must time out")
+        } catch {
+            XCTAssertEqual((error as? URLError)?.code, .timedOut)
+        }
+        XCTAssertLessThan(began.duration(to: .now), .seconds(5), "Control transport must finish within the fixture polling bound")
+        let requests = try await pair.requestsA()
+        XCTAssertEqual(requests.filter { $0.method == "GET" && $0.path == "/fixture-owned-held-response" }.count, 1)
+        // The timed-out task is complete. Release the server's owned hold and prove
+        // the same control session still handles subsequent real requests.
+        try await pair.releaseA()
+        let afterRelease = try await pair.requestsA()
+        XCTAssertEqual(afterRelease.count, requests.count)
+        try await assertNoWrites(pair)
+    }
+
+    func testOffMacModelConfirmationCannotAuthorizeReplacementContext() async throws {
+        recordContextStage(.offMacEntered)
+        recordContextStage(.fixturesStarting)
+        let pair = try await ContextHTTPPair.start()
+        recordContextStage(.fixturesReady)
+        defer {
+            recordContextStage(.fixtureCleanupStarting)
+            pair.stop()
+            recordContextStage(.fixtureCleanupReturned)
+        }
         var routes = Self.modelRoutes
         var overview = Self.models
         overview["capabilities"] = [["role": "agent", "title": "Questions", "description": "Fixture answers", "icon": "sparkles"]]
@@ -315,18 +346,30 @@ final class DesktopAPIContextTests: XCTestCase {
             ],
         ]]
         routes["GET /admin/models"] = ["body": overview]
+        recordContextStage(.configurationStarting)
         try await pair.configureA(routes)
         try await pair.configureB([:])
+        recordContextStage(.configurationReturned)
+        recordContextStage(.modelReadStarting)
         let decoded = try await pair.apiA.admin.modelOverview()
+        recordContextStage(.modelReadReturned)
         let decodedChoices = DesktopModelSelection.choices(for: "agent", overview: decoded)
         XCTAssertEqual(decodedChoices.map(\.id), ["remote/fictional-chat"], "The actual client must decode the off-host fixture choice")
         XCTAssertEqual(decodedChoices.map(\.title), ["remote · fictional-chat"])
         XCTAssertEqual(decodedChoices.map(\.onHost), [false], "This selection must require the real off-host consent")
         let store = DesktopStore(startRuntime: false)
         store.api = pair.apiA
+        recordContextStage(.mountStarting)
         let mounted = mount(.models, store: store)
-        defer { mounted.window.close() }
+        recordContextStage(.mountReturned)
+        defer {
+            recordContextStage(.windowCleanupStarting)
+            mounted.window.close()
+            recordContextStage(.windowCleanupReturned)
+        }
+        recordContextStage(.materializeStarting)
         try await DesktopAccessibilityDriver.materializeOwnedApplication()
+        recordContextStage(.materializeReturned)
         try await wait { (try? DesktopAccessibilityDriver.element("model-role-picker-agent", in: mounted.host)) != nil }
         func popups(_ view: NSView) -> [NSPopUpButton] {
             (view as? NSPopUpButton).map { [$0] } ?? view.subviews.flatMap(popups)
@@ -351,7 +394,9 @@ final class DesktopAPIContextTests: XCTestCase {
             )
             tracking = selection
             stage = "native-menu-tracking"
+            recordContextStage(.popupSelectionStarting)
             try await selection.select()
+            recordContextStage(.popupSelectionReturned)
             stage = "visible-role-selection"
             try await wait {
                 guard let role = try? DesktopAccessibilityDriver.element("model-role-picker-agent", in: mounted.host),
@@ -363,15 +408,25 @@ final class DesktopAPIContextTests: XCTestCase {
                 "remote · fictional-chat"
             )
             stage = "real-save-control"
+            recordContextStage(.savePressStarting)
             try DesktopAccessibilityDriver.press("model-role-save-agent", in: mounted.host)
+            recordContextStage(.savePressReturned)
             stage = "real-consent-control"
+            recordContextStage(.consentWaiting)
             try await wait { (try? self.control("model-role-confirm-agent", mounted: mounted)) != nil }
             let oldConfirmation = try control("model-role-confirm-agent", mounted: mounted)
+            recordContextStage(.consentObserved)
+            recordContextStage(.contextReplacementStarting)
             store.api = pair.apiB
+            recordContextStage(.contextReplacementReturned)
             await Task.yield()
             stage = "retired-consent-control"
+            recordContextStage(.retiredConsentPressStarting)
             _ = oldConfirmation.accessibilityPerformPress()
+            recordContextStage(.retiredConsentPressReturned)
+            recordContextStage(.writeCheckStarting)
             try await assertNoWrites(pair)
+            recordContextStage(.writeCheckReturned)
         } catch {
             try writeRolePickerDiagnostics(
                 mounted.host,
@@ -652,7 +707,13 @@ private final class ContextHTTPPair {
     let second: ScriptedAgentFixture
     let apiA: DesktopAPI
     let apiB: DesktopAPI
-    private let session = URLSession(configuration: .ephemeral)
+    private let session: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 3
+        configuration.timeoutIntervalForResource = 3
+        return URLSession(configuration: configuration)
+    }()
+
     private init(_ first: ScriptedAgentFixture, _ second: ScriptedAgentFixture) throws {
         self.first = first
         self.second = second
@@ -694,6 +755,10 @@ private final class ContextHTTPPair {
         _ = try await control(first.url, "fixture-release", body: [:])
     }
 
+    func heldControlA() async throws {
+        _ = try await control(first.url, "fixture-owned-held-response")
+    }
+
     func requestsA() async throws -> [Request] {
         try await requests(first.url)
     }
@@ -723,6 +788,7 @@ private final class ContextHTTPPair {
 
     private func control(_ url: URL, _ path: String, body: [String: Any]? = nil) async throws -> Data {
         var request = URLRequest(url: url.appendingPathComponent(path))
+        request.timeoutInterval = 3
         request.setValue("Bearer gui-fixture-token", forHTTPHeaderField: "Authorization")
         if let body { request.httpMethod = "POST"
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -815,20 +881,25 @@ private final class DesktopOwnedPopupTracking {
                 guard let self, self.acceptingCallbacks else { return }
                 self.deadlineExpired = true
                 self.stage = "tracking-deadline"
+                recordContextStage(.popupDeadline)
                 self.menu.cancelTracking()
             }
         }
         RunLoop.main.add(timer, forMode: .default)
         RunLoop.main.add(timer, forMode: .eventTracking)
         defer {
+            recordContextStage(.popupCleanupStarting)
             acceptingCallbacks = false
             timer.invalidate()
             center.removeObserver(begin)
             center.removeObserver(end)
             menu.cancelTracking()
+            recordContextStage(.popupCleanupReturned)
         }
         stage = "dispatching-owned-public-press"
+        recordContextStage(.popupPressStarting)
         pressAccepted = DesktopAccessibilityDriver.Element(object: object).accessibilityPerformPress()
+        recordContextStage(.popupPressReturned)
         guard pressAccepted else {
             throw DesktopAccessibilityDriver.Failure("The exact popup's public press action was refused")
         }
@@ -846,6 +917,7 @@ private final class DesktopOwnedPopupTracking {
         guard acceptingCallbacks, !began else { return }
         began = true
         stage = "tracking-began"
+        recordContextStage(.popupTrackingBegan)
         RunLoop.main.perform(inModes: [.eventTracking]) { [weak self] in
             MainActor.assumeIsolated { self?.selectActualItem() }
         }
@@ -866,7 +938,9 @@ private final class DesktopOwnedPopupTracking {
         }
         performedAction = true
         stage = "sending-real-item-action"
+        recordContextStage(.popupItemStarting)
         menu.performActionForItem(at: index)
+        recordContextStage(.popupItemReturned)
         stage = "real-item-action-returned"
         menu.cancelTracking()
     }
@@ -876,4 +950,31 @@ private final class DesktopOwnedPopupTracking {
         stage = "tracking-refused"
         menu.cancelTracking()
     }
+}
+
+/// Fixed stage names only; emit before synchronous AppKit calls rather than
+/// depending on a catch handler or an accessibility traversal after a blockage.
+private enum DesktopContextStage: String {
+    case offMacEntered = "off-mac-entered"
+    case fixturesStarting = "fixtures-starting", fixturesReady = "fixtures-ready"
+    case configurationStarting = "configuration-starting", configurationReturned = "configuration-returned"
+    case modelReadStarting = "model-read-starting", modelReadReturned = "model-read-returned"
+    case mountStarting = "mount-starting", mountReturned = "mount-returned"
+    case materializeStarting = "materialize-starting", materializeReturned = "materialize-returned"
+    case popupSelectionStarting = "popup-selection-starting", popupSelectionReturned = "popup-selection-returned"
+    case popupPressStarting = "popup-press-starting", popupPressReturned = "popup-press-returned"
+    case popupTrackingBegan = "popup-tracking-began", popupDeadline = "popup-deadline"
+    case popupItemStarting = "popup-item-starting", popupItemReturned = "popup-item-returned"
+    case popupCleanupStarting = "popup-cleanup-starting", popupCleanupReturned = "popup-cleanup-returned"
+    case savePressStarting = "save-press-starting", savePressReturned = "save-press-returned"
+    case consentWaiting = "consent-waiting", consentObserved = "consent-observed"
+    case contextReplacementStarting = "context-replacement-starting", contextReplacementReturned = "context-replacement-returned"
+    case retiredConsentPressStarting = "retired-consent-press-starting", retiredConsentPressReturned = "retired-consent-press-returned"
+    case writeCheckStarting = "write-check-starting", writeCheckReturned = "write-check-returned"
+    case windowCleanupStarting = "window-cleanup-starting", windowCleanupReturned = "window-cleanup-returned"
+    case fixtureCleanupStarting = "fixture-cleanup-starting", fixtureCleanupReturned = "fixture-cleanup-returned"
+}
+
+private func recordContextStage(_ stage: DesktopContextStage) {
+    FileHandle.standardError.write(Data("desktop-context-stage:\(stage.rawValue)\n".utf8))
 }

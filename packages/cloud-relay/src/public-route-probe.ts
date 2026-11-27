@@ -106,7 +106,8 @@ export class PublicRouteProbe {
       })
       .finally(() => {
         active.removeEventListener("abort", invalidate);
-        if (this.pending?.work === work) this.pending = undefined;
+        // A successor cannot acquire this physical slot until this promise settles.
+        this.pending = undefined;
       });
     this.pending = { generation, work };
     return work;
