@@ -189,6 +189,18 @@ export function renderRecording(
 }
 
 /**
+ * The speakers whose voice is heard in these chunks: the ones a document of
+ * just these chunks, or the suggestions for them, are about.
+ */
+export function speakersHeard(chunks: readonly Pick<RecordingChunk, "voices">[]): Set<number> {
+  const heard = new Set<number>();
+  for (const chunk of chunks) {
+    for (const w of chunk.voices ?? []) if (w.speaker !== undefined) heard.add(w.speaker);
+  }
+  return heard;
+}
+
+/**
  * The chunk's segments as lines: each segment goes to the speaker whose voice
  * windows overlap it most (none when no window overlaps it), and consecutive
  * segments of one speaker are joined.

@@ -43,7 +43,12 @@ import {
   OMNESIS_RECORDINGS_SOURCE_ID,
   conversationExternalId,
 } from "../sources/omnesis-recordings/index.js";
-import { localStart, recordingTitle, speakerTurns } from "../sources/omnesis-recordings/render.js";
+import {
+  localStart,
+  recordingTitle,
+  speakersHeard,
+  speakerTurns,
+} from "../sources/omnesis-recordings/render.js";
 import { closeConversations, type ConversationSpan } from "./conversations.js";
 import {
   listRecentRecordingSessions,
@@ -667,6 +672,7 @@ export class RecordingTranscriptionService {
         });
       }
     }
+    const voiced = speakersHeard(chunks);
     const names = new Map<string, ReturnType<typeof resolveGivenName>>();
     const dismissed = new Set(
       [...listDismissedRecordingSuggestions(this.deps.readDb, id)].flatMap((key) =>
@@ -680,7 +686,14 @@ export class RecordingTranscriptionService {
       namedSpeakers: new Set(
         speakers.filter((s) => s.isSelf || s.personId || s.name).map((s) => s.speaker),
       ),
-      mappedPeople: new Set(speakers.flatMap((s) => (s.personId ? [s.personId] : []))),
+      // Only who speaks in this conversation is already accounted for: someone
+      // mapped in an earlier conversation is still suggested when they attend
+      // this one.
+      mappedPeople: new Set(
+        speakers.flatMap((s) => (s.personId && voiced.has(s.speaker) ? [s.personId] : [])),
+      ),
+      // The people present without a turn are the session's, so they count
+      // for every conversation of it.
       presentPeople: new Set(
         listRecordingParticipants(this.deps.readDb, id).flatMap((p) =>
           p.personId ? [p.personId] : [],

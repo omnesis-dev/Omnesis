@@ -236,4 +236,80 @@ describe("one conversation of a split session", () => {
     expect(doc.title).toBe("Stand-up");
     expect(doc.content.split("\n").slice(4)).toEqual(["[00:00:00] Morning, all."]);
   });
+
+  describe("participants", () => {
+    // Speaker 1 talks only in the first conversation, speaker 2 only in the second.
+    const voiced = [
+      chunk(0, 0, "Morning, all.", {
+        segments: [{ startMs: 0, endMs: 3_000, text: "Morning, all." }],
+        voices: [{ startMs: 0, endMs: 3_000, speaker: 1 }],
+      }),
+      chunk(1, 60, null),
+      chunk(2, 120, null),
+      chunk(3, 180, "Is the projector free?", {
+        segments: [{ startMs: 0, endMs: 3_000, text: "Is the projector free?" }],
+        voices: [{ startMs: 0, endMs: 3_000, speaker: 2 }],
+      }),
+    ];
+    const speakers = [
+      { speaker: 1, isSelf: false, personId: "p-maya", name: "Maya" },
+      { speaker: 2, isSelf: false, personId: "p-jamie", name: "Jamie" },
+    ];
+    const first = {
+      n: 1,
+      firstSeq: 0,
+      lastSeq: 2,
+      startedAt: START,
+      title: null,
+      last: false,
+    };
+    const second = {
+      n: 2,
+      firstSeq: 3,
+      lastSeq: 3,
+      startedAt: voiced[3]!.startedAt,
+      title: null,
+      last: true,
+    };
+    const linked = (doc: ReturnType<typeof buildRecordingDocument>) =>
+      doc!.metadata.people!.flatMap((p) => (p.personId ? [p.personId] : []));
+
+    test("each conversation links only the speakers heard in it", () => {
+      expect(linked(buildRecordingDocument(split, voiced, [], speakers, [], first))).toEqual([
+        "p-maya",
+      ]);
+      expect(linked(buildRecordingDocument(split, voiced, [], speakers, [], second))).toEqual([
+        "p-jamie",
+      ]);
+      // The session as one document links both.
+      expect(linked(buildRecordingDocument(split, voiced, [], speakers))).toEqual([
+        "p-maya",
+        "p-jamie",
+      ]);
+    });
+
+    test("someone present without a turn is a participant of every conversation", () => {
+      const present = [{ key: "person:p-david", personId: "p-david", name: "David" }];
+      for (const part of [first, second]) {
+        const doc = buildRecordingDocument(split, voiced, [], speakers, present, part);
+        expect(linked(doc)).toContain("p-david");
+        expect(doc!.content).toContain("Also present: David");
+      }
+    });
+
+    test("a speaker remapped to someone else of the same name changes the fingerprint", () => {
+      const before = buildRecordingDocument(split, voiced, [], speakers, [], first)!;
+      const after = buildRecordingDocument(
+        split,
+        voiced,
+        [],
+        [{ speaker: 1, isSelf: false, personId: "p-maya-2", name: "Maya" }, speakers[1]!],
+        [],
+        first,
+      )!;
+      expect(after.content).toBe(before.content);
+      expect(linked(after)).toEqual(["p-maya-2"]);
+      expect(after.contentHash).not.toBe(before.contentHash);
+    });
+  });
 });

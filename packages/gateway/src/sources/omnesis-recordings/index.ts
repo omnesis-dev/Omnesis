@@ -18,7 +18,7 @@ import { createHash } from "node:crypto";
 import { ProviderId, SourceId } from "@omnesis/types";
 
 import { omnesisBrandIcon } from "../omnesis-notes/index.js";
-import { renderRecording } from "./render.js";
+import { renderRecording, speakersHeard } from "./render.js";
 import type { RecordingChunk, RecordingMark, RecordingSession } from "../../recordings/storage.js";
 import type { WriteGate } from "../../write-gate.js";
 import type { DocumentInput, PersonMention } from "@omnesis/types";
@@ -88,7 +88,11 @@ export interface ParticipantIdentity {
  * turn, are participants; the latter are also named under the header.
  *
  * With `conversation`, the document of that conversation of a split session:
- * only its chunks, timed from its own start, under its own title.
+ * only its chunks, timed from its own start, under its own title. Only the
+ * speakers whose voice is heard in its chunks are its participants, so a
+ * person who spoke in one conversation of an all-day session is not linked
+ * to the others. The people present without a turn are recorded for the
+ * session as a whole, so they are participants of every conversation of it.
  */
 export function buildRecordingDocument(
   session: RecordingSession,
@@ -118,13 +122,15 @@ function documentOf(
   session: RecordingSession,
   chunks: readonly RecordingChunk[],
   marks: readonly RecordingMark[],
-  speakers: readonly SpeakerIdentity[],
+  allSpeakers: readonly SpeakerIdentity[],
   participants: readonly ParticipantIdentity[],
   conversation?: ConversationPart,
 ): DocumentInput | null {
   const names = new Map<number, string>();
   const people: PersonMention[] = [{ name: "You", role: "participant", isSelf: true }];
   const linked = new Set<string>();
+  const voiced = speakersHeard(chunks);
+  const speakers = allSpeakers.filter((s) => voiced.has(s.speaker));
   for (const s of speakers) {
     if (s.isSelf) names.set(s.speaker, "You");
     else if (s.name) names.set(s.speaker, s.name);
@@ -170,7 +176,7 @@ function documentOf(
     externalId: conversation ? conversationExternalId(session.id, conversation.n) : session.id,
     title: rendered.title,
     content: rendered.body,
-    contentHash: createHash("sha256").update(rendered.body).digest("hex"),
+    contentHash: projectionHash(rendered.title, rendered.body, people),
     sourceCreatedAt: session.startedAt,
     sourceUpdatedAt: session.lastActivityAt,
     metadata: {
@@ -185,4 +191,17 @@ function documentOf(
       },
     },
   };
+}
+
+/**
+ * What the document says, as one fingerprint: its text and who it links to.
+ * The people are part of it because a speaker remapped to someone else of
+ * the same name changes the links without changing a word of the text, and
+ * a conversation whose fingerprint is unchanged is not written again.
+ */
+function projectionHash(title: string, body: string, people: readonly PersonMention[]): string {
+  const who = people.map((p) => [p.personId ?? null, p.name ?? null, p.isSelf ?? false]);
+  return createHash("sha256")
+    .update(JSON.stringify([title, body, who]))
+    .digest("hex");
 }

@@ -1025,6 +1025,81 @@ describe("RecordingTranscriptionService conversations of an all-day session", ()
     expect(docs.get(`${id}:2`)).toBe(second);
   });
 
+  const someone = (name: string, email: string) =>
+    findOrCreatePerson(db, { role: "sender", name, emails: [email] }, "gmail:test", "2026-01-01")!;
+  const linked = (externalId: string) =>
+    docs.get(externalId)!.metadata.people!.flatMap((p) => (p.personId ? [p.personId] : []));
+
+  test("each conversation links only the people who spoke in it", async () => {
+    const maya = someone("Maya", "maya@example.com");
+    const jamie = someone("Jamie", "jamie@example.com");
+    const id = await morning();
+    await service.finish(id, 4, at(4 * 60_000));
+    await service.idle();
+
+    expect(await service.setSpeaker(id, 1, { kind: "person", personId: maya })).toBe("set");
+    expect(await service.setSpeaker(id, 3, { kind: "person", personId: jamie })).toBe("set");
+    await service.idle();
+
+    expect(linked(id)).toEqual([maya]);
+    expect(linked(`${id}:2`)).toEqual([jamie]);
+  });
+
+  test("someone present without a turn is a participant of every conversation", async () => {
+    const david = someone("David", "david@example.com");
+    const id = await morning();
+    await service.finish(id, 4, at(4 * 60_000));
+    await service.idle();
+
+    expect(await service.addParticipant(id, { personId: david })).toBe("added");
+    await service.idle();
+
+    expect(linked(id)).toEqual([david]);
+    expect(linked(`${id}:2`)).toEqual([david]);
+  });
+
+  test("a speaker remapped to someone else of the same name moves the conversation's link", async () => {
+    const first = someone("Maya", "maya@example.com");
+    const second = someone("Maya", "maya@example.org");
+    expect(second).not.toBe(first);
+    const id = await morning();
+    await service.finish(id, 4, at(4 * 60_000));
+    await service.idle();
+
+    await service.setSpeaker(id, 1, { kind: "person", personId: first });
+    await service.idle();
+    const content = docs.get(id)!.content;
+    expect(linked(id)).toEqual([first]);
+
+    await service.setSpeaker(id, 1, { kind: "person", personId: second });
+    await service.idle();
+    // Not a word of the text changed, but the link did.
+    expect(docs.get(id)!.content).toBe(content);
+    expect(linked(id)).toEqual([second]);
+  });
+
+  test("someone mapped in one conversation is still suggested for the next they attend", async () => {
+    const maya = someone("Maya", "maya@example.com");
+    calendar = () => [
+      {
+        documentId: "doc-facilities",
+        title: "Facilities sync",
+        start: at(3 * 60_000),
+        end: at(4 * 60_000),
+        attendees: [{ personId: maya, name: "Maya" }],
+      },
+    ];
+    const id = await morning();
+    await service.finish(id, 4, at(4 * 60_000));
+    await service.idle();
+    await service.setSpeaker(id, 1, { kind: "person", personId: maya });
+    await service.idle();
+
+    expect((await service.suggestions(id, 2))!.suggestions).toContainEqual(
+      expect.objectContaining({ kind: "person", personId: maya, key: `c2:person:${maya}` }),
+    );
+  });
+
   test("a conversation takes the owner's title", async () => {
     const id = await morning();
     expect(await service.setConversationTitle(id, 1, " Budget chat ")).toBe(true);
