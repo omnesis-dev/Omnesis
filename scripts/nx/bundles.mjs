@@ -12,7 +12,11 @@ export const bundles = {
   "desktop-account": { kind: "e2e", tests: ["desktop-account.e2e.test.ts"] },
   "desktop-runtime": {
     kind: "e2e",
-    tests: ["desktop-runtime.e2e.test.ts", "desktop-restore.e2e.test.ts"],
+    tests: [
+      "desktop-runtime.e2e.test.ts",
+      "desktop-restore.e2e.test.ts",
+      "released-collector-current-gateway.e2e.test.ts",
+    ],
   },
   "source-lifecycle": {
     kind: "e2e",
@@ -337,6 +341,13 @@ const areas = [
       p.startsWith("scripts/desktop/test-account") ||
       p === "scripts/desktop/account-test.Dockerfile",
     bundles: ["desktop-runtime", "desktop-account"],
+  },
+  {
+    test: (p) =>
+      p.startsWith("scripts/desktop/test-released-peer-container") ||
+      p === "packages/collector/src/e2e/released-peer-fixture.ts" ||
+      p === "packages/collector/src/e2e/released-collector-current-gateway.e2e.test.ts",
+    bundles: ["desktop-runtime"],
   },
   { test: (p) => p.startsWith("macos/"), bundles: ["macos-logic", "macos-test"] },
   { test: isDesktopNativeContract, bundles: ["macos-logic", "macos-test"] },

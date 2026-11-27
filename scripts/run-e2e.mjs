@@ -475,6 +475,50 @@ export function accountContainerPhases(phases, args, env = process.env) {
   ];
 }
 
+/** Published peers need their pinned image, not a host-side Vitest invocation. */
+export function releasedPeerContainerPhases(phases, args, env = process.env) {
+  if (env.OMNESIS_E2E_RELEASED_PEER || requestsVitestInformation(args)) return phases;
+  const file = "packages/collector/src/e2e/released-collector-current-gateway.e2e.test.ts";
+  const filters = parseCLI(["vitest", "run", ...args]).filter;
+  const selected = filters.length === 0 || filters.some((filter) => file.includes(filter));
+  const onlyReleased =
+    filters.length > 0 &&
+    filters.every((filter) => filter.includes("released-collector") && file.includes(filter));
+  const regular = phases.flatMap((phase) => {
+    // An earlier isolated phase owns its own arguments and preparation.
+    if (phase.container) return [phase];
+    if (onlyReleased) return [];
+    const filtered = phase.args.filter((arg) => arg !== file);
+    if (
+      phase.args.includes(file) &&
+      !filtered.some((arg) => !arg.startsWith("-") && arg.endsWith(".e2e.test.ts"))
+    )
+      return [];
+    return [{ ...phase, args: appendBeforeDoubleDash(filtered, `--exclude=${file}`) }];
+  });
+  return [
+    ...regular,
+    ...(selected
+      ? [
+          {
+            label: "isolated released collector compatibility",
+            container: true,
+            args: [
+              join(
+                dirname(fileURLToPath(import.meta.url)),
+                "desktop/test-released-peer-container.mjs",
+              ),
+            ],
+          },
+        ]
+      : []),
+  ];
+}
+
+export function isolatedE2EPhases(phases, args, env = process.env) {
+  return releasedPeerContainerPhases(accountContainerPhases(phases, args, env), args, env);
+}
+
 async function runVitest(vitestArgs, env) {
   return await runCheckCommand(process.execPath, vitestArgs, {
     cwd: join(dirname(fileURLToPath(import.meta.url)), ".."),
@@ -607,7 +651,7 @@ export async function runE2E(args = process.argv.slice(2), env = process.env) {
       cpuCount: availableParallelism(),
     });
     const explicitWorkerArg = hasSafeExplicitWorkerArg(args);
-    const phases = accountContainerPhases(
+    const phases = isolatedE2EPhases(
       buildE2EPhases(vitestEntry, args, explicitWorkerArg ? [] : [`--maxWorkers=${workers}`]),
       args,
       env,

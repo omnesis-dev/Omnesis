@@ -480,6 +480,13 @@ load or that macOS accepts the packaged app. Native build success does not
 prove the onboarding or service lifecycle. Each row needs evidence at its own
 scope before the application can be considered complete.
 
+The `desktop-runtime` validation bundle includes an isolated, digest-pinned released
+Linux collector beside a current collector and current source gateway. Its named
+container phase checks real ingestion, independent pause/resume and stable document
+IDs. It does not qualify a released gateway with a current app, a physical Mac/Linux
+fleet, native permissions, or the packaged macOS runtime. Explicit execution requires
+Linux and Docker; unsupported execution fails rather than skipping the cohort.
+
 ### Collector-only permission recovery
 
 Source-permission observations distinguish access evidence from publication

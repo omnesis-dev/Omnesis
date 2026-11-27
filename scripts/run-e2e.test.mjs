@@ -27,6 +27,7 @@ import {
   effectiveMemoryBudget,
   hasSafeExplicitWorkerArg,
   inspectE2ELanes,
+  isolatedE2EPhases,
   parseLauncherArgs,
   selectE2EWorkers,
   waitForChild,
@@ -880,4 +881,73 @@ test("account onboarding runs in a container phase instead of silently skipping 
       .filter((phase) => !phase.container)
       .every((phase) => phase.args.includes(`--exclude=${file}`)),
   ).toBe(true);
+});
+
+describe("released collector isolated dispatch", () => {
+  const file = "packages/collector/src/e2e/released-collector-current-gateway.e2e.test.ts";
+  const account = "packages/collector/src/e2e/desktop-account.e2e.test.ts";
+  const runtime = "packages/collector/src/e2e/desktop-runtime.e2e.test.ts";
+  const select = (args, env = {}) =>
+    isolatedE2EPhases(buildE2EPhases("/vitest.mjs", args, ["--maxWorkers=2"]), args, env);
+
+  test("exact and abbreviated selection prepare the real image exactly once", () => {
+    for (const args of [[file], ["released-collector"], [file, file]]) {
+      const phases = select(args);
+      expect(phases).toHaveLength(1);
+      expect(phases[0]).toMatchObject({
+        label: "isolated released collector compatibility",
+        container: true,
+      });
+      expect(phases[0].args).toHaveLength(1);
+      expect(phases[0].args[0]).toMatch(/test-released-peer-container\.mjs$/u);
+    }
+  });
+
+  test("mixed bundles retain regular tests and the account container without host duplication", () => {
+    const phases = select([runtime, file, account]);
+    expect(phases.filter((phase) => phase.container)).toHaveLength(2);
+    const regular = phases.filter((phase) => !phase.container);
+    expect(regular).toHaveLength(1);
+    expect(regular[0].args).toContain(runtime);
+    expect(regular[0].args).not.toContain(file);
+    expect(regular[0].args).not.toContain(account);
+    expect(regular[0].args).toContain(`--exclude=${file}`);
+    expect(
+      phases.filter((phase) => phase.args[0].endsWith("test-account-container.mjs")),
+    ).toHaveLength(1);
+  });
+
+  test("full and aggregate reports isolate released peers, unrelated selection does not", () => {
+    for (const args of [[], ["--reporter=json"], ["--reporter=json", "--"]]) {
+      const phases = select(args);
+      expect(
+        phases.filter((phase) => phase.label === "isolated released collector compatibility"),
+      ).toHaveLength(1);
+      expect(
+        phases
+          .filter((phase) => !phase.container)
+          .every((phase) => phase.args.includes(`--exclude=${file}`)),
+      ).toBe(true);
+      for (const phase of phases.filter((phase) => !phase.container && phase.args.includes("--"))) {
+        expect(phase.args.indexOf(`--exclude=${file}`)).toBeLessThan(phase.args.indexOf("--"));
+      }
+    }
+    expect(
+      select([runtime]).some(
+        (phase) => phase.label === "isolated released collector compatibility",
+      ),
+    ).toBe(false);
+    expect(select(["--help"])).toEqual(buildE2EPhases("/vitest.mjs", ["--help"], []));
+  });
+
+  test("the inner admitted marker leaves the exact direct Vitest selection unwrapped", () => {
+    const args = [file];
+    const phases = buildE2EPhases("/vitest.mjs", args, []);
+    expect(
+      isolatedE2EPhases(phases, args, {
+        OMNESIS_E2E_RELEASED_PEER: "fixture",
+        OMNESIS_DESKTOP_ACCOUNT_CONTAINER_NONCE: "fixture",
+      }),
+    ).toEqual(phases);
+  });
 });

@@ -64,6 +64,29 @@ describe("Nx change selection", () => {
     expect(bundleTestArgs("desktop-runtime", [runtime, restored])).toEqual([runtime, restored]);
   });
 
+  test("released peer ownership and fixture inputs select the existing desktop runtime bundle", () => {
+    const released = "packages/collector/src/e2e/released-collector-current-gateway.e2e.test.ts";
+    const runtime = "packages/collector/src/e2e/desktop-runtime.e2e.test.ts";
+    const restored = "packages/collector/src/e2e/desktop-restore.e2e.test.ts";
+    for (const file of [
+      released,
+      "packages/collector/src/e2e/released-peer-fixture.ts",
+      "scripts/desktop/test-released-peer-container.mjs",
+      "scripts/desktop/test-released-peer-container.test.mjs",
+      "packages/cli/src/desktop/coordinator.ts",
+    ]) {
+      expect(behavioralBundles([file])).toContain("desktop-runtime");
+    }
+    expect(bundleTestArgs("desktop-runtime", [runtime, restored, released])).toEqual([
+      runtime,
+      restored,
+      released,
+    ]);
+    expect(behavioralBundles(["scripts/desktop/test-released-peer-container.mjs"])).not.toContain(
+      "desktop-account",
+    );
+  });
+
   test("gateway bootstrap changes select startup and ownership lifecycle coverage", () => {
     for (const input of [
       "packages/gateway/src/index.ts",
