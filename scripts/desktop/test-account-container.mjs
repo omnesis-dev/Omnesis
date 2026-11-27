@@ -99,6 +99,8 @@ exec timeout --foreground 900 npm run test:e2e -- packages/collector/src/e2e/des
     "--env",
     `OMNESIS_ACCOUNT_DEPENDENCIES=${mountedDependencies}`,
     "--env",
+    "OMNESIS_ACCOUNT_INPUT_ROOT=/input",
+    "--env",
     `OMNESIS_DESKTOP_ACCOUNT_CONTAINER_NONCE=${nonce}`,
     "--env",
     "OMNESIS_TEST_SCHEDULER_ACTIVE",
