@@ -14,8 +14,8 @@
  * recording deletes its chunks, any audio kept and its document.
  *
  * Suggestions — attendees and the title of a calendar event the recording
- * overlaps, names heard addressed in it — are offered beside what they would
- * change, and only applied when the owner accepts one.
+ * overlaps — are offered beside what they would change, and only applied
+ * when the owner accepts one.
  *
  * An all-day recording the gateway split into conversations shows one section
  * per conversation — its title, transcript, speakers and suggestions — each
@@ -327,9 +327,7 @@ function NameForm({ initial, onSave, onCancel, disabled }) {
 
 /** Why a person is suggested, in a few words. */
 function suggestionReason(suggestion) {
-  return suggestion.source === "mention"
-    ? `Heard: “${suggestion.evidence}”`
-    : `On your calendar: ${suggestion.evidence}`;
+  return `On your calendar: ${suggestion.evidence}`;
 }
 
 /**
@@ -409,7 +407,7 @@ function SpeakerRow({ recordingId, speaker, suggestions = [], onSpeakers, onDism
       : html`<${SpeakerSuggestions}
           suggestions=${suggestions}
           disabled=${busy}
-          onAccept=${(s) => apply(s.personId ? { personId: s.personId } : { name: s.name })}
+          onAccept=${(s) => apply({ personId: s.personId })}
           onDismiss=${async (s) => {
             setBusy(true);
             setError(null);
@@ -580,15 +578,15 @@ function TranscriptLink({ href }) {
 /** Speakers with who each one is, and the people suggested for the unnamed ones. */
 function SpeakerList({ recordingId, speakers, suggestions, empty, onDismiss, onSpeakers }) {
   if (speakers.length === 0) return html`<p class="privacy-empty">${empty}</p>`;
-  const forSpeaker = (n) =>
-    suggestions.filter((s) => s.kind === "person" && (s.speaker === n || s.speaker === null));
+  // Calendar attendees are offered to every unnamed speaker in this conversation.
+  const people = suggestions.filter((s) => s.kind === "person");
   return html`<ul class="recording-speakers">
     ${speakers.map(
       (speaker) => html`<${SpeakerRow}
         key=${speaker.speaker}
         recordingId=${recordingId}
         speaker=${speaker}
-        suggestions=${forSpeaker(speaker.speaker)}
+        suggestions=${people}
         onDismiss=${onDismiss}
         onSpeakers=${onSpeakers}
       />`,
@@ -801,7 +799,7 @@ function RecordingDetail({ id }) {
   const offeredPeople = new Set();
   for (const list of Object.values(suggestions)) {
     for (const s of list) {
-      if (s.kind !== "person" || s.speaker !== null || offeredPeople.has(s.personId)) continue;
+      if (s.kind !== "person" || offeredPeople.has(s.personId)) continue;
       offeredPeople.add(s.personId);
       presentSuggestions.push(s);
     }

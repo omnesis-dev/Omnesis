@@ -80,12 +80,10 @@ import {
   type RecordingSpeakerMapping,
   type NewRecordingParticipant,
 } from "./storage.js";
-import { resolveGivenName } from "./suggestion-reads.js";
 import {
   buildSuggestions,
   type CalendarEventCandidate,
   type RecordingSuggestion,
-  type SuggestionTurn,
 } from "./suggestions.js";
 import type {
   ConversationPart,
@@ -616,8 +614,8 @@ export class RecordingTranscriptionService {
 
   /**
    * Who likely took part in a session and what it was, from the owner's
-   * calendar and from names heard in the transcript. Null when the session
-   * does not exist. A calendar that cannot be read leaves only the mentions.
+   * calendar. Null when the session does not exist; a calendar that cannot
+   * be read leaves none.
    */
   async suggestions(id: string, conversation?: number): Promise<RecordingSuggestions | null> {
     const session = getRecordingSession(this.deps.readDb, id);
@@ -626,7 +624,7 @@ export class RecordingTranscriptionService {
     const speakers = this.speakerIdentities(id);
 
     // One conversation of a split session is suggested for on its own: its
-    // time, its turns, and dismissals kept apart from the other conversations'.
+    // time and dismissals kept apart from the other conversations'.
     let start = Date.parse(session.startedAt);
     let title = session.title;
     let declaredEnd = session.endedAt ? Date.parse(session.endedAt) : Number.NaN;
@@ -663,17 +661,7 @@ export class RecordingTranscriptionService {
       Math.min(end, Date.parse(e.end)) - Math.max(start, Date.parse(e.start));
     events = events.filter((e) => overlap(e) > 0).sort((a, b) => overlap(b) - overlap(a));
 
-    const turns: SuggestionTurn[] = [];
-    for (const chunk of chunks) {
-      for (const turn of speakerTurns(chunk.segments ?? [], chunk.voices ?? [])) {
-        turns.push({
-          ...(turn.speaker !== undefined ? { speaker: turn.speaker } : {}),
-          text: turn.text,
-        });
-      }
-    }
     const voiced = speakersHeard(chunks);
-    const names = new Map<string, ReturnType<typeof resolveGivenName>>();
     const dismissed = new Set(
       [...listDismissedRecordingSuggestions(this.deps.readDb, id)].flatMap((key) =>
         prefix ? (key.startsWith(prefix) ? [key.slice(prefix.length)] : []) : [key],
@@ -681,11 +669,7 @@ export class RecordingTranscriptionService {
     );
     const suggestions = buildSuggestions({
       title,
-      turns,
       events,
-      namedSpeakers: new Set(
-        speakers.filter((s) => s.isSelf || s.personId || s.name).map((s) => s.speaker),
-      ),
       // Only who speaks in this conversation is already accounted for: someone
       // mapped in an earlier conversation is still suggested when they attend
       // this one.
@@ -700,11 +684,6 @@ export class RecordingTranscriptionService {
         ),
       ),
       dismissed,
-      resolveName: (name) => {
-        const key = name.toLowerCase();
-        if (!names.has(key)) names.set(key, resolveGivenName(this.deps.readDb, name));
-        return names.get(key)!;
-      },
     });
     return {
       suggestions: prefix
