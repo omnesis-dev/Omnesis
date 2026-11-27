@@ -104,9 +104,11 @@ const FORBIDDEN_TABLES = new Set([
   "voice_note_transcriptions",
   // A recorded conversation's ledger holds its chunks' audio and the queue's
   // unfinished work; a clone gets the finished transcripts as documents.
-  // The moments marked in a recording, its speakers and the suggestions the
-  // owner dismissed all point into those sessions.
+  // The moments marked in a recording, the conversations it was split into,
+  // its speakers and the suggestions the owner dismissed all point into those
+  // sessions.
   "recording_chunks",
+  "recording_conversations",
   "recording_marks",
   "recording_sessions",
   "recording_speakers",
