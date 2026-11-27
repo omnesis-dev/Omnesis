@@ -9,6 +9,7 @@ import { desktopProfile, type DesktopProfile } from "./environment.js";
 import { readDesktopRetirement } from "./retirement.js";
 import { publishDesktopHint } from "./publication.js";
 import { installDesktopParentLifetime } from "./parent-lifetime.js";
+import { DesktopCollectorNearbyHints } from "./collector-nearby-channel.js";
 import { desktopComponentOwner } from "./runtime-leases.js";
 import { desktopUpdateBlocked } from "./update-admission.js";
 import {
@@ -106,7 +107,9 @@ async function main(): Promise<void> {
               start: async (env) => {
                 const { runRelayCommand, saveDirectCandidates } =
                   await import("@omnesis/cloud-relay/runtime");
+                const joined = (await readDesktopInstall(profile))?.mode === "joined";
                 const transport = await runRelayCommand("client", env, {
+                  ...(joined ? { nearbyHints: new DesktopCollectorNearbyHints() } : {}),
                   persistDirectCandidates: (...args) =>
                     publishDesktopHint(profile, () => saveDirectCandidates(...args)),
                 });

@@ -8,10 +8,10 @@ public enum DesktopBackgroundLaunchProtocol {
     public static let frameLimit = 4096
     public enum Failure: Error { case invalidFrame }
     public enum Action: String, Codable,
-        Sendable { case hello, ensureDaemon, verifyDaemon, verifyRetirement, releaseOwner, adoptOrigin, recoverOrigin }
+        Sendable { case hello, ensureDaemon, verifyDaemon, verifyRetirement, releaseOwner, adoptOrigin, recoverOrigin, nearbySnapshot }
     public enum State: String, Codable, Sendable {
         case helperIdle, daemonOwned, lifecycleBlocked, epochMismatch, scopeMismatch, ownerUnavailable, ownerVerified, ownerReleased,
-             originRequired, originAttached
+             originRequired, originAttached, nearbySnapshot
     }
 
     public struct Binding: Codable, Equatable, Sendable {
@@ -80,6 +80,7 @@ public enum DesktopBackgroundLaunchProtocol {
         public let origin: DesktopBackgroundApplicationOrigin.Record?
         public let applicationOwnership: DesktopBackgroundApplicationOrigin.Evidence?
         public let originStatus: DesktopBackgroundOriginStatus?
+        public let nearby: DesktopNearbyGatewayHints.Snapshot?
         public init(
             request: Request,
             binding: Binding? = nil,
@@ -88,7 +89,8 @@ public enum DesktopBackgroundLaunchProtocol {
             daemonPid: Int32? = nil,
             origin: DesktopBackgroundApplicationOrigin.Record? = nil,
             applicationOwnership: DesktopBackgroundApplicationOrigin.Evidence? = nil,
-            originStatus: DesktopBackgroundOriginStatus? = nil
+            originStatus: DesktopBackgroundOriginStatus? = nil,
+            nearby: DesktopNearbyGatewayHints.Snapshot? = nil
         ) {
             version = 1
             requestId = request.requestId
@@ -100,6 +102,7 @@ public enum DesktopBackgroundLaunchProtocol {
             self.origin = origin
             self.applicationOwnership = applicationOwnership
             self.originStatus = originStatus
+            self.nearby = nearby
         }
     }
 
@@ -151,9 +154,12 @@ public enum DesktopBackgroundLaunchProtocol {
         try keys(
             object,
             required: ["version", "requestId", "nonce", "binding", "epoch", "state"],
-            optional: ["daemonPid", "origin", "applicationOwnership", "originStatus"]
+            optional: ["daemonPid", "origin", "applicationOwnership", "originStatus", "nearby"]
         )
         try validateBinding(object["binding"])
+        if let nearby = object["nearby"] {
+            _ = try DesktopNearbyGatewayHints.decode(JSONSerialization.data(withJSONObject: nearby))
+        }
         if let origin = object["origin"] { try validateOrigin(origin) }
         if let status = object["originStatus"] { try DesktopBackgroundOriginStatus.validate(status) }
         if let ownership = object["applicationOwnership"] {
@@ -165,7 +171,9 @@ public enum DesktopBackgroundLaunchProtocol {
             )
         }
         let reply = try JSONDecoder().decode(Reply.self, from: data)
-        guard !([State.epochMismatch, .scopeMismatch].contains(reply.state) && request.action != .hello),
+        guard (reply.nearby != nil) == (reply.state == .nearbySnapshot),
+              reply.state != .nearbySnapshot || request.action == .nearbySnapshot,
+              !([State.epochMismatch, .scopeMismatch].contains(reply.state) && request.action != .hello),
               reply.state != .ownerVerified || request.action == .verifyDaemon || request.action == .verifyRetirement,
               reply.state != .ownerReleased || request.action == .releaseOwner || request.action == .recoverOrigin,
               reply.origin == nil || ([Action.releaseOwner, .recoverOrigin].contains(request.action) && reply.state == .ownerReleased),

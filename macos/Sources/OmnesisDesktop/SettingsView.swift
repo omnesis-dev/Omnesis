@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import AppKit
+import DesktopCore
 import Omnesis
 import SwiftUI
 
@@ -54,6 +55,14 @@ struct DesktopSettingsView: View {
                                 "Your library on this Mac uses encrypted storage",
                             systemImage: "lock.shield"
                         ) }
+                    }
+                    if store.state.mode == "joined", let nearby = store.state.nearby {
+                        DesktopNearbyConnectionView(
+                            status: DesktopNearbyGatewayHints.State(rawValue: nearby) ?? .unavailable,
+                            connected: store.state.canOpenLibrary,
+                            busy: store.busy,
+                            retry: { store.command("status") }
+                        )
                     }
                     Section("Protection and collection access") {
                         Button("Access on this Mac…") { store.accessFocus = nil

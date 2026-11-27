@@ -1550,3 +1550,10 @@ export {
 
 export { managedDesktopKeyRecoveryInvocation } from "./node-command.js";
 export type { ManagedDesktopKeyRecoveryContext } from "./node-command.js";
+
+export {
+  ManagedDesktopNearbyCleanupError,
+  managedDesktopNearbyInvocation,
+  managedDesktopNearbySnapshotSchema,
+  type ManagedDesktopNearbySnapshot,
+} from "./managed-background-nearby.js";

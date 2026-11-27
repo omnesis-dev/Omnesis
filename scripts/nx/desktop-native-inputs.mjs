@@ -5,7 +5,7 @@
 export function isDesktopNativeContract(path) {
   if (/\.test\.[cm]?[jt]sx?$/.test(path)) return false;
   return (
-    /^packages\/core\/src\/(?:source-permissions|sync-remediation|node-command|managed-runtime-bootstrap|worker-entry|managed-data-authority|managed-key-recovery|managed-background|managed-background-rebind|codex-paths)\.ts$/.test(
+    /^packages\/core\/src\/(?:source-permissions|sync-remediation|node-command|managed-runtime-bootstrap|worker-entry|managed-data-authority|managed-key-recovery|managed-background|managed-background-rebind|managed-background-nearby|codex-paths)\.ts$/.test(
       path,
     ) ||
     /^packages\/agent\/src\/codex-[^/]+\.ts$/.test(path) ||

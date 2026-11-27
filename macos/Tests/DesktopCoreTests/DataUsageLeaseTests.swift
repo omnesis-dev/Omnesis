@@ -543,6 +543,7 @@ final class DataUsageLeaseTests: XCTestCase {
         "--verify-background-retirement",
         "--background-binding",
         "--background-rebind",
+        "--background-nearby",
     ]
 
     func testSharedDataDescriptorCannotScrubEnvironmentAndEnterBackgroundControl() async throws {
@@ -633,7 +634,7 @@ final class DataUsageLeaseTests: XCTestCase {
           process.stdin.once('data',chunk=>{process.stdin.removeListener('end',end);if(chunk!=='perform\\n')reject(new Error('Invalid owned instruction'));else resolve();});
           process.stderr.write('fixture-stage:scrub-initialized\\n');process.stdin.resume();
         });
-        for (const mode of ['--key-recovery','--background-start','--background-daemon','--background-retire','--verify-background-owner','--verify-background-retirement','--background-binding','--background-rebind']) {
+        for (const mode of ['--key-recovery','--background-start','--background-daemon','--background-retire','--verify-background-owner','--verify-background-retirement','--background-binding','--background-rebind','--background-nearby']) {
           process.stderr.write('fixture-stage:scrub-before-'+mode+'\\n');
           const child=spawnSync(process.execPath,[mode,'invalid'],{env:{},stdio:['ignore','pipe','pipe','ignore','ignore','ignore','ignore',7],timeout:3000});
           if (child.status!==78 || !child.stderr.toString().includes('missingAuthority') || child.stdout.length!==0) throw new Error('DATA control boundary refusal missing');
@@ -1243,6 +1244,7 @@ final class DataUsageLeaseTests: XCTestCase {
             "verify-background-retirement",
             "background-binding",
             "background-rebind",
+            "background-nearby",
         ] {
             allowed.insert("scrub-before---" + mode)
             allowed.insert("scrub-after---" + mode)

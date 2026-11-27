@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { ManagedDesktopNearbyCleanupError, assertNever } from "@omnesis/core";
+import { desktopNearbyCleanupRetry } from "./nearby-hints.js";
 import { readDesktopRolePair, persistDesktopRolePair } from "./coordinator-credentials.js";
 import { DesktopProcessAuthorityFailure } from "./process-authority-errors.js";
 import { DesktopFreshInstallFailure } from "./fresh-install-errors.js";
@@ -31,7 +33,6 @@ export type {
 } from "./desktop-state.js";
 import { restartDesktopHome } from "./restart.js";
 import { join } from "node:path";
-import { assertNever } from "@omnesis/core";
 import { z } from "zod";
 import { handleDesktopRecovery } from "./coordinator-recovery.js";
 import { sameDesktopLibrary as sameLibrary } from "./enrollment.js";
@@ -74,6 +75,7 @@ export class DesktopCoordinator {
   private readonly update: DesktopUpdateController;
   private readonly deps: CoordinatorDependencies;
   private transport: DesktopSessionTransport | undefined;
+  private transportStartupCleanup?: () => Promise<void>;
   private transportIdentity: string | undefined;
   private firstHomeOffered = false;
   constructor(
@@ -263,13 +265,18 @@ export class DesktopCoordinator {
     this.recovery.close();
     this.update.close();
     await this.closeTransport();
+    if (this.transportStartupCleanup) {
+      await this.transportStartupCleanup();
+      this.transportStartupCleanup = undefined;
+    }
   }
 
   private async closeTransport(): Promise<void> {
     const transport = this.transport;
-    this.transport = undefined;
+    // An undefined identity marks this exact retained transport as draining.
     this.transportIdentity = undefined;
     await transport?.close();
+    if (this.transport === transport) this.transport = undefined;
   }
 
   private async status(signal: AbortSignal): Promise<DesktopState> {
@@ -564,10 +571,30 @@ export class DesktopCoordinator {
     if (token?.trim() !== pairing.token) throw new Error("The interactive credential needs repair");
     const identity = `${pairing.deviceId}:${pairing.token}`;
     if (this.transportIdentity !== identity) {
+      if (this.transportStartupCleanup) {
+        await this.transportStartupCleanup();
+        this.transportStartupCleanup = undefined;
+      }
       await this.closeTransport();
-      this.transport = await this.deps.startTransport(this.profile);
-      this.transportIdentity = identity;
+      try {
+        this.transport = await this.deps.startTransport(this.profile);
+        this.transportIdentity = identity;
+      } catch (error) {
+        this.transportStartupCleanup = desktopNearbyCleanupRetry(error);
+        throw error;
+      }
     }
+    try {
+      await this.transport?.refreshNearby?.(signal);
+    } catch (error) {
+      if (error instanceof ManagedDesktopNearbyCleanupError) {
+        // The exact transport remains retained, but cannot be treated as reusable or replaced.
+        this.transportIdentity = undefined;
+        throw error;
+      }
+      signal.throwIfAborted();
+    }
+    const nearby = this.transport?.nearbyState?.();
     try {
       await this.deps.verifyTransport(this.transport!, pairing, signal);
     } catch (error) {
@@ -576,6 +603,7 @@ export class DesktopCoordinator {
       return {
         phase: "waiting",
         mode: "joined",
+        ...(nearby ? { nearby } : {}),
         ...(pairing.homeName ? { homeName: pairing.homeName } : {}),
         message:
           "Check that Omnesis is running on the computer that keeps your library, then try again.",
@@ -603,6 +631,7 @@ export class DesktopCoordinator {
       phase: "ready",
       installationId: this.profile.instance,
       mode: "joined",
+      ...(nearby ? { nearby } : {}),
       ...(pairing.homeName ? { homeName: pairing.homeName } : {}),
       encrypted: true,
       connection: {

@@ -35,7 +35,7 @@ final class BackgroundControlTests: XCTestCase {
         var server: DesktopBackgroundControlServer? = try .init(
             binding: selected,
             verify: { _, _ in try Self.peer() },
-            handler: { request, _ in
+            handler: { request, _, _ in
                 .init(request: request, epoch: epoch, state: .helperIdle)
             }
         )
@@ -46,7 +46,7 @@ final class BackgroundControlTests: XCTestCase {
         XCTAssertThrowsError(try DesktopBackgroundControlServer(
             binding: selected,
             verify: { _, _ in try Self.peer() },
-            handler: { request, _ in
+            handler: { request, _, _ in
                 .init(request: request, epoch: epoch, state: .helperIdle)
             }
         ))
@@ -70,7 +70,7 @@ final class BackgroundControlTests: XCTestCase {
             secretService: "dev.omnesis.desktop." + String(repeating: "b", count: 64)
         )
         let epoch = String(repeating: "a", count: 64)
-        let server = try DesktopBackgroundControlServer(binding: old, verify: { _, _ in try Self.peer() }, handler: { request, _ in
+        let server = try DesktopBackgroundControlServer(binding: old, verify: { _, _ in try Self.peer() }, handler: { request, _, _ in
             .init(request: request, binding: old, epoch: epoch, state: .scopeMismatch)
         })
         defer { server.stop()
@@ -90,7 +90,7 @@ final class BackgroundControlTests: XCTestCase {
         let epoch = String(repeating: "a", count: 64)
         let server = try DesktopBackgroundControlServer(binding: selected, verify: { _, _ in
             throw DesktopBackgroundPeerTrust.Failure.untrustedPeer
-        }, handler: { request, _ in
+        }, handler: { request, _, _ in
             XCTFail("Untrusted peers cannot dispatch even fixed launch metadata")
             return .init(request: request, epoch: epoch, state: .helperIdle)
         })
@@ -135,7 +135,7 @@ final class BackgroundControlTests: XCTestCase {
                 released: { count.increment()
                     released.fulfill()
                 },
-                handler: { request, _ in
+                handler: { request, _, _ in
                     entered.fulfill()
                     await drain.wait()
                     returned.increment()
@@ -180,7 +180,7 @@ final class BackgroundControlTests: XCTestCase {
             released: { count.increment()
                 released.fulfill()
             },
-            handler: { request, _ in
+            handler: { request, _, _ in
                 if request.action == .hello { return .init(request: request, epoch: epoch, state: .lifecycleBlocked) }
                 if request.action == .ensureDaemon { throw DesktopBackgroundLaunchProtocol.Failure.invalidFrame }
                 entered.fulfill()

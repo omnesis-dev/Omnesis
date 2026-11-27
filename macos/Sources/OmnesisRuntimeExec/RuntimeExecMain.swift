@@ -21,6 +21,7 @@ struct RuntimeExecMain {
                 "--verify-background-retirement",
                 "--background-binding",
                 "--background-rebind",
+                "--background-nearby",
             ]
             if let first = CommandLine.arguments.dropFirst().first, fixed.contains(first) {
                 errno = 0
@@ -72,6 +73,16 @@ struct RuntimeExecMain {
                 bytes.append(10)
                 try FileHandle.standardOutput.write(contentsOf: bytes)
                 withExtendedLifetime((lease, held)) { exit(0) }
+            }
+            if arguments.first == "--background-nearby", arguments.count == 2 {
+                let snapshot = try DesktopBackgroundNearbyQuery.perform(
+                    arguments[1], runtime: runtime, lease: lease, environment: environment
+                )
+                var bytes = try JSONEncoder().encode(snapshot)
+                guard bytes.count <= 4095 else { throw DesktopBackgroundLaunchProtocol.Failure.invalidFrame }
+                bytes.append(10)
+                try FileHandle.standardOutput.write(contentsOf: bytes)
+                withExtendedLifetime(lease) { exit(0) }
             }
             if ["--background-binding", "--background-rebind"].contains(arguments.first ?? ""), arguments.count == 2 {
                 guard lease.requiresDataUsage,

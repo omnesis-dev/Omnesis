@@ -10,6 +10,7 @@ test.each([
   "packages/core/src/managed-key-recovery.ts",
   "packages/core/src/managed-background.ts",
   "packages/core/src/managed-background-rebind.ts",
+  "packages/core/src/managed-background-nearby.ts",
   "packages/core/src/node-command.ts",
   "packages/core/src/worker-entry.ts",
   "packages/agent/src/codex-managed-process.ts",
@@ -28,6 +29,7 @@ test.each([
   "packages/gateway/src/http/routes/search.ts",
   "packages/agent/src/codex-managed-process.test.ts",
   "packages/core/src/source-permissions.test.ts",
+  "packages/core/src/managed-background-nearby.test.ts",
 ])("unrelated shared inputs and unit-only edits do not claim Darwin coverage: %s", (path) => {
   expect(pathLanes([path]).desktop).toBe(false);
   expect(behavioralBundles([path])).not.toEqual(expect.arrayContaining(["macos-logic"]));

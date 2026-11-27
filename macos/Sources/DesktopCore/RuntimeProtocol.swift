@@ -29,6 +29,8 @@ public struct DesktopState: Codable, Equatable, Sendable {
     public let installationId: String?
     public let storageAdmission: DesktopServiceAdmission?
     public let remoteRoute: DesktopServiceAdmission?
+    /// Optional display evidence. Unknown future values cannot alter library authorization.
+    public let nearby: String?
 
     public struct Signup: Codable, Equatable, Sendable {
         public let policy: String?
@@ -59,7 +61,8 @@ public struct DesktopState: Codable, Equatable, Sendable {
         retirement: Retirement? = nil,
         installationId: String? = nil,
         storageAdmission: DesktopServiceAdmission? = nil,
-        remoteRoute: DesktopServiceAdmission? = nil
+        remoteRoute: DesktopServiceAdmission? = nil,
+        nearby: String? = nil
     ) {
         self.phase = phase
         self.mode = mode
@@ -74,6 +77,7 @@ public struct DesktopState: Codable, Equatable, Sendable {
         self.installationId = installationId
         self.storageAdmission = storageAdmission
         self.remoteRoute = remoteRoute
+        self.nearby = nearby
     }
 
     /// Opening a library requires verified protection for this Mac and its library home.

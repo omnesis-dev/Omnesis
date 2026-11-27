@@ -26,6 +26,16 @@ final class BackgroundService {
     private var ready: DesktopBackgroundDaemonProcess.Ready?
     private var starting: Task<DesktopBackgroundDaemonProcess.Ready?, Never>?
     private var activation: DesktopBackgroundLaunchProtocol.Activation?
+    private var nearby: DesktopNearbyGatewayBrowser?
+    private var nearbyClose: DesktopNearbyGatewayBrowser.CloseHandle?
+    private var daemonDrain: DesktopBackgroundDrain?
+    private var retirementDrain: DesktopBackgroundDrain?
+    private var shutdownRequested = false
+    private var queryCapableDaemon = false
+    // Retain exact physical owners throughout a blocked DNS close, even after their exit callbacks.
+    private var drainingChild: DesktopBackgroundDaemonProcess?
+    private var lastDaemonExit: DesktopBackgroundDaemonProcess.Exit?
+    private var drainingRetirement: DesktopBackgroundDaemonProcess?
     private var retry: Task<Void, Never>?
     private var failures = 0
     private var closing = false
@@ -68,9 +78,9 @@ final class BackgroundService {
         guard !closing, preparationGate.accepts(operation) else { throw CancellationError() }
         control = try DesktopBackgroundControlServer(binding: prepared.2.binding, released: {
             Task { @MainActor in NSApp.terminate(nil) }
-        }) { [weak self] request, peer in
+        }) { [weak self] request, peer, deadline in
             guard let self else { throw DesktopBackgroundLaunchProtocol.Failure.invalidFrame }
-            return await self.handle(request, peer: peer)
+            return await self.handle(request, peer: peer, deadline: deadline)
         }
         // A missing profile remains idle, allowing the GUI to perform encrypted bootstrap.
         if origin != nil, (try? prepared.2.configured()) == true {
@@ -80,7 +90,8 @@ final class BackgroundService {
 
     private func handle(
         _ request: DesktopBackgroundLaunchProtocol.Request,
-        peer: DesktopBackgroundPeerTrust.Peer
+        peer: DesktopBackgroundPeerTrust.Peer,
+        deadline: ContinuousClock.Instant
     ) async
         -> DesktopBackgroundLaunchProtocol.Reply {
         guard let runtime, let profile else { return .init(request: request, epoch: request.expectedEpoch, state: .ownerUnavailable) }
@@ -116,18 +127,19 @@ final class BackgroundService {
                       !DesktopBackgroundOriginStatus.Client(pid: pending.clientPID, birth: pending.birth).isGone() {
                 return .init(request: request, epoch: actualEpoch, state: .lifecycleBlocked)
             }
-            guard retirementChild == nil, !closing || relinquishing else {
+            guard retirementChild == nil, !closing || relinquishing || daemonDrain != nil else {
                 return .init(request: request, epoch: actualEpoch, state: .lifecycleBlocked)
             }
             relinquishing = true
+            shutdownRequested = true
             freezeStarts()
-            starting?.cancel()
-            if let child { _ = await child.stopAndJoin() }
-            _ = await starting?.value
-            child = nil
-            ready = nil
-            starting = nil
+            guard await drainOwnership(until: deadline.advanced(by: .milliseconds(-100))) == .confirmed else {
+                return .init(request: request, epoch: actualEpoch, state: .lifecycleBlocked)
+            }
             let transfer = await transferableOrigin()
+            guard ContinuousClock.now < deadline else {
+                return .init(request: request, epoch: actualEpoch, state: .lifecycleBlocked)
+            }
             return .init(request: request, epoch: actualEpoch, state: .ownerReleased, origin: transfer)
         }
         if closing { return .init(request: request, epoch: actualEpoch, state: .lifecycleBlocked) }
@@ -183,6 +195,31 @@ final class BackgroundService {
                 originStatus: currentOriginStatus(evidence)
             )
         }
+        if request.action == .nearbySnapshot {
+            guard ContinuousClock.now < deadline else {
+                return .init(request: request, epoch: actualEpoch, state: .lifecycleBlocked)
+            }
+            guard (try? profile.configuredJoined()) == true else {
+                return .init(request: request, epoch: actualEpoch, state: .nearbySnapshot, nearby: .unavailable)
+            }
+            queryCapableDaemon = true
+            if let closed = nearbyClose, closed.isConfirmed {
+                nearby = nil
+                nearbyClose = nil
+            }
+            guard nearbyClose == nil else {
+                return .init(request: request, epoch: actualEpoch, state: .nearbySnapshot, nearby: .unavailable)
+            }
+            guard ContinuousClock.now < deadline else {
+                return .init(request: request, epoch: actualEpoch, state: .lifecycleBlocked)
+            }
+            if nearby == nil {
+                let provider = DesktopNearbyGatewayBrowser()
+                nearby = provider
+                provider.start()
+            } else { nearby?.requestRetry() }
+            return .init(request: request, epoch: actualEpoch, state: .nearbySnapshot, nearby: nearby?.snapshot() ?? .unavailable)
+        }
         let outcome = await ensure(activation: request.activation, automatic: false)
         return .init(
             request: request,
@@ -233,6 +270,7 @@ final class BackgroundService {
         guard !closing, generation == originGeneration, pendingPresenter === candidate,
               candidate.isVerified else { throw CancellationError() }
         let previous = presenter
+        invalidateNearby()
         origin = record
         presenter = candidate
         originGeneration = UUID()
@@ -250,6 +288,7 @@ final class BackgroundService {
         guard let selected = presenter, selected.id == attachment else { return }
         // Deletion remains fail-closed for this attachment. Superseded moves/changes cannot stop a newer location.
         guard location == nil || selected.isCurrent(event: eventGeneration) else { return }
+        invalidateNearby()
         originGeneration = UUID()
         let event = originGeneration
         guard let location else {
@@ -263,8 +302,9 @@ final class BackgroundService {
         }.value) == true
         guard presenter === selected, originGeneration == event, selected.isCurrent(event: eventGeneration) else { return }
         guard matches, selected.isVerified else {
-            await shutdown()
-            NSApp.terminate(nil)
+            if await shutdown(until: ContinuousClock.now.advanced(by: .seconds(80))) == .confirmed {
+                NSApp.terminate(nil)
+            }
             return
         }
         observation(location)
@@ -335,6 +375,9 @@ final class BackgroundService {
             return nil
         }
         child = process
+        // Remember query capability even if its install record disappears during later cleanup.
+        if (try? profile?.configuredJoined()) != false { queryCapableDaemon = true }
+        lastDaemonExit = nil
         let identity = ObjectIdentifier(process)
         process.onExit = { [weak self] exit in
             Task { @MainActor [weak self] in self?.exited(identity, exit: exit) }
@@ -346,7 +389,8 @@ final class BackgroundService {
             return acknowledged
         } catch {
             let result = await process.stopAndJoin()
-            if child === process { child = nil
+            if child === process { lastDaemonExit = result
+                child = nil
                 ready = nil
             }
             if result.clean { desired = false }
@@ -357,6 +401,7 @@ final class BackgroundService {
 
     private func exited(_ identity: ObjectIdentifier, exit: DesktopBackgroundDaemonProcess.Exit) {
         guard let child, ObjectIdentifier(child) == identity else { return }
+        lastDaemonExit = exit
         self.child = nil
         ready = nil
         if exit.clean { desired = false }
@@ -378,6 +423,7 @@ final class BackgroundService {
     /// Refuse new launch requests before portable retirement starts draining its own runtime.
     func freezeStarts() {
         closing = true
+        invalidateNearby()
         preparationGate.close()
         retry?.cancel()
         retry = nil
@@ -387,24 +433,102 @@ final class BackgroundService {
         retirementChild = child
     }
 
-    func shutdown() async {
+    private func invalidateNearby() {
+        if nearbyClose == nil { nearbyClose = nearby?.beginClose() }
+    }
+
+    var retirementGeneration: UUID {
+        originGeneration
+    }
+
+    func canLaunchRetirement(generation: UUID) -> Bool {
+        !shutdownRequested && generation == originGeneration && retirementChild == nil
+    }
+
+    /// Trash preparation can close the daemon, but an explicit shutdown wins any later launch.
+    func prepareRetirement(until deadline: ContinuousClock.Instant) async -> DesktopBackgroundDrain.Result {
+        let generation = originGeneration
         freezeStarts()
+        guard canLaunchRetirement(generation: generation) else { return .blocked }
+        guard await drainOwnership(until: deadline) == .confirmed else { return .blocked }
+        guard canLaunchRetirement(generation: generation), ContinuousClock.now < deadline else { return .blocked }
+        return .confirmed
+    }
+
+    private func beginDaemonDrain() -> DesktopBackgroundDrain {
+        if let daemonDrain { return daemonDrain }
         starting?.cancel()
-        if let child { _ = await child.stopAndJoin() }
-        _ = await starting?.value
+        let pending = starting
+        drainingChild = child
+        let requiresClean = queryCapableDaemon || (try? profile?.configuredJoined()) != false
+        let drain = DesktopBackgroundDrain { [self] in
+            // A startup task owns its launch-failure join; do not signal that same child twice.
+            if let pending { _ = await pending.value }
+            if let current = child { drainingChild = current }
+            let outcome = await Self.join(drainingChild)
+            // Joined parents own query subprocesses. Forced/nonzero root exit cannot certify
+            // that cohort, even though Process has physically joined the parent itself.
+            return !requiresClean || (outcome?.clean ?? lastDaemonExit?.clean ?? true)
+        }
+        daemonDrain = drain
+        return drain
+    }
+
+    private static func join(_ process: DesktopBackgroundDaemonProcess?) async -> DesktopBackgroundDaemonProcess.Exit? {
+        guard let process else { return nil }
+        return await process.stopAndJoin()
+    }
+
+    private func drainOwnership(until deadline: ContinuousClock.Instant) async -> DesktopBackgroundDrain.Result {
+        freezeStarts()
+        let drain = beginDaemonDrain()
+        async let daemon = drain.join(until: deadline)
+        async let dns = joinNearby(until: deadline)
+        async let retirement = joinRetirement(until: deadline)
+        let outcomes = await (daemon, dns, retirement)
+        guard outcomes.0 == .confirmed, outcomes.1 == .confirmed, outcomes.2 == .confirmed,
+              ContinuousClock.now < deadline else { return .blocked }
+        return .confirmed
+    }
+
+    private func joinRetirement(until deadline: ContinuousClock.Instant) async -> DesktopBackgroundDrain.Result {
+        guard shutdownRequested else { return retirementChild == nil ? .confirmed : .blocked }
+        if retirementDrain == nil, let process = retirementChild {
+            drainingRetirement = process
+            retirementDrain = DesktopBackgroundDrain { _ = await process.stopAndJoin()
+                return true
+            }
+        }
+        guard let retirementDrain else { return .confirmed }
+        return await retirementDrain.join(until: deadline)
+    }
+
+    private func joinNearby(until deadline: ContinuousClock.Instant) async -> DesktopBackgroundDrain.Result {
+        guard let nearbyClose else { return .confirmed }
+        return await nearbyClose.join(until: deadline) == .confirmed ? .confirmed : .blocked
+    }
+
+    func shutdown(until deadline: ContinuousClock.Instant) async -> DesktopBackgroundDrain.Result {
+        shutdownRequested = true
+        guard await drainOwnership(until: deadline) == .confirmed else { return .blocked }
         child = nil
         ready = nil
         starting = nil
         control?.stop()
         control = nil
         retirementChild = nil
+        drainingChild = nil
+        drainingRetirement = nil
         presenter?.stop()
         presenter = nil
         pendingPresenter?.stop()
         pendingPresenter = nil
         origin = nil
         originGeneration = UUID()
-        // Retain code protection until the exact child has actually exited.
+        nearby = nil
+        nearbyClose = nil
+        // Release CODE only after both daemon ownership and native callbacks physically joined.
         usage = nil
+        return .confirmed
     }
 }

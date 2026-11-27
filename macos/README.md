@@ -81,6 +81,15 @@ Navigation and toolbar structure follow Apple's
 with semantic control hierarchy informed by the
 [button guidelines](https://developer.apple.com/design/human-interface-guidelines/buttons).
 
+A Mac joined to an existing library can find that same gateway on its local
+network, including a gateway installed from source on Linux. The background
+helper owns one Bonjour browser while the signed installation is active; closing
+the main window or quitting presentation does not transfer browser ownership.
+Local Network access is explained in Settings. A denied or unavailable nearby
+route does not invalidate an authenticated working remote connection. Opening
+System Settings does not prove access; Check again obtains a new bounded native
+observation. Unrelated advertisements cannot select a library or grant access.
+
 ## Build and test
 
 Use Node 24 for the portable runtime and Xcode 26 plus XcodeGen for the app.

@@ -10,4 +10,6 @@
   <key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
   <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
   <key>LSUIElement</key><true/>
+  <key>NSLocalNetworkUsageDescription</key><string>Omnesis finds your private library on your home network and connects your devices securely.</string>
+  <key>NSBonjourServices</key><array><string>_omnesis._tcp</string></array>
 </dict></plist>

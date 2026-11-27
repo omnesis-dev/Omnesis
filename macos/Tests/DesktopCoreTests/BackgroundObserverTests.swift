@@ -85,4 +85,11 @@ final class BackgroundObserverTests: XCTestCase {
         XCTAssertFalse(DesktopApplicationLocation.isInTrash(URL(fileURLWithPath: "/Applications/Omnesis.app"), trash: trash))
         XCTAssertFalse(DesktopApplicationLocation.isInTrash(URL(fileURLWithPath: "/example/Other/Omnesis.app"), trash: trash))
     }
+
+    @MainActor
+    func testNearbyMetadataCannotEstablishObserverStartupOwnership() {
+        XCTAssertThrowsError(try DesktopBackgroundObserver.requireMatchingOwner(.nearbySnapshot)) { error in
+            XCTAssertEqual(error as? DesktopBackgroundObserver.StartupBlock, .helperUnavailable)
+        }
+    }
 }

@@ -586,3 +586,35 @@ test("a lifecycle intent arriving during control setup prevents readiness and al
   expect(f.children).toEqual([]);
   expect(f.release).toHaveBeenCalledOnce();
 });
+
+test("joined query cleanup blocks replacement and retains parent control and lease until physical join", async () => {
+  const f = await fixture("joined");
+  const physical = deferred<void>();
+  const entered = deferred<void>();
+  const closeControl = vi.fn(async () => {});
+  f.deps.control.mockResolvedValue({ close: closeControl });
+  let finished = false;
+  const run = f.run().then((result) => {
+    finished = true;
+    return result;
+  });
+  await f.event("collector", "starting");
+  f.children[0]!.child.closeNearby = vi.fn(() => {
+    entered.resolve();
+    return physical.promise;
+  });
+  f.children[0]!.exit(1);
+  await entered.promise;
+  expect(f.deps.spawn).toHaveBeenCalledTimes(1);
+  expect(f.release).not.toHaveBeenCalled();
+  expect(closeControl).not.toHaveBeenCalled();
+  f.controller.abort();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(finished).toBe(false);
+  expect(f.release).not.toHaveBeenCalled();
+  physical.resolve();
+  expect(await run).toBe("stopped");
+  expect(f.deps.spawn).toHaveBeenCalledTimes(1);
+  expect(closeControl).toHaveBeenCalledTimes(1);
+  expect(f.release).toHaveBeenCalledTimes(1);
+});

@@ -129,6 +129,28 @@ Account discovery, Bonjour and transport selection have different trust roles:
 - The relay hostname is the stable address shown for phone pairing and agent
   connections. Routine setup does not require selecting an IP address.
 
+The native background helper owns the desktop Bonjour browser. Its private,
+signed-client-only cache query carries bounded ephemeral numeric addresses and
+ports; it carries no credential or trusted gateway selection. The interactive
+controller reads through its fixed DATA-free native adapter. The collector asks
+its exact retained daemon parent over existing child IPC, keeping its DATA scope
+out of native lifecycle control. Each role separately uses its saved gateway
+certificate/SPKI and token to fetch authenticated direct-address metadata. Raw
+advertisements appear only in the transient dial list; only that gateway's
+response can reach the paired-record credential CAS. Known and discovered dials
+rotate fairly within existing connection budgets. Unsupported gateways and
+ordinary headless behavior retain their existing paths.
+
+Browser cancellation invalidates cached generations before native ref teardown.
+A timed-out close retains its provider, callback contexts, runtime lease and
+helper owner until physical closure is proved. Explicit shutdown of a joined
+daemon additionally requires its cooperative clean exit after its query channels
+join; merely killing the parent cannot certify its query cohort. Trash
+preparation uses that same retained drain before launching retirement, and an
+explicit shutdown wins a concurrent preparation. Installed signing, Local
+Network prompt attribution, allow/deny/revoke and login behavior require native
+GUI acceptance; source tests do not qualify those OS observations.
+
 Existing mobile and collector enrollment security must remain authoritative.
 No new desktop account shortcut can bypass gateway-origin passkey confirmation,
 step-up protection, comparison approval, nonce purpose or revocation. Existing

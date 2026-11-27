@@ -28,6 +28,7 @@ import { prepareDesktopRuntime } from "./runtime-state.js";
 import { readDesktopConnection, requestDesktopGateway } from "./gateway-access.js";
 import { desktopEnvironment, type DesktopProfile } from "./environment.js";
 import { startDesktopBackgroundDaemon } from "./background-start.js";
+import { DesktopNearbyHints } from "./nearby-hints.js";
 import { prepareDesktopBackgroundHandoff } from "./background-rebind.js";
 import { discoverDesktopHomes } from "./discovery.js";
 import { enrollDesktopRole, type DesktopPairing } from "./enrollment.js";
@@ -40,6 +41,8 @@ import { type DesktopRestoreActivation } from "./restore-start-arguments.js";
 export interface DesktopSessionTransport {
   url: string;
   gatewayUrl?: string;
+  nearbyState?(): "finding" | "ready" | "denied" | "unavailable" | undefined;
+  refreshNearby?(signal: AbortSignal): Promise<void>;
   close(): Promise<void>;
 }
 export interface CoordinatorDependencies {
@@ -139,6 +142,7 @@ export const desktopCoordinatorDefaults: CoordinatorDependencies = {
   removeInstall: removeDesktopInstall,
   startDaemon: startDesktopBackgroundDaemon,
   startTransport: async (profile) => {
+    const nearby = new DesktopNearbyHints(profile);
     const { runRelayCommand } = await import("@omnesis/cloud-relay/runtime");
     const transport = await runRelayCommand(
       "client",
@@ -149,6 +153,7 @@ export const desktopCoordinatorDefaults: CoordinatorDependencies = {
         OMNESIS_CLOUD_RELAY_CLIENT_UNREF: "1",
       },
       {
+        nearbyHints: nearby,
         persistDirectCandidates: async (...args) => {
           const { saveDirectCandidates } = await import("@omnesis/cloud-relay/runtime");
           await publishDesktopHint(profile, () => saveDirectCandidates(...args));
@@ -159,7 +164,14 @@ export const desktopCoordinatorDefaults: CoordinatorDependencies = {
       await transport?.close();
       throw new Error("The paired connection is unavailable");
     }
-    return { ...transport, gatewayUrl: transport.gatewayUrl };
+    return {
+      ...transport,
+      gatewayUrl: transport.gatewayUrl,
+      nearbyState: () => (transport.nearbyEnabled ? nearby.state : undefined),
+      refreshNearby: async (signal) => {
+        if (transport.nearbyEnabled) await nearby.snapshot(signal);
+      },
+    };
   },
   verifyTransport: async (transport, pairing, signal) => {
     const base = new URL(transport.url);

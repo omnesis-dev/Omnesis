@@ -2062,7 +2062,9 @@
         "packages/gateway/portal/js/views/models-decision.test.ts",
         "packages/gateway/src/http/client-ip.test.ts",
         "packages/gateway/src/http/services/PairingQrService.test.ts",
-        "packages/gateway/src/inference/registry.test.ts"
+        "packages/gateway/src/inference/registry.test.ts",
+        "macos/Tests/DesktopCoreTests/NearbyGatewayHintsTests.swift",
+        "packages/cloud-relay/src/direct-path.test.ts"
       ],
       "reason": "invented private-address fixture for the RFC 1918 10/8 range"
     },
@@ -2157,7 +2159,8 @@
         "packages/core/src/network-discovery.test.ts",
         "packages/core/src/network-discovery.ts",
         "packages/gateway/src/http/client-ip.test.ts",
-        "packages/gateway/src/mdns-advertiser.test.ts"
+        "packages/gateway/src/mdns-advertiser.test.ts",
+        "packages/gateway/src/http/services/DirectCandidates.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -2173,13 +2176,23 @@
       "value": "192.168.1.2",
       "paths": [
         "packages/gateway/src/access/client-metadata-document.test.ts",
-        "ios/Tests/OmnesisTests/GatewayRoutingLifecycleTests.swift"
+        "ios/Tests/OmnesisTests/GatewayRoutingLifecycleTests.swift",
+        "packages/cli/src/desktop/nearby-hints.test.ts",
+        "android/core-pairing/src/test/kotlin/dev/omnesis/android/pairing/PairedGatewayTransportTest.kt",
+        "android/core-pairing/src/test/kotlin/dev/omnesis/android/pairing/PairingGenerationTest.kt",
+        "android/core-transport/src/test/kotlin/dev/omnesis/android/transport/routing/DirectGatewayRouteTest.kt",
+        "ios/Tests/OmnesisTests/GatewayDirectDiscoveryTests.swift",
+        "ios/Tests/OmnesisTests/GatewayListenerVerificationTests.swift",
+        "ios/Tests/OmnesisTests/GatewayPairingGenerationTests.swift"
       ],
       "reason": "invented private-address fixture for mixed-answer SSRF rejection"
     },
     {
       "value": "192.168.1.10",
-      "paths": ["packages/core/src/network-discovery.test.ts"],
+      "paths": [
+        "packages/core/src/network-discovery.test.ts",
+        "packages/cloud-relay/src/direct-discovery.test.ts"
+      ],
       "reason": "reviewed existing fixture"
     },
     {
@@ -2202,7 +2215,16 @@
         "packages/gateway/src/host-network.test.ts",
         "packages/gateway/src/http/services/PairingQrService.test.ts",
         "packages/gateway/src/server.test.ts",
-        "packages/gateway/src/tls-lifecycle/service.test.ts"
+        "packages/gateway/src/tls-lifecycle/service.test.ts",
+        "ios/Tests/OmnesisTests/GatewayDirectRouteTests.swift",
+        "packages/cloud-relay/src/adaptive-path.test.ts",
+        "packages/cloud-relay/src/adaptive-probe.test.ts",
+        "packages/cloud-relay/src/adaptive-tls.test.ts",
+        "packages/cloud-relay/src/direct-path.test.ts",
+        "packages/cloud-relay/src/direct-tls.test.ts",
+        "packages/cloud-relay/src/runtime-direct.test.ts",
+        "packages/gateway/src/http/routes/direct-candidates.test.ts",
+        "packages/gateway/src/http/services/DirectCandidates.test.ts"
       ],
       "reason": "invented private-LAN fixture"
     },
@@ -2267,7 +2289,8 @@
       "value": "172.31.255.254",
       "paths": [
         "android/core-transport/src/test/kotlin/dev/omnesis/android/transport/routing/DirectGatewayRouteTest.kt",
-        "packages/cloud-relay/src/direct-path.test.ts"
+        "packages/cloud-relay/src/direct-path.test.ts",
+        "macos/Tests/DesktopCoreTests/NearbyGatewayHintsTests.swift"
       ],
       "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
     },
@@ -2340,7 +2363,11 @@
     },
     {
       "value": "192.168.1.1",
-      "paths": ["packages/cloud-relay/src/direct-path.test.ts"],
+      "paths": [
+        "packages/cloud-relay/src/direct-path.test.ts",
+        "packages/cli/src/desktop/nearby-hints.test.ts",
+        "packages/cloud-relay/src/nearby-hints.test.ts"
+      ],
       "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
     },
     {
@@ -2434,6 +2461,44 @@
       "value": "172.18.0.2",
       "paths": ["packages/gateway/src/http/services/PairingQrService.test.ts"],
       "reason": "invented Docker container address fixture"
+    },
+    {
+      "value": "10.23.4.5",
+      "paths": [
+        "macos/Tests/DesktopCoreTests/NearbyGatewayHintsTests.swift",
+        "macos/Tests/DesktopCoreTests/NearbyGatewayBrowserTests.swift"
+      ],
+      "reason": "Invented RFC1918-only discovery validation fixtures; never network endpoints."
+    },
+    {
+      "value": "172.16.1.2",
+      "paths": ["macos/Tests/DesktopCoreTests/NearbyGatewayHintsTests.swift"],
+      "reason": "Invented RFC1918-only discovery validation fixtures; never network endpoints."
+    },
+    {
+      "value": "192.168.42.3",
+      "paths": ["macos/Tests/DesktopCoreTests/NearbyGatewayHintsTests.swift"],
+      "reason": "Invented RFC1918-only discovery validation fixtures; never network endpoints."
+    },
+    {
+      "value": "10.23.4.6",
+      "paths": ["macos/Tests/DesktopCoreTests/NearbyGatewayBrowserTests.swift"],
+      "reason": "Invented RFC1918-only discovery validation fixture; never a network endpoint."
+    },
+    {
+      "value": "192.168.2.9",
+      "paths": ["packages/cloud-relay/src/nearby-hints.test.ts"],
+      "reason": "Invented RFC1918 routing-validation fixture; not an operator address or a contacted endpoint."
+    },
+    {
+      "value": "192.168.2.1",
+      "paths": ["packages/cloud-relay/src/nearby-hints.test.ts"],
+      "reason": "Invented RFC1918 routing-validation fixture; not an operator address or a contacted endpoint."
+    },
+    {
+      "value": "192.168.1.7",
+      "paths": ["packages/core/src/managed-background-nearby.test.ts"],
+      "reason": "Invented RFC1918 routing-validation fixture; not an operator address or a contacted endpoint."
     }
   ],
   "tailnetIps": [

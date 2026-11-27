@@ -89,7 +89,8 @@ public enum DesktopBackgroundObserver {
         case .helperIdle, .daemonOwned: return
         case .scopeMismatch, .epochMismatch: throw StartupBlock.ownerMismatch
         case .originRequired: throw StartupBlock.originRequired
-        case .lifecycleBlocked, .ownerUnavailable, .ownerVerified, .ownerReleased, .originAttached: throw StartupBlock.helperUnavailable
+        case .lifecycleBlocked, .ownerUnavailable, .ownerVerified, .ownerReleased, .originAttached,
+             .nearbySnapshot: throw StartupBlock.helperUnavailable
         }
     }
 

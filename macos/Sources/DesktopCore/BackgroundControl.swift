@@ -14,7 +14,7 @@ public enum DesktopBackgroundControlClient {
         -> DesktopBackgroundLaunchProtocol.Reply {
         let timeout: Duration = switch request.action {
         case .ensureDaemon, .releaseOwner, .recoverOrigin: .seconds(85)
-        case .verifyDaemon, .verifyRetirement: .seconds(5)
+        case .verifyDaemon, .verifyRetirement, .nearbySnapshot: .seconds(5)
         case .adoptOrigin: .seconds(30)
         case .hello: .seconds(30)
         }
@@ -92,7 +92,11 @@ public enum DesktopBackgroundControlClient {
 
 /// A socket owner never substitutes for the daemon's runtime/data/kernel ownership.
 public final class DesktopBackgroundControlServer: @unchecked Sendable {
-    public typealias Handler = @Sendable (DesktopBackgroundLaunchProtocol.Request, DesktopBackgroundPeerTrust.Peer) async throws
+    public typealias Handler = @Sendable (
+        DesktopBackgroundLaunchProtocol.Request,
+        DesktopBackgroundPeerTrust.Peer,
+        ContinuousClock.Instant
+    ) async throws
         -> DesktopBackgroundLaunchProtocol.Reply
     private let binding: DesktopBackgroundLaunchProtocol.Binding
     private let handler: Handler
@@ -211,12 +215,17 @@ public final class DesktopBackgroundControlServer: @unchecked Sendable {
             defer { self.remove(socket) }
             do {
                 _ = try self.verify(socket.fd, nil)
-                let deadline = ContinuousClock.now.advanced(by: .seconds(80))
+                let admitted = ContinuousClock.now
+                let deadline = admitted.advanced(by: .seconds(80))
                 let bytes = try DesktopBackgroundSocket.receive(socket, deadline: deadline)
                 let request = try DesktopBackgroundLaunchProtocol.decodeRequest(bytes)
                 let peer = try self.verify(socket.fd, request.action)
-                guard request.binding.configDirHash == self.binding.configDirHash, self.running else { return }
-                let reply = try await self.handler(request, peer)
+                // Nearby reads share a five-second window from receipt admission, including
+                // identity checks. A slow guard cannot initiate discovery after that window.
+                let operationDeadline = request.action == .nearbySnapshot ? admitted.advanced(by: .seconds(5)) : deadline
+                guard request.binding.configDirHash == self.binding.configDirHash, self.running,
+                      ContinuousClock.now < operationDeadline else { return }
+                let reply = try await self.handler(request, peer, operationDeadline)
                 // A release is committed only after the handler has joined its owned child.
                 // Delivery failure cannot strand that committed owner in its frozen state.
                 defer {
@@ -225,7 +234,7 @@ public final class DesktopBackgroundControlServer: @unchecked Sendable {
                     }
                 }
                 guard self.running else { return }
-                try DesktopBackgroundSocket.send(DesktopBackgroundLaunchProtocol.encode(reply), to: socket, deadline: deadline)
+                try DesktopBackgroundSocket.send(DesktopBackgroundLaunchProtocol.encode(reply), to: socket, deadline: operationDeadline)
             } catch { /* No raw exception or caller values cross this metadata channel. */ }
             socket.cancel()
         }

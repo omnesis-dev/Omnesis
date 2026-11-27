@@ -62,6 +62,12 @@ public struct DesktopBackgroundManagedProfile: Equatable, Sendable {
         return bound(install) && install["phase"] as? String == "configured"
     }
 
+    /// Nearby endpoint hints apply only to an already configured joined installation.
+    public func configuredJoined() throws -> Bool {
+        guard let install = try Self.record(URL(fileURLWithPath: configDir + "/desktop-install.json")) else { return false }
+        return bound(install) && install["phase"] as? String == "configured" && install["mode"] as? String == "joined"
+    }
+
     private func bound(_ object: [String: Any]) -> Bool {
         (object["version"] as? Int == 1 || object["format"] as? Int == 1) &&
             object["owner"] as? String == "omnesis-desktop" && object["instance"] as? String == instance &&

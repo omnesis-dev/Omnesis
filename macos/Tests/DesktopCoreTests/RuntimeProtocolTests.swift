@@ -114,4 +114,14 @@ extension RuntimeProtocolTests {
         XCTAssertTrue(try XCTUnwrap(commit.recoveryCommit).saved)
         XCTAssertNil(commit.result)
     }
+
+    func testNearbyPermissionEvidenceNeverGrantsOrRemovesExistingLibraryAuthority() throws {
+        for nearby in ["denied", "unavailable", "finding", "ready", "future-observation"] {
+            let wire = #"{"phase":"ready","mode":"joined","encrypted":true,"nearby":"\#(nearby)","connection":{"url":"https://library.example.test","token":"invented-test-token"}}"#
+            let state = try JSONDecoder().decode(DesktopState.self, from: Data(wire.utf8))
+            XCTAssertEqual(state.nearby, nearby)
+            XCTAssertTrue(state.canOpenLibrary)
+            XCTAssertFalse(DesktopState(phase: .waiting, mode: "joined", nearby: nearby).canOpenLibrary)
+        }
+    }
 }

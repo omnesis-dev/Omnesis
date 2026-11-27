@@ -32,6 +32,7 @@ import { desktopEpochMayStart, desktopUpdateBlocked } from "./update-admission.j
 import { claimDesktopUpdateEpoch } from "./update-claim.js";
 import { probeDesktopRemoteProtection, watchDesktopRemoteProtection } from "./remote-protection.js";
 import { startDesktopDaemonControl } from "./daemon-control.js";
+import { desktopCollectorNearbyParent } from "./collector-nearby-channel.js";
 import { readDesktopRuntime } from "./runtime-state.js";
 
 export type DesktopComponent = "gateway" | "collector";
@@ -43,6 +44,7 @@ export interface DesktopOwnedChild {
   /** Rejects only when no process was created; resolves on the actual exit event. */
   exited: Promise<DesktopChildExit>;
   collectorReady?: Promise<string>;
+  closeNearby?(): Promise<void>;
   kill(signal: NodeJS.Signals): void;
 }
 export interface DesktopDaemonEvent {
@@ -71,6 +73,7 @@ interface DaemonDependencies {
     component: DesktopComponent,
     env: NodeJS.ProcessEnv,
     restoreActivation?: DesktopRestoreActivation,
+    nearby?: { profile: DesktopProfile; signal: AbortSignal },
   ): DesktopOwnedChild;
   sleep(ms: number, signal: AbortSignal): Promise<void>;
   now(): number;
@@ -126,7 +129,7 @@ const defaults: DaemonDependencies = {
     return token?.trim() ? createHash("sha256").update(token.trim()).digest("hex") : null;
   },
   control: startDesktopDaemonControl,
-  spawn: (component, env, restoreActivation) => {
+  spawn: (component, env, restoreActivation, nearby) => {
     const entry = resolveSubprocessEntry("./component-process.ts", import.meta.url);
     const child = spawn(
       entry.command,
@@ -136,6 +139,10 @@ const defaults: DaemonDependencies = {
         stdio: ["ignore", "ignore", "ignore", "ipc"],
       },
     );
+    const channel =
+      component === "collector" && nearby
+        ? desktopCollectorNearbyParent(child, nearby.profile, nearby.signal)
+        : undefined;
     const collectorReady =
       component === "collector"
         ? new Promise<string>((resolve) => {
@@ -158,6 +165,7 @@ const defaults: DaemonDependencies = {
     return {
       exited,
       collectorReady,
+      ...(channel ? { closeNearby: channel.close } : {}),
       kill: (signal) => {
         child.kill(signal);
       },
@@ -447,10 +455,15 @@ async function superviseCollector(
       continue;
     }
     emit("collector", "starting");
-    const child = deps.spawn("collector", {
-      ...env,
-      ...(collectorRestart.savedPairingOnly ? { OMNESIS_DESKTOP_COLLECTOR_RESTART: "1" } : {}),
-    });
+    const child = deps.spawn(
+      "collector",
+      {
+        ...env,
+        ...(collectorRestart.savedPairingOnly ? { OMNESIS_DESKTOP_COLLECTOR_RESTART: "1" } : {}),
+      },
+      undefined,
+      { profile, signal },
+    );
     collectorRestart.started(child);
     const restartSignal = collectorRestart.signal;
     let wakeRestart!: () => void;
@@ -532,6 +545,17 @@ async function superviseCollector(
 
 /** Escalation addresses this exact owned handle and always waits for its terminal exit. */
 async function stopOwnedChild(child: DesktopOwnedChild, deps: DaemonDependencies): Promise<void> {
+  try {
+    await stopOwnedComponent(child, deps);
+  } finally {
+    await child.closeNearby?.();
+  }
+}
+
+async function stopOwnedComponent(
+  child: DesktopOwnedChild,
+  deps: DaemonDependencies,
+): Promise<void> {
   let exited = false;
   const done = child.exited.then(
     () => {

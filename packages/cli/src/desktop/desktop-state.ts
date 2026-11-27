@@ -88,6 +88,7 @@ export interface DesktopState {
   storageAdmission?: DesktopStorageAdmission;
   /** Home secure remote-route evidence, independent of linkage and optional assistant connections. */
   remoteRoute?: DesktopRemoteRoute;
+  nearby?: "finding" | "ready" | "denied" | "unavailable";
   retired?: true;
   retirement?: Pick<DesktopRetirement, "mode" | "phase">;
 }

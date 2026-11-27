@@ -43,6 +43,9 @@ struct DesktopOnboardingView: View {
                                     "Omnesis brings your information together in a private library. Sign in to find a library you already keep on another computer, or start one here."
                                 )
                                 .foregroundStyle(DesktopTheme.secondary)
+                                Text(
+                                    "When you connect to another computer, macOS may ask for Local Network access so Omnesis can find your library nearby. You can review this access later in Settings."
+                                ).font(.callout).foregroundStyle(DesktopTheme.secondary)
                                 HStack(spacing: 12) {
                                     Button("Find my library") {
                                         accountIntent = .existing

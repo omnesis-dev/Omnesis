@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { ChildProcess } from "node:child_process";
+import { PassThrough } from "node:stream";
 import { join } from "node:path";
+import { ManagedDesktopNearbyCleanupError } from "@omnesis/core";
 import { expect, test, vi } from "vitest";
+import { DesktopNearbyHints } from "./nearby-hints.js";
 import { DesktopCoordinator, type DesktopStateCommand } from "./coordinator.js";
 import { desktopStorageAdmission } from "./desktop-state.js";
 import { DesktopInteractionBroker } from "./protocol.js";
@@ -922,4 +926,160 @@ test("home remote route loss and recovery preserve local search independently of
   });
   online = true;
   expect(await f.run("status")).toMatchObject({ phase: "ready", remoteRoute: { state: "ready" } });
+});
+
+test("nearby denial remains display evidence while an authenticated protected relay connection stays ready", async () => {
+  const f = fixture("joined");
+  f.save("cli");
+  f.save("collector");
+  const refreshNearby = vi.fn(async () => {});
+  const transport = { ...f.transport, nearbyState: () => "denied" as const, refreshNearby };
+  f.deps.startTransport.mockResolvedValue(transport);
+  expect(await f.run("status")).toMatchObject({
+    phase: "ready",
+    mode: "joined",
+    nearby: "denied",
+    encrypted: true,
+  });
+  expect(refreshNearby).toHaveBeenCalledTimes(1);
+  expect(f.deps.verifyTransport).toHaveBeenCalledTimes(1);
+  expect(f.deps.remoteProtection).toHaveBeenCalledTimes(1);
+  expect(f.deps.stopDaemon).not.toHaveBeenCalled();
+  await f.coordinator.close(false);
+});
+
+test("nearby status does not authorize a disconnected library and ordinary query failure keeps relay checks", async () => {
+  const f = fixture("joined");
+  f.save("cli");
+  f.save("collector");
+  const transport = {
+    ...f.transport,
+    nearbyState: () => "unavailable" as const,
+    refreshNearby: vi.fn(async () => {
+      throw new Error("nearby temporarily unavailable");
+    }),
+  };
+  f.deps.startTransport.mockResolvedValue(transport);
+  f.deps.verifyTransport.mockRejectedValue(new Error("offline"));
+  expect(await f.run("status")).toMatchObject({ phase: "waiting", nearby: "unavailable" });
+  expect(f.deps.verifyTransport).toHaveBeenCalledTimes(1);
+  expect(f.deps.remoteProtection).not.toHaveBeenCalled();
+  await f.coordinator.close(false);
+});
+
+function uncertainInteractiveQuery(profile: ReturnType<typeof desktopProfile>) {
+  const child = new ChildProcess();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.stdin = new PassThrough();
+  let confirmed = false;
+  const refused = new Error("the exact query has not physically joined");
+  const joined = Promise.reject(refused);
+  void joined.catch(() => {});
+  const stop = vi.fn(async () => {
+    throw refused;
+  });
+  const owned = vi.fn(() => ({
+    child,
+    ready: Promise.resolve(),
+    joined,
+    get joinedConfirmed() {
+      return confirmed;
+    },
+    stop,
+  }));
+  const provider = new DesktopNearbyHints(profile, {
+    invocation: () => ({ command: "/example/runtime-exec", args: ["--background-nearby"] }),
+    owned,
+  });
+  return {
+    provider,
+    owned,
+    stop,
+    confirm: () => {
+      confirmed = true;
+    },
+  };
+}
+
+test("failed interactive close retains the transport and refuses every successor until the same query joins", async () => {
+  const f = fixture("joined");
+  f.save("cli");
+  f.save("collector");
+  const query = uncertainInteractiveQuery(f.profile);
+  const close = vi.fn(() => query.provider.close());
+  f.deps.startTransport.mockResolvedValueOnce({ ...f.transport, close });
+  expect(await f.run("status")).toMatchObject({ phase: "ready" });
+  await expect(query.provider.snapshot(new AbortController().signal)).rejects.toBeInstanceOf(
+    ManagedDesktopNearbyCleanupError,
+  );
+  await expect(f.coordinator.close(false)).rejects.toBeInstanceOf(ManagedDesktopNearbyCleanupError);
+  expect(await f.run("status")).toMatchObject({ phase: "error" });
+  expect(await f.run("status")).toMatchObject({ phase: "error" });
+  expect(f.deps.startTransport).toHaveBeenCalledTimes(1);
+  expect(query.owned).toHaveBeenCalledTimes(1);
+  expect(query.stop).toHaveBeenCalledTimes(1);
+  query.confirm();
+  expect(await f.run("status")).toMatchObject({ phase: "ready" });
+  expect(f.deps.startTransport).toHaveBeenCalledTimes(2);
+  expect(query.owned).toHaveBeenCalledTimes(1);
+  expect(query.stop).toHaveBeenCalledTimes(1);
+  await f.coordinator.close(false);
+  expect(f.transport.close).toHaveBeenCalledTimes(1);
+});
+
+test("failed startup retains its cleanup capability and original errors before admitting a new interactive transport", async () => {
+  const f = fixture("joined");
+  f.save("cli");
+  f.save("collector");
+  const query = uncertainInteractiveQuery(f.profile);
+  const cleanup = await query.provider
+    .snapshot(new AbortController().signal)
+    .catch((error: unknown) => error);
+  expect(cleanup).toBeInstanceOf(ManagedDesktopNearbyCleanupError);
+  const startup = new Error("the original interactive transport startup failed");
+  const failure = new AggregateError([startup, cleanup], "startup and cleanup failed");
+  f.deps.startTransport.mockRejectedValueOnce(failure);
+  expect(await f.run("status")).toMatchObject({ phase: "error" });
+  expect(await f.run("status")).toMatchObject({ phase: "error" });
+  await expect(f.coordinator.close(false)).rejects.toBe(failure);
+  expect(failure.errors).toEqual([startup, cleanup]);
+  expect(f.deps.startTransport).toHaveBeenCalledTimes(1);
+  expect(query.owned).toHaveBeenCalledTimes(1);
+  expect(query.stop).toHaveBeenCalledTimes(1);
+  query.confirm();
+  expect(await f.run("status")).toMatchObject({ phase: "ready" });
+  expect(f.deps.startTransport).toHaveBeenCalledTimes(2);
+  expect(query.owned).toHaveBeenCalledTimes(1);
+  expect(query.stop).toHaveBeenCalledTimes(1);
+  await f.coordinator.close(false);
+});
+
+test("uncertain status query marks the retained transport draining before the next status can replace it", async () => {
+  const f = fixture("joined");
+  f.save("cli");
+  f.save("collector");
+  const query = uncertainInteractiveQuery(f.profile);
+  let queryEnabled = false;
+  const close = vi.fn(() => query.provider.close());
+  const retainedTransport = {
+    ...f.transport,
+    close,
+    refreshNearby: async (signal: AbortSignal) => {
+      if (queryEnabled) await query.provider.snapshot(signal);
+    },
+  };
+  f.deps.startTransport.mockResolvedValueOnce(retainedTransport);
+  expect(await f.run("status")).toMatchObject({ phase: "ready" });
+  queryEnabled = true;
+  expect(await f.run("status")).toMatchObject({ phase: "error" });
+  expect(await f.run("status")).toMatchObject({ phase: "error" });
+  expect(f.deps.startTransport).toHaveBeenCalledTimes(1);
+  expect(close).toHaveBeenCalledTimes(1);
+  query.confirm();
+  expect(await f.run("status")).toMatchObject({ phase: "ready" });
+  expect(f.deps.startTransport).toHaveBeenCalledTimes(2);
+  expect(query.owned).toHaveBeenCalledTimes(1);
+  expect(query.stop).toHaveBeenCalledTimes(1);
+  await f.coordinator.close(false);
 });

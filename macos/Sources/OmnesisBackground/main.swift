@@ -12,6 +12,8 @@ final class BackgroundDelegate: NSObject, NSApplicationDelegate {
     private var runtime: URL?
     private var retirement: DesktopBackgroundDaemonProcess?
     private var retirementRequested = false
+    private var retirementPreparing = false
+    private var retirementIntent = UUID()
     private var retryCount = 0
     func applicationDidFinishLaunching(_ notification: Notification) {
         let mainBundle = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
@@ -36,18 +38,35 @@ final class BackgroundDelegate: NSObject, NSApplicationDelegate {
                 appropriateFor: location,
                 create: false
             ),
-                (try? DesktopBackgroundApplicationOrigin.canonicalTrashContains(location, trash: trash)) == true else { return }
+                (try? DesktopBackgroundApplicationOrigin.canonicalTrashContains(location, trash: trash)) == true else {
+                retirementRequested = false
+                retirementIntent = UUID()
+                return
+            }
         }
+        if !retirementRequested { retirementIntent = UUID() }
         service?.freezeStarts()
         retirementRequested = true
         retireOwnedLibrary()
     }
 
     private func retireOwnedLibrary() {
-        guard retirementRequested, retirement == nil, let runtime else { return }
+        guard retirementRequested, !retirementPreparing, !terminating, retirement == nil, let runtime else { return }
+        retirementPreparing = true
+        let intent = retirementIntent
+        let generation = service?.retirementGeneration
         Task { @MainActor [weak self] in
             guard let self else { return }
+            defer { retirementPreparing = false }
             do {
+                let deadline = ContinuousClock.now.advanced(by: .seconds(80))
+                guard await service?.prepareRetirement(until: deadline) == .confirmed else {
+                    retryRetirement()
+                    return
+                }
+                guard !terminating, retirementRequested, retirementIntent == intent,
+                      let generation, service?.canLaunchRetirement(generation: generation) == true,
+                      ContinuousClock.now < deadline else { return }
                 let descriptor = try DesktopBackgroundDaemonAuthority.descriptor(
                     profile: DesktopBackgroundManagedProfile.current(), epoch: runtime.lastPathComponent, activation: nil
                 )
@@ -58,7 +77,7 @@ final class BackgroundDelegate: NSObject, NSApplicationDelegate {
                 guard retirement === child else { return }
                 retirement = nil
                 service?.registerRetirement(nil)
-                if result.clean { NSApp.terminate(nil) }
+                if result.clean { if !terminating { NSApp.terminate(nil) } }
                 else { retryRetirement() }
             } catch { retryRetirement() }
         }
@@ -74,9 +93,14 @@ final class BackgroundDelegate: NSObject, NSApplicationDelegate {
         guard !terminating else { return .terminateLater }
         terminating = true
         Task { @MainActor [weak self] in
-            if let retirement = self?.retirement { _ = await retirement.stopAndJoin() }
-            await self?.service?.shutdown()
-            sender.reply(toApplicationShouldTerminate: true)
+            guard let self else { sender.reply(toApplicationShouldTerminate: false)
+                return
+            }
+            let deadline = ContinuousClock.now.advanced(by: .seconds(80))
+            let result = await service?.shutdown(until: deadline)
+            let confirmed = result == .confirmed
+            if !confirmed { terminating = false }
+            sender.reply(toApplicationShouldTerminate: confirmed)
         }
         return .terminateLater
     }
