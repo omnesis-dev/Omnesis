@@ -576,6 +576,9 @@ import {
   assignRecordingVoices,
   setRecordingSpeaker,
   type RecordingSpeakerMapping,
+  addRecordingParticipant,
+  removeRecordingParticipant,
+  type NewRecordingParticipant,
   deleteRecordingSession,
   insertRecordingMark,
   type FinishRecordingOutcome,
@@ -2369,6 +2372,14 @@ export interface WriteGate extends KnowledgeWriteGate {
     speaker: number,
     mapping: RecordingSpeakerMapping,
   ): Promise<boolean>;
+  /** Add someone present without a speaking turn; false when the session does not exist. */
+  addRecordingParticipant(
+    sessionId: string,
+    participant: NewRecordingParticipant,
+    addedAt: string,
+  ): Promise<boolean>;
+  /** Remove a participant; false when the session has no such participant. */
+  removeRecordingParticipant(sessionId: string, key: string): Promise<boolean>;
   /** Delete a session and its chunks. */
   deleteRecordingSession(id: string): Promise<boolean>;
   /** Record a moment marked during a session; false when already recorded. */
@@ -3119,6 +3130,10 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
       call("recordings.assignVoices", [sessionId, chunks]),
     setRecordingSpeaker: (sessionId, speaker, mapping) =>
       call("recordings.setSpeaker", [sessionId, speaker, mapping]),
+    addRecordingParticipant: (sessionId, participant, addedAt) =>
+      call("recordings.addParticipant", [sessionId, participant, addedAt]),
+    removeRecordingParticipant: (sessionId, key) =>
+      call("recordings.removeParticipant", [sessionId, key]),
     deleteRecordingSession: (id) => call("recordings.deleteSession", [id]),
     addRecordingMark: (mark) => call("recordings.addMark", [mark]),
 
@@ -3881,6 +3896,10 @@ export function directWriteGate(db: Db): WriteGate {
       assignRecordingVoices(db, sessionId, chunks),
     setRecordingSpeaker: async (sessionId, speaker, mapping) =>
       setRecordingSpeaker(db, sessionId, speaker, mapping),
+    addRecordingParticipant: async (sessionId, participant, addedAt) =>
+      addRecordingParticipant(db, sessionId, participant, addedAt),
+    removeRecordingParticipant: async (sessionId, key) =>
+      removeRecordingParticipant(db, sessionId, key),
     deleteRecordingSession: async (id) => deleteRecordingSession(db, id),
     addRecordingMark: async (mark) => insertRecordingMark(db, mark),
 

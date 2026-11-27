@@ -50,16 +50,27 @@ export interface SpeakerIdentity {
   name: string | null;
 }
 
+/** Someone the owner says was present without a speaking turn of their own. */
+export interface ParticipantIdentity {
+  /** What removes them: `person:<id>` or `name:<lowercased name>`. */
+  key: string;
+  personId: string | null;
+  /** The person's name, or the name the owner gave; null for a person with no name. */
+  name: string | null;
+}
+
 /**
  * The session's document, or null when nothing in it was understood as
  * speech — a recording of silence is not worth a document. Speakers the
- * owner mapped to people make those people participants.
+ * owner mapped to people, and people the owner says were present without a
+ * turn, are participants; the latter are also named under the header.
  */
 export function buildRecordingDocument(
   session: RecordingSession,
   chunks: readonly RecordingChunk[],
   marks: readonly RecordingMark[] = [],
   speakers: readonly SpeakerIdentity[] = [],
+  participants: readonly ParticipantIdentity[] = [],
 ): DocumentInput | null {
   const names = new Map<number, string>();
   const people: PersonMention[] = [{ name: "You", role: "participant", isSelf: true }];
@@ -76,7 +87,25 @@ export function buildRecordingDocument(
       });
     }
   }
-  const rendered = renderRecording(session, chunks, marks, names);
+  // Someone already heard as a speaker is not named again as present.
+  const heard = new Set([...names.values()].map((name) => name.toLowerCase()));
+  const alsoPresent: string[] = [];
+  for (const p of participants) {
+    const alreadyLinked = p.personId !== null && linked.has(p.personId);
+    if (p.personId && !alreadyLinked) {
+      linked.add(p.personId);
+      people.push({
+        role: "participant",
+        personId: p.personId,
+        ...(p.name ? { name: p.name } : {}),
+      });
+    }
+    if (p.name && !alreadyLinked && !heard.has(p.name.toLowerCase())) {
+      heard.add(p.name.toLowerCase());
+      alsoPresent.push(p.name);
+    }
+  }
+  const rendered = renderRecording(session, chunks, marks, names, alsoPresent);
   if (!rendered.hasSpeech) return null;
   return {
     providerId: ProviderId(OMNESIS_RECORDINGS_PROVIDER_ID),
@@ -90,8 +119,7 @@ export function buildRecordingDocument(
     metadata: {
       documentType: "conversation",
       // The owner recorded it, so they were there; everyone else is who the
-      // owner mapped a speaker to.
-      // See #860 — planned: suggest participants from the calendar and mentions.
+      // owner mapped a speaker to or said was present.
       people,
       extra: {
         recordingOrigin: session.origin,

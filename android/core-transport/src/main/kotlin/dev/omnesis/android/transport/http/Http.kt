@@ -303,3 +303,7 @@ suspend fun GatewayHttp.deleteSegments(segments: List<String>) {
 /** DELETE, decoding the response into [T]. */
 suspend inline fun <reified T> GatewayHttp.deleteJson(path: String): T =
     decodeBody(execute(newRequest(urlFor(path)).delete().build()))
+
+/** DELETE with dynamic raw path segments encoded exactly once, decoding the response into [T]. */
+suspend inline fun <reified T> GatewayHttp.deleteJsonSegments(segments: List<String>): T =
+    decodeBody(execute(newRequest(urlForSegments(segments)).delete().build()))

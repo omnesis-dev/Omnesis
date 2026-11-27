@@ -9,8 +9,11 @@ import dev.omnesis.android.feature.recording.OutboxSession
 import dev.omnesis.android.feature.recording.RecordingSessionProvider
 import dev.omnesis.android.feature.recording.RecordingsGateway
 import dev.omnesis.android.transport.GatewayException
+import dev.omnesis.android.transport.dto.NewParticipant
 import dev.omnesis.android.transport.dto.PersonSummary
+import dev.omnesis.android.transport.dto.RecordingParticipantDto
 import dev.omnesis.android.transport.dto.RecordingSpeakerDto
+import dev.omnesis.android.transport.dto.RecordingSpeakersResponse
 import dev.omnesis.android.transport.dto.RecordingSummaryDto
 import dev.omnesis.android.transport.dto.SpeakerMapping
 import java.io.IOException
@@ -52,9 +55,36 @@ class RecordingSpeakersViewModelTest {
             PersonSummary(id = "p-jamie", canonicalName = "Jamie", documentCount = 1),
         )
 
-        override suspend fun speakers(sessionId: String): List<RecordingSpeakerDto> {
+        var participants = listOf<RecordingParticipantDto>()
+        val participantChanges = mutableListOf<String>()
+
+        override suspend fun speakers(sessionId: String): RecordingSpeakersResponse {
             failNext?.let { failNext = null; throw it }
-            return speakers
+            return RecordingSpeakersResponse(speakers, participants)
+        }
+
+        override suspend fun addParticipant(sessionId: String, participant: NewParticipant): List<RecordingParticipantDto> {
+            hold?.await()
+            failNext?.let { failNext = null; throw it }
+            participantChanges += "add:${participant.key}"
+            val name = when (participant) {
+                is NewParticipant.Person -> people.first { it.id == participant.personId }.canonicalName
+                is NewParticipant.Name -> participant.name
+            }
+            participants = participants + RecordingParticipantDto(
+                participant.key,
+                (participant as? NewParticipant.Person)?.personId,
+                name,
+            )
+            return participants
+        }
+
+        override suspend fun removeParticipant(sessionId: String, key: String): List<RecordingParticipantDto> {
+            hold?.await()
+            failNext?.let { failNext = null; throw it }
+            participantChanges += "remove:$key"
+            participants = participants.filterNot { it.key == key }
+            return participants
         }
 
         override suspend fun setSpeaker(sessionId: String, speaker: Int, mapping: SpeakerMapping): List<RecordingSpeakerDto> {
@@ -248,6 +278,68 @@ class RecordingSpeakersViewModelTest {
         assertTrue(vm.state.value.speakers.first().isSelf)
         assertEquals("Jamie", vm.state.value.speakers.last().name)
         assertTrue(vm.state.value.saving.isEmpty())
+    }
+
+    @Test fun loadsWhoWasPresentWithoutATurn() = runTest(dispatcher) {
+        gateway.participants = listOf(RecordingParticipantDto("name:sarah mendez", null, "Sarah Mendez"))
+        val vm = viewModel()
+        advanceUntilIdle()
+        assertEquals(listOf("Sarah Mendez"), vm.state.value.participants.map { participantLabel(it) })
+    }
+
+    @Test fun addingAPersonAsPresentShowsAtOnceThenTakesTheGatewaysAnswer() = runTest(dispatcher) {
+        val vm = viewModel()
+        advanceUntilIdle()
+        vm.openPicker(RecordingSpeakersViewModel.ALSO_PRESENT)
+        advanceUntilIdle()
+        val maya = vm.state.value.picker!!.results.first { it.id == "p-maya" }
+        gateway.hold = CompletableDeferred()
+        vm.choosePerson(RecordingSpeakersViewModel.ALSO_PRESENT, maya)
+        runCurrent()
+        assertNull(vm.state.value.picker)
+        assertEquals(listOf("person:p-maya"), vm.state.value.participants.map { it.key })
+        assertTrue(vm.state.value.savingParticipants)
+        // No speaker was touched.
+        assertTrue(gateway.sets.isEmpty())
+        gateway.hold!!.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(listOf("add:person:p-maya"), gateway.participantChanges)
+        assertFalse(vm.state.value.savingParticipants)
+        assertEquals("Maya", participantLabel(vm.state.value.participants.single()))
+    }
+
+    @Test fun namingSomeonePresentTrimsAndAddingThemTwiceSendsNothing() = runTest(dispatcher) {
+        val vm = viewModel()
+        advanceUntilIdle()
+        vm.name(RecordingSpeakersViewModel.ALSO_PRESENT, "   ")
+        vm.name(RecordingSpeakersViewModel.ALSO_PRESENT, "  Sarah Mendez ")
+        advanceUntilIdle()
+        vm.name(RecordingSpeakersViewModel.ALSO_PRESENT, "sarah mendez")
+        advanceUntilIdle()
+        assertEquals(listOf("add:name:sarah mendez"), gateway.participantChanges)
+        assertEquals("Sarah Mendez", vm.state.value.participants.single().name)
+    }
+
+    @Test fun removingSomeonePresent() = runTest(dispatcher) {
+        gateway.participants = listOf(RecordingParticipantDto("person:p-jamie", "p-jamie", "Jamie"))
+        val vm = viewModel()
+        advanceUntilIdle()
+        vm.removeParticipant("person:p-jamie")
+        assertTrue(vm.state.value.participants.isEmpty())
+        advanceUntilIdle()
+        assertEquals(listOf("remove:person:p-jamie"), gateway.participantChanges)
+        assertTrue(vm.state.value.participants.isEmpty())
+    }
+
+    @Test fun aRefusedParticipantRollsBackAndSaysWhy() = runTest(dispatcher) {
+        val vm = viewModel()
+        advanceUntilIdle()
+        gateway.failNext = GatewayException.ServerError(400, "no such person")
+        vm.choosePerson(RecordingSpeakersViewModel.ALSO_PRESENT, gateway.people.first { it.id == "p-jamie" })
+        advanceUntilIdle()
+        assertTrue(vm.state.value.participants.isEmpty())
+        assertFalse(vm.state.value.savingParticipants)
+        assertEquals("That person is no longer known to the gateway.", vm.state.value.message)
     }
 
     @Test fun formatsTalkTime() {

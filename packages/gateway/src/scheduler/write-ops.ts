@@ -662,6 +662,8 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "recordings.setSpeaker", priority: "user" },
   { name: "recordings.setTitle", priority: "user" },
   { name: "recordings.dismissSuggestion", priority: "user" },
+  { name: "recordings.addParticipant", priority: "user" },
+  { name: "recordings.removeParticipant", priority: "user" },
 
   // Pushed agent-conversation turns (experimental). Small single-row writes;
   // a plugin's live push must not sit behind a bulk backfill.

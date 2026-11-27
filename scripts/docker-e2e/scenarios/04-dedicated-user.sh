@@ -23,6 +23,7 @@ su omnesis-gw -s /bin/bash -c "
   export OMNESIS_CONFIG_DIR='$STATE' OMNESIS_GATEWAY_PORT=$OMNESIS_GATEWAY_PORT OMNESIS_SECRET_STORE=file OMNESIS_LLAMA_GPU=false
   export OMNESIS_DB_PATH='$STATE/omnesis.db' OMNESIS_INDEX_DB_PATH='$STATE/index.db' OMNESIS_ANALYTICS_DB_PATH='$STATE/analytics.db'
   export OMNESIS_LOG_FILE='$STATE/logs/gateway.log'
+  export OMNESIS_RUNTIME_MODE=test OMNESIS_TELEMETRY=off
   mkdir -p '$STATE/logs'
   npx tsx packages/cli/src/index.ts keyring init
   nohup npx tsx packages/gateway/src/index.ts >'$STATE/logs/gateway.stdout.log' 2>&1 </dev/null &

@@ -4,8 +4,11 @@
 package dev.omnesis.android.transport.client
 
 import dev.omnesis.android.transport.dto.FinishRecordingBody
+import dev.omnesis.android.transport.dto.NewParticipant
 import dev.omnesis.android.transport.dto.RecordingChunkAckDto
 import dev.omnesis.android.transport.dto.RecordingChunkMetadata
+import dev.omnesis.android.transport.dto.RecordingParticipantDto
+import dev.omnesis.android.transport.dto.RecordingParticipantsResponse
 import dev.omnesis.android.transport.dto.RecordingSpeakerDto
 import dev.omnesis.android.transport.dto.RecordingSpeakersResponse
 import dev.omnesis.android.transport.dto.RecordingStatusDto
@@ -15,6 +18,7 @@ import dev.omnesis.android.transport.dto.SpeakerMapping
 import dev.omnesis.android.transport.dto.StartRecordingBody
 import dev.omnesis.android.transport.http.GatewayHttp
 import dev.omnesis.android.transport.dto.OmnesisJson
+import dev.omnesis.android.transport.http.deleteJsonSegments
 import dev.omnesis.android.transport.http.deleteSegments
 import dev.omnesis.android.transport.http.getPrivateJson
 import dev.omnesis.android.transport.http.postJson
@@ -70,11 +74,27 @@ class RecordingsClient(private val http: GatewayHttp) {
             .recordings
 
     /**
-     * `GET /recordings/:id/speakers` — who spoke, with how long and a few lines each.
-     * Empty when the gateway did not tell the speakers apart; 404 for an unknown recording.
+     * `GET /recordings/:id/speakers` — who spoke, with how long and a few lines each,
+     * and who was present without a turn. No speakers when the gateway did not tell
+     * them apart; 404 for an unknown recording.
      */
-    suspend fun speakers(id: String): List<RecordingSpeakerDto> =
-        http.getPrivateJson<RecordingSpeakersResponse>(listOf("recordings", id, "speakers")).speakers
+    suspend fun speakers(id: String): RecordingSpeakersResponse =
+        http.getPrivateJson(listOf("recordings", id, "speakers"))
+
+    /**
+     * `POST /recordings/:id/participants` — add someone who was present without a
+     * speaking turn; answers the participants. 400 for an unknown person id.
+     */
+    suspend fun addParticipant(id: String, participant: NewParticipant): List<RecordingParticipantDto> =
+        http.postJsonSegments<JsonObject, RecordingParticipantsResponse>(
+            listOf("recordings", id, "participants"),
+            participant.toJson(),
+        ).participants
+
+    /** `DELETE /recordings/:id/participants/:key` — answers the participants left. */
+    suspend fun removeParticipant(id: String, key: String): List<RecordingParticipantDto> =
+        http.deleteJsonSegments<RecordingParticipantsResponse>(listOf("recordings", id, "participants", key))
+            .participants
 
     /**
      * `PUT /recordings/:id/speakers/:n` — say who speaker [speaker] is; answers the

@@ -46,7 +46,7 @@ root_env chmod 700 "$work" "$home_dir" "$config_dir"
 root_env node -e '
   const fs=require("node:fs"); const dir=process.argv[1];
   fs.writeFileSync(`${dir}/keyring.pass`,require("node:crypto").randomBytes(48).toString("hex"),{mode:0o600});
-  fs.writeFileSync(`${dir}/.env`,"OMNESIS_MDNS_DISABLE=1\n",{mode:0o600});
+  fs.writeFileSync(`${dir}/.env`,"OMNESIS_MDNS_DISABLE=1\nOMNESIS_RUNTIME_MODE=test\nOMNESIS_TELEMETRY=off\n",{mode:0o600});
 ' "$config_dir"
 port=$(node --input-type=module -e '
   import {createServer} from "node:net";

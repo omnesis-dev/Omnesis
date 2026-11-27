@@ -137,6 +137,7 @@ topo_up() {
   local common=(--network "$NET" --memory "${OMNESIS_TOPO_MEMORY:-10g}"
     --cpus "${OMNESIS_TOPO_CPUS:-4}"
     -e OMNESIS_LLAMA_GPU=false -e OMNESIS_LOG_LEVEL=info
+    -e OMNESIS_RUNTIME_MODE=test -e OMNESIS_TELEMETRY=off
     -e NODE_OPTIONS=--max-old-space-size=6144
     -e "OMNESIS_REPO_URL=$FIXTURE_URL")
 

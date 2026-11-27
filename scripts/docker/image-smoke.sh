@@ -58,7 +58,7 @@ start() {
   docker run -d --name "$name" --cap-drop ALL --security-opt no-new-privileges \
     --network "$network" --network-alias gateway -p 127.0.0.1::7600 \
     --mount "type=volume,source=$volume,target=/var/lib/omnesis" \
-    "${keyring_env[@]}" -e OMNESIS_MDNS_DISABLE=1 "${command[@]}" "$image" "${arguments[@]}" >/dev/null
+    "${keyring_env[@]}" -e OMNESIS_MDNS_DISABLE=1 -e OMNESIS_RUNTIME_MODE=test -e OMNESIS_TELEMETRY=off "${command[@]}" "$image" "${arguments[@]}" >/dev/null
   for attempt in $(seq 1 120); do
     if docker exec "$name" curl -fsSk https://localhost:7600/health >/dev/null 2>&1; then return; fi
     if [ "$(docker inspect -f '{{.State.Running}}' "$name")" != true ]; then break; fi
@@ -266,7 +266,7 @@ identity=$(docker exec "$name" sha256sum /var/lib/omnesis/token /var/lib/omnesis
 competitor="$name-competitor"
 docker run -d --name "$competitor" --network "$network" \
   --mount "type=volume,source=$volume,target=/var/lib/omnesis" \
-  "${keyring_env[@]}" -e OMNESIS_GATEWAY_LOCK_WAIT_MS=0 -e OMNESIS_MDNS_DISABLE=1 \
+  "${keyring_env[@]}" -e OMNESIS_GATEWAY_LOCK_WAIT_MS=0 -e OMNESIS_MDNS_DISABLE=1 -e OMNESIS_RUNTIME_MODE=test -e OMNESIS_TELEMETRY=off \
   --entrypoint node "$image" /app/packages/gateway/dist/index.js >/dev/null
 for attempt in $(seq 1 30); do
   [ "$(docker inspect -f '{{.State.Running}}' "$competitor")" = true ] || break
@@ -331,7 +331,7 @@ docker run --rm --mount "type=volume,source=$volume,target=/var/lib/omnesis" \
 missing_name="$name-locked"
 docker run -d --name "$missing_name" --network "$network" \
   --mount "type=volume,source=$volume,target=/var/lib/omnesis" \
-  "${keyring_env[@]}" -e OMNESIS_MDNS_DISABLE=1 --entrypoint node "$image" /app/packages/gateway/dist/index.js >/dev/null
+  "${keyring_env[@]}" -e OMNESIS_MDNS_DISABLE=1 -e OMNESIS_RUNTIME_MODE=test -e OMNESIS_TELEMETRY=off --entrypoint node "$image" /app/packages/gateway/dist/index.js >/dev/null
 for attempt in $(seq 1 30); do
   [ "$(docker inspect -f '{{.State.Running}}' "$missing_name")" = true ] || break
   sleep 1

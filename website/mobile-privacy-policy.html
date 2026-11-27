@@ -134,8 +134,12 @@
           the carrier token and public app identity described below. Some builds offer an optional
           Omnesis account, which you do not need to use the apps; it is described in
           <a href="#omnesis-account">Optional Omnesis account</a>. There is no advertising SDK or
-          advertising identifier, and no usage or analytics data is reported to Omnesis. On Android,
-          Google's ML Kit library sends Google its own limited diagnostic data, described below.
+          advertising identifier, and the mobile apps report no usage or analytics data to Omnesis.
+          Separately, production gateways send a minimal daily installation census by default, with
+          a monthly rotating identifier and an easy opt-out; see
+          <a href="/privacy#installation-telemetry">gateway installation telemetry</a>. It includes
+          no phone or app usage, personal content or connected accounts. On Android, Google's ML Kit
+          library sends Google its own limited diagnostic data, described below.
         </p>
         <p>
           Cloud inference is off by default. If you or the operator of your paired gateway enables a

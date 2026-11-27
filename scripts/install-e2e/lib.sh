@@ -11,6 +11,8 @@
 
 E2E_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 E2E_ROOT="$(cd "$E2E_DIR/../.." && pwd)"
+# Installation fixtures may launch real services and production images.
+export OMNESIS_RUNTIME_MODE=test OMNESIS_TELEMETRY=off OMNESIS_TEST_INSTANCE=1
 : "${E2E_WORK:?set E2E_WORK to the scratch directory of the lane}"
 mkdir -p "$E2E_WORK"
 export INSTALL_E2E_SECRETS_FILE="$E2E_WORK/secrets"

@@ -13112,6 +13112,39 @@
       "value": "The Go",
       "paths": ["packages/tailnet-helper/go.test.mjs"],
       "reason": "prose (\"The Go toolchain\"), not a name"
+    },
+    {
+      "value": "David Lin",
+      "paths": [
+        "packages/gateway/portal/js/views/recordings.test.ts",
+        "packages/gateway/src/http/routes/recordings.test.ts",
+        "packages/gateway/src/recordings/service.test.ts",
+        "packages/gateway/src/sources/omnesis-recordings/render.test.ts"
+      ],
+      "reason": "Invented cast for recording participant tests; no personal-corpus provenance."
+    },
+    {
+      "value": "Sarah Mendez",
+      "paths": [
+        "packages/gateway/portal/js/views/recordings.test.ts",
+        "packages/gateway/src/http/routes/recordings.test.ts",
+        "packages/gateway/src/recordings/service.test.ts",
+        "packages/gateway/src/sources/omnesis-recordings/render.test.ts"
+      ],
+      "reason": "Invented cast for recording participant tests; no personal-corpus provenance."
+    },
+    {
+      "value": "Maya Reeves",
+      "paths": [
+        "packages/gateway/src/recordings/service.test.ts",
+        "packages/gateway/src/recordings/storage.test.ts"
+      ],
+      "reason": "Invented cast for recording participant tests; no personal-corpus provenance."
+    },
+    {
+      "value": "Jamie Lopez",
+      "paths": ["packages/gateway/src/recordings/service.test.ts"],
+      "reason": "Invented cast for recording participant tests; no personal-corpus provenance."
     }
   ],
   "secretFixtures": [
