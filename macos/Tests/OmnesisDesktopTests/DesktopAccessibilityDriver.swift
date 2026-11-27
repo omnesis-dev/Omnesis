@@ -10,6 +10,22 @@ enum DesktopAccessibilityDriver {
     /// AppKit's reparenting proxies implement public selectors without nominal protocol conformance.
     /// Objective-C dynamic lookup preserves that supported dispatch; no external AX process is used.
     private static var diagnosticsWritten = false
+    /// The hosted scheme is explicitly nonparallel; only the two selected owned cases install this.
+    static var observation: DesktopOwnedUIObservation?
+    @discardableResult
+    static func observed<T>(_ phase: DesktopOwnedUIObservation.Phase, _ action: () throws -> T) rethrows -> T {
+        let selected = observation
+        selected?.record(phase, .entered)
+        do {
+            let value = try action()
+            selected?.record(phase, .returned)
+            return value
+        } catch {
+            selected?.record(phase, .threw)
+            throw error
+        }
+    }
+
     @MainActor
     struct Element {
         let object: AnyObject
@@ -18,19 +34,23 @@ enum DesktopAccessibilityDriver {
         }
 
         func accessibilityIdentifier() -> String? {
-            object.accessibilityIdentifier?() ?? attribute(.identifier) as? String
+            DesktopAccessibilityDriver.observed(.identifierModern) { object.accessibilityIdentifier?() } ??
+                DesktopAccessibilityDriver.observed(.identifierLegacy) { attribute(.identifier) as? String }
         }
 
         func accessibilityLabel() -> String? {
-            object.accessibilityLabel?() ?? attribute(.description) as? String ?? attribute(.title) as? String
+            DesktopAccessibilityDriver.observed(.labelModern) { object.accessibilityLabel?() } ??
+                DesktopAccessibilityDriver.observed(.labelLegacy) { attribute(.description) as? String } ??
+                DesktopAccessibilityDriver.observed(.labelLegacy) { attribute(.title) as? String }
         }
 
         func accessibilityValue() -> Any? {
-            object.accessibilityValue?() ?? attribute(.value)
+            DesktopAccessibilityDriver.observed(.valueModern) { object.accessibilityValue?() } ??
+                DesktopAccessibilityDriver.observed(.valueLegacy) { attribute(.value) }
         }
 
         func accessibilityFrame() -> NSRect {
-            object.accessibilityFrame?() ?? .zero
+            DesktopAccessibilityDriver.observed(.frame) { object.accessibilityFrame?() } ?? .zero
         }
 
         func accessibilityTextValue() -> String? {
@@ -42,34 +62,45 @@ enum DesktopAccessibilityDriver {
         }
 
         func accessibilityChildren() -> [Any] {
-            let children = object.accessibilityChildren?() ?? []
-            return children.isEmpty ? (attribute(.children) as? [Any] ?? []) : children
+            let children = DesktopAccessibilityDriver.observed(.childrenModern) { object.accessibilityChildren?() } ?? []
+            return children
+                .isEmpty ? (DesktopAccessibilityDriver.observed(.childrenLegacy) { attribute(.children) as? [Any] } ?? []) : children
         }
 
         func accessibilityRole() -> NSAccessibility.Role? {
-            if let role = object.accessibilityRole?() { return role }
-            return (attribute(.role) as? String).map(NSAccessibility.Role.init(rawValue:))
+            if let role = DesktopAccessibilityDriver.observed(.roleModern, { object.accessibilityRole?() }) { return role }
+            return DesktopAccessibilityDriver
+                .observed(.roleLegacy) { (attribute(.role) as? String).map(NSAccessibility.Role.init(rawValue:)) }
         }
 
         func isAccessibilityEnabled() -> Bool {
-            object.isAccessibilityEnabled?() ?? attribute(.enabled) as? Bool ?? false
+            DesktopAccessibilityDriver.observed(.enabledModern) { object.isAccessibilityEnabled?() } ??
+                DesktopAccessibilityDriver.observed(.enabledLegacy) { attribute(.enabled) as? Bool } ?? false
         }
 
         func accessibilityPerformPress() -> Bool {
-            let named: (() -> Void)? = if let actions = object.accessibilityActionNames?(), actions.contains(.press),
-                                          let press = object.accessibilityPerformAction {
+            let named: (() -> Void)? = if let actions = DesktopAccessibilityDriver.observed(
+                .actionNames,
+                { object.accessibilityActionNames?() }
+            ), actions.contains(.press),
+            let press = DesktopAccessibilityDriver.observed(
+                .namedSelector,
+                { object.accessibilityPerformAction }
+            ) {
                 { press(.press) }
             } else { nil }
-            return DesktopAccessibilityDriver.performOnePress(named: named, direct: object.accessibilityPerformPress)
+            return DesktopAccessibilityDriver.performOnePress(
+                named: named, direct: DesktopAccessibilityDriver.observed(.directSelector) { object.accessibilityPerformPress }
+            )
         }
     }
 
     /// A forwarding AppKit control must receive one action, even if a direct selector returns false.
     static func performOnePress(named: (() -> Void)?, direct: (() -> Bool)?) -> Bool {
-        if let named { named()
+        if let named { observed(.namedDispatch) { named() }
             return true
         }
-        return direct?() ?? false
+        return observed(.directDispatch) { direct?() ?? false }
     }
 
     private static var bootstrapComplete = false
@@ -94,8 +125,9 @@ enum DesktopAccessibilityDriver {
     static func elements(in root: NSView) throws -> [Element] {
         // Flush only this mounted view's pending layout/display before reading lazy AX nodes.
         // A screenshot does this too; reading the controls must not depend on taking one first.
-        root.layoutSubtreeIfNeeded()
-        root.window?.displayIfNeeded()
+        observation?.nextTreePass()
+        observed(.layout) { root.layoutSubtreeIfNeeded() }
+        observed(.display) { root.window?.displayIfNeeded() }
         var pending: [Any] = [root]
         if let window = root.window { pending.append(window) }
         var seen: Set<ObjectIdentifier> = []
@@ -104,17 +136,18 @@ enum DesktopAccessibilityDriver {
             guard result.count < 4096 else { throw Failure("The owned accessibility tree exceeded its bound") }
             let object = next as AnyObject
             guard seen.insert(ObjectIdentifier(object)).inserted else { continue }
+            observation?.node(result.count)
             let element = Element(object: object)
             result.append(element)
             pending.append(contentsOf: element.accessibilityChildren())
-            if let view = object as? NSView { pending.append(contentsOf: view.subviews) }
+            if let view = object as? NSView { pending.append(contentsOf: observed(.subviews) { view.subviews }) }
         }
         return result
     }
 
     static func element(_ identifier: String, in root: NSView) throws -> Element {
         guard let control = try elements(in: root).first(where: { $0.accessibilityIdentifier() == identifier }) else {
-            try writeDiagnostics(root)
+            try observed(.automaticDiagnostics) { try writeDiagnostics(root) }
             throw Failure("Missing visible control: \(identifier)")
         }
         return control

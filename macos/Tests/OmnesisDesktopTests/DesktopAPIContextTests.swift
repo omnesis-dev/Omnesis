@@ -10,6 +10,49 @@ import XCTest
 
 @MainActor
 final class DesktopAPIContextTests: XCTestCase {
+    @MainActor
+    private final class ObservationResources {
+        private var cleanups: [@MainActor () -> Void] = []
+        var retainedObservation: DesktopOwnedUIObservation?
+        func add(_ cleanup: @escaping @MainActor () -> Void) {
+            cleanups.append(cleanup)
+        }
+
+        func dispose() {
+            for cleanup in cleanups.reversed() {
+                cleanup()
+            }
+            cleanups.removeAll()
+        }
+    }
+
+    private static var retainedObservationResources: [ObservationResources] = []
+
+    private func withOwnedUIObservation(
+        _ selected: DesktopOwnedUIObservation.Case,
+        body: @MainActor (DesktopOwnedUIObservation, ObservationResources) async throws -> Void
+    ) async throws {
+        let observation = DesktopOwnedUIObservation(selected)
+        let previous = DesktopAccessibilityDriver.observation
+        let resources = ObservationResources()
+        // XCTest's hosted target is nonparallel. Restore only the hook this exact invocation owns.
+        DesktopAccessibilityDriver.observation = observation
+        var failure: Error?
+        do { try await body(observation, resources) } catch { failure = error }
+        recordContextStage(.observationJoinStarting)
+        let joined = await observation.close()
+        recordContextStage(.observationJoinReturned)
+        if DesktopAccessibilityDriver.observation === observation { DesktopAccessibilityDriver.observation = previous }
+        if joined { resources.dispose() }
+        else {
+            resources.retainedObservation = observation
+            Self.retainedObservationResources.append(resources)
+            recordContextStage(.observationCleanupBlocked)
+        }
+        if let failure { throw failure }
+        XCTAssertTrue(joined, "Owned diagnostic cleanup is unconfirmed; fixture resources are retained")
+    }
+
     func testMountedCredentialDraftCannotFollowReplacementApiAndFailedMetadata() async throws {
         let pair = try await ContextHTTPPair.start()
         defer { pair.stop() }
@@ -324,273 +367,309 @@ final class DesktopAPIContextTests: XCTestCase {
     }
 
     func testOffMacModelConfirmationCannotAuthorizeReplacementContext() async throws {
-        recordContextStage(.offMacEntered)
-        recordContextStage(.fixturesStarting)
-        let pair = try await ContextHTTPPair.start()
-        recordContextStage(.fixturesReady)
-        defer {
-            recordContextStage(.fixtureCleanupStarting)
-            pair.stop()
-            recordContextStage(.fixtureCleanupReturned)
-        }
-        var routes = Self.modelRoutes
-        var overview = Self.models
-        overview["capabilities"] = [["role": "agent", "title": "Questions", "description": "Fixture answers", "icon": "sparkles"]]
-        overview["inference"] = ["allowRemoteInference": false, "assignments": [:], "backends": [
-            "remote": [
-                "type": "http",
-                "status": "ok",
-                "url": "https://model.example.com",
-                "models": ["fictional-chat"],
-                "modelRoles": ["fictional-chat": ["agent"]],
-            ],
-        ]]
-        routes["GET /admin/models"] = ["body": overview]
-        recordContextStage(.configurationStarting)
-        try await pair.configureA(routes)
-        try await pair.configureB([:])
-        recordContextStage(.configurationReturned)
-        recordContextStage(.modelReadStarting)
-        let decoded = try await pair.apiA.admin.modelOverview()
-        recordContextStage(.modelReadReturned)
-        let decodedChoices = DesktopModelSelection.choices(for: "agent", overview: decoded)
-        XCTAssertEqual(decodedChoices.map(\.id), ["remote/fictional-chat"], "The actual client must decode the off-host fixture choice")
-        XCTAssertEqual(decodedChoices.map(\.title), ["remote · fictional-chat"])
-        XCTAssertEqual(decodedChoices.map(\.onHost), [false], "This selection must require the real off-host consent")
-        let store = DesktopStore(startRuntime: false)
-        store.api = pair.apiA
-        recordContextStage(.mountStarting)
-        let mounted = mount(.models, store: store)
-        recordContextStage(.mountReturned)
-        defer {
-            recordContextStage(.windowCleanupStarting)
-            mounted.window.close()
-            recordContextStage(.windowCleanupReturned)
-        }
-        recordContextStage(.materializeStarting)
-        try await DesktopAccessibilityDriver.materializeOwnedApplication()
-        recordContextStage(.materializeReturned)
-        try await wait { (try? DesktopAccessibilityDriver.element("model-role-picker-agent", in: mounted.host)) != nil }
-        func popups(_ view: NSView) -> [NSPopUpButton] {
-            (view as? NSPopUpButton).map { [$0] } ?? view.subviews.flatMap(popups)
-        }
-        var stage = "identified-role-cell"
-        var tracking: DesktopOwnedPopupTracking?
-        do {
-            let identified = try DesktopAccessibilityDriver.element("model-role-picker-agent", in: mounted.host)
-            let cell = try XCTUnwrap(identified.object as? NSCell, "The identified role must expose its actual native cell")
-            let picker = try XCTUnwrap(cell.controlView as? NSPopUpButton, "The identified cell must belong to its real popup")
-            guard picker.window === mounted.window, picker.isDescendant(of: mounted.host), picker.cell === cell else {
-                throw DesktopAccessibilityDriver.Failure("The role popup must belong to the exact mounted window and cell")
+        try await withOwnedUIObservation(.staleOffMac) { observation, resources in
+            recordContextStage(.offMacEntered)
+            recordContextStage(.fixturesStarting)
+            let pair = try await ContextHTTPPair.start()
+            recordContextStage(.fixturesReady)
+            resources.add {
+                recordContextStage(.fixtureCleanupStarting)
+                pair.stop()
+                recordContextStage(.fixtureCleanupReturned)
             }
-            let menu = try XCTUnwrap(picker.menu, "The exact popup must expose its actual menu")
-            let selection = DesktopOwnedPopupTracking(
-                picker: picker,
-                cell: cell,
-                menu: menu,
-                root: mounted.host,
-                window: mounted.window,
-                title: "remote · fictional-chat"
-            )
-            tracking = selection
-            stage = "native-menu-tracking"
-            recordContextStage(.popupSelectionStarting)
-            try await selection.select()
-            recordContextStage(.popupSelectionReturned)
-            stage = "visible-role-selection"
-            try await wait {
-                guard let role = try? DesktopAccessibilityDriver.element("model-role-picker-agent", in: mounted.host),
-                      let save = try? DesktopAccessibilityDriver.element("model-role-save-agent", in: mounted.host) else { return false }
-                return role.accessibilityTextValue() == "remote · fictional-chat" && save.isAccessibilityEnabled()
+            var routes = Self.modelRoutes
+            var overview = Self.models
+            overview["capabilities"] = [["role": "agent", "title": "Questions", "description": "Fixture answers", "icon": "sparkles"]]
+            overview["inference"] = ["allowRemoteInference": false, "assignments": [:], "backends": [
+                "remote": [
+                    "type": "http",
+                    "status": "ok",
+                    "url": "https://model.example.com",
+                    "models": ["fictional-chat"],
+                    "modelRoles": ["fictional-chat": ["agent"]],
+                ],
+            ]]
+            routes["GET /admin/models"] = ["body": overview]
+            recordContextStage(.configurationStarting)
+            try await pair.configureA(routes)
+            try await pair.configureB([:])
+            recordContextStage(.configurationReturned)
+            recordContextStage(.modelReadStarting)
+            let decoded = try await pair.apiA.admin.modelOverview()
+            recordContextStage(.modelReadReturned)
+            let decodedChoices = DesktopModelSelection.choices(for: "agent", overview: decoded)
+            XCTAssertEqual(decodedChoices.map(\.id), ["remote/fictional-chat"], "The actual client must decode the off-host fixture choice")
+            XCTAssertEqual(decodedChoices.map(\.title), ["remote · fictional-chat"])
+            XCTAssertEqual(decodedChoices.map(\.onHost), [false], "This selection must require the real off-host consent")
+            let store = DesktopStore(startRuntime: false)
+            store.api = pair.apiA
+            recordContextStage(.mountStarting)
+            let mounted = mount(.models, store: store)
+            recordContextStage(.mountReturned)
+            resources.add {
+                recordContextStage(.windowCleanupStarting)
+                mounted.window.close()
+                recordContextStage(.windowCleanupReturned)
             }
-            XCTAssertEqual(
-                try DesktopAccessibilityDriver.element("model-role-picker-agent", in: mounted.host).accessibilityTextValue(),
-                "remote · fictional-chat"
-            )
-            stage = "real-save-control"
-            recordContextStage(.savePressStarting)
-            try DesktopAccessibilityDriver.press("model-role-save-agent", in: mounted.host)
-            recordContextStage(.savePressReturned)
-            stage = "real-consent-control"
-            recordContextStage(.consentWaiting)
-            try await wait { (try? self.control("model-role-confirm-agent", mounted: mounted)) != nil }
-            let oldConfirmation = try control("model-role-confirm-agent", mounted: mounted)
-            recordContextStage(.consentObserved)
-            recordContextStage(.contextReplacementStarting)
-            store.api = pair.apiB
-            recordContextStage(.contextReplacementReturned)
-            await Task.yield()
-            stage = "retired-consent-control"
-            recordContextStage(.retiredConsentPressStarting)
-            _ = oldConfirmation.accessibilityPerformPress()
-            recordContextStage(.retiredConsentPressReturned)
-            recordContextStage(.writeCheckStarting)
-            try await assertNoWrites(pair)
-            recordContextStage(.writeCheckReturned)
-        } catch {
-            try writeRolePickerDiagnostics(
-                mounted.host,
-                nativePopups: popups(mounted.host),
-                stage: stage,
-                tracking: tracking?.facts ?? [:]
-            )
-            throw error
+            recordContextStage(.materializeStarting)
+            try await DesktopAccessibilityDriver.materializeOwnedApplication()
+            recordContextStage(.materializeReturned)
+            try await wait { (try? DesktopAccessibilityDriver.element("model-role-picker-agent", in: mounted.host)) != nil }
+            func popups(_ view: NSView) -> [NSPopUpButton] {
+                (view as? NSPopUpButton).map { [$0] } ?? view.subviews.flatMap(popups)
+            }
+            var stage = "identified-role-cell"
+            var tracking: DesktopOwnedPopupTracking?
+            do {
+                let identified = try DesktopAccessibilityDriver.element("model-role-picker-agent", in: mounted.host)
+                let cell = try XCTUnwrap(identified.object as? NSCell, "The identified role must expose its actual native cell")
+                let picker = try XCTUnwrap(cell.controlView as? NSPopUpButton, "The identified cell must belong to its real popup")
+                guard picker.window === mounted.window, picker.isDescendant(of: mounted.host), picker.cell === cell else {
+                    throw DesktopAccessibilityDriver.Failure("The role popup must belong to the exact mounted window and cell")
+                }
+                let menu = try XCTUnwrap(picker.menu, "The exact popup must expose its actual menu")
+                let selection = DesktopOwnedPopupTracking(
+                    picker: picker,
+                    cell: cell,
+                    menu: menu,
+                    root: mounted.host,
+                    window: mounted.window,
+                    title: "remote · fictional-chat"
+                )
+                tracking = selection
+                stage = "native-menu-tracking"
+                recordContextStage(.popupSelectionStarting)
+                try await selection.select()
+                recordContextStage(.popupSelectionReturned)
+                stage = "visible-role-selection"
+                try await wait {
+                    guard let role = try? DesktopAccessibilityDriver.element("model-role-picker-agent", in: mounted.host),
+                          let save = try? DesktopAccessibilityDriver.element("model-role-save-agent", in: mounted.host)
+                    else { return false }
+                    return role.accessibilityTextValue() == "remote · fictional-chat" && save.isAccessibilityEnabled()
+                }
+                XCTAssertEqual(
+                    try DesktopAccessibilityDriver.element("model-role-picker-agent", in: mounted.host).accessibilityTextValue(),
+                    "remote · fictional-chat"
+                )
+                stage = "real-save-control"
+                recordContextStage(.savePressStarting)
+                let saveObservation = observation.begin(.save)
+                try DesktopAccessibilityDriver.press("model-role-save-agent", in: mounted.host)
+                observation.end(saveObservation)
+                recordContextStage(.savePressReturned)
+                stage = "real-consent-control"
+                recordContextStage(.consentWaiting)
+                let consentObservation = observation.begin(.consent)
+                try await wait { (try? self.control("model-role-confirm-agent", mounted: mounted)) != nil }
+                let oldConfirmation = try control("model-role-confirm-agent", mounted: mounted)
+                observation.end(consentObservation)
+                recordContextStage(.consentObserved)
+                recordContextStage(.contextReplacementStarting)
+                store.api = pair.apiB
+                recordContextStage(.contextReplacementReturned)
+                await Task.yield()
+                stage = "retired-consent-control"
+                recordContextStage(.retiredConsentPressStarting)
+                _ = oldConfirmation.accessibilityPerformPress()
+                recordContextStage(.retiredConsentPressReturned)
+                recordContextStage(.writeCheckStarting)
+                try await assertNoWrites(pair)
+                recordContextStage(.writeCheckReturned)
+            } catch {
+                let originalFailure = error
+                recordContextStage(.failureDiagnosticsStarting)
+                observation.record(.failureDiagnostics, .entered)
+                do {
+                    try writeRolePickerDiagnostics(
+                        mounted.host,
+                        nativePopups: popups(mounted.host),
+                        stage: stage,
+                        tracking: tracking?.facts ?? [:]
+                    )
+                    observation.record(.failureDiagnostics, .returned)
+                } catch { observation.record(.failureDiagnostics, .threw) }
+                recordContextStage(.failureDiagnosticsReturned)
+                throw originalFailure
+            }
         }
     }
 
     func testCurrentOffMacModelConsentSavesOnlyItsReviewedApiAndShowsFreshSelectedRole() async throws {
-        let pair = try await ContextHTTPPair.start()
-        defer {
-            recordContextStage(.currentFixtureCleanupStarting)
-            pair.stop()
-            recordContextStage(.currentFixtureCleanupReturned)
-        }
-        var routes = Self.modelRoutes
-        var overview = Self.models
-        overview["capabilities"] = [["role": "agent", "title": "Questions", "description": "Fixture answers", "icon": "sparkles"]]
-        overview["inference"] = ["allowRemoteInference": false, "assignments": [:], "backends": [
-            "remote": [
-                "type": "http",
-                "status": "ok",
-                "url": "https://model.example.com",
-                "models": ["fictional-chat"],
-                "modelRoles": ["fictional-chat": ["agent"]],
-            ],
-        ]]
-        routes["GET /admin/models"] = ["body": overview]
-        routes["PATCH /admin/config"] = ["hold": true, "body": [:]]
-        try await pair.configureA(routes)
-        try await pair.configureB([:])
-        let decoded = try await pair.apiA.admin.modelOverview()
-        XCTAssertEqual(DesktopModelSelection.choices(for: "agent", overview: decoded).map(\.id), ["remote/fictional-chat"])
-        let store = DesktopStore(startRuntime: false)
-        store.api = pair.apiA
-        let mounted = mount(.models, store: store)
-        defer {
-            recordContextStage(.currentWindowCleanupStarting)
-            mounted.window.close()
-            recordContextStage(.currentWindowCleanupReturned)
-        }
-        try await DesktopAccessibilityDriver.materializeOwnedApplication()
-        try await wait { (try? DesktopAccessibilityDriver.element("model-role-picker-agent", in: mounted.host)) != nil }
-        var stage = "current-role-cell"
-        var tracking: DesktopOwnedPopupTracking?
-        do {
-            let role = try DesktopAccessibilityDriver.element("model-role-picker-agent", in: mounted.host)
-            let cell = try XCTUnwrap(role.object as? NSCell)
-            let popup = try XCTUnwrap(cell.controlView as? NSPopUpButton)
-            let menu = try XCTUnwrap(popup.menu)
-            let selection = DesktopOwnedPopupTracking(
-                picker: popup,
-                cell: cell,
-                menu: menu,
-                root: mounted.host,
-                window: mounted.window,
-                title: "remote · fictional-chat"
-            )
-            tracking = selection
-            stage = "current-public-popup-selection"
-            try await selection.select()
-            recordContextStage(.currentSelectedAXWaiting)
-            try await wait {
-                guard let selected = try? DesktopAccessibilityDriver.element("model-role-picker-agent", in: mounted.host),
-                      let save = try? DesktopAccessibilityDriver.element("model-role-save-agent", in: mounted.host) else { return false }
-                return selected.accessibilityTextValue() == "remote · fictional-chat" && save.isAccessibilityEnabled()
+        try await withOwnedUIObservation(.currentOffMac) { observation, resources in
+            let pair = try await ContextHTTPPair.start()
+            resources.add {
+                recordContextStage(.currentFixtureCleanupStarting)
+                pair.stop()
+                recordContextStage(.currentFixtureCleanupReturned)
             }
-            recordContextStage(.currentSelectedAXObserved)
-            stage = "current-real-save"
-            recordContextStage(.currentSaveStarting)
-            try DesktopAccessibilityDriver.press("model-role-save-agent", in: mounted.host)
-            recordContextStage(.currentSaveReturned)
-            recordContextStage(.currentConsentWaiting)
-            try await wait { (try? self.control("model-role-confirm-agent", mounted: mounted)) != nil }
-            recordContextStage(.currentConsentObserved)
-            recordContextStage(.currentNoWritesStarting)
-            try await assertNoWrites(pair)
-            recordContextStage(.currentNoWritesReturned)
-            XCTAssertTrue(store.api === pair.apiA)
-            XCTAssertTrue(store.apiContext?.isCurrent == true)
-            stage = "current-real-consent"
-            recordContextStage(.currentConsentLookupStarting)
-            let consent = try control("model-role-confirm-agent", mounted: mounted)
-            XCTAssertTrue(consent.isAccessibilityEnabled())
-            recordContextStage(.currentConsentLookupReturned)
-            recordContextStage(.currentConsentPressStarting)
-            XCTAssertTrue(consent.accessibilityPerformPress())
-            recordContextStage(.currentConsentPressReturned)
-            recordContextStage(.currentFirstWriteWaiting)
-            try await wait { try await pair.writesA().count == 1 }
-            recordContextStage(.currentFirstWriteObserved)
-            recordContextStage(.currentHeldWriteReadStarting)
-            let heldWrites = try await pair.writesA()
-            let policy = try XCTUnwrap(heldWrites.first)
-            XCTAssertEqual(policy.method, "PATCH")
-            XCTAssertEqual(policy.path, "/admin/config")
-            XCTAssertEqual((policy.body?["inference"] as? [String: Any])?["allowRemoteInference"] as? Bool, true)
-            recordContextStage(.currentHeldWriteReadReturned)
-            recordContextStage(.currentUnacknowledgedAXStarting)
-            XCTAssertFalse(
-                try DesktopAccessibilityDriver.contains("Selected: Fictional remote · fictional-chat", in: mounted.host),
-                "An unacknowledged policy write cannot show the role as selected"
-            )
-            recordContextStage(.currentUnacknowledgedAXReturned)
-            var selectedOverview = overview
-            selectedOverview["assignmentDisplays"] = ["agent": [
-                "providerId": "remote", "providerLabel": "Fictional remote", "modelName": "fictional-chat",
-                "available": true, "configured": true,
+            var routes = Self.modelRoutes
+            var overview = Self.models
+            overview["capabilities"] = [["role": "agent", "title": "Questions", "description": "Fixture answers", "icon": "sparkles"]]
+            overview["inference"] = ["allowRemoteInference": false, "assignments": [:], "backends": [
+                "remote": [
+                    "type": "http",
+                    "status": "ok",
+                    "url": "https://model.example.com",
+                    "models": ["fictional-chat"],
+                    "modelRoles": ["fictional-chat": ["agent"]],
+                ],
             ]]
-            var inference = try XCTUnwrap(overview["inference"] as? [String: Any])
-            inference["allowRemoteInference"] = true
-            inference["assignments"] = ["agent": [
-                "kind": "http",
-                "available": true,
-                "model": "fictional-chat",
-                "backendKey": "remote",
-                "onHost": false,
-            ]]
-            selectedOverview["inference"] = inference
-            routes["GET /admin/models"] = ["body": selectedOverview]
-            routes["PATCH /admin/config"] = ["body": [:]]
-            recordContextStage(.currentRouteUpdateStarting)
+            routes["GET /admin/models"] = ["body": overview]
+            routes["PATCH /admin/config"] = ["hold": true, "body": [:]]
             try await pair.configureA(routes)
-            recordContextStage(.currentRouteUpdateReturned)
-            stage = "current-write-acknowledgement"
-            recordContextStage(.currentReleaseStarting)
-            try await pair.releaseA()
-            recordContextStage(.currentReleaseReturned)
-            recordContextStage(.currentFreshAXWaiting)
-            try await wait {
-                guard try await pair.writesA().count == 2 else { return false }
-                return try DesktopAccessibilityDriver.contains("Selected: Fictional remote · fictional-chat", in: mounted.host)
-                    && DesktopAccessibilityDriver.contains("Selection saved. Current availability is shown above.", in: mounted.host)
+            try await pair.configureB([:])
+            let decoded = try await pair.apiA.admin.modelOverview()
+            XCTAssertEqual(DesktopModelSelection.choices(for: "agent", overview: decoded).map(\.id), ["remote/fictional-chat"])
+            let store = DesktopStore(startRuntime: false)
+            store.api = pair.apiA
+            let mounted = mount(.models, store: store)
+            resources.add {
+                recordContextStage(.currentWindowCleanupStarting)
+                mounted.window.close()
+                recordContextStage(.currentWindowCleanupReturned)
             }
-            recordContextStage(.currentFreshAXObserved)
-            recordContextStage(.currentFinalProofStarting)
-            let writes = try await pair.writesA()
-            XCTAssertEqual(writes.map(\.method), ["PATCH", "PATCH"])
-            XCTAssertEqual(writes.map(\.path), ["/admin/config", "/admin/config"])
-            let assignment = try XCTUnwrap(writes.last?.body?["inference"] as? [String: Any])
-            XCTAssertEqual(assignment["assignments"] as? [String: String], ["agent": "remote/fictional-chat"])
-            let replacementWrites = try await pair.writesB()
-            XCTAssertTrue(replacementWrites.isEmpty)
-            let requests = try await pair.requestsA()
-            let lastWrite = try XCTUnwrap(requests.lastIndex { $0.method == "PATCH" && $0.path == "/admin/config" })
-            XCTAssertTrue(
-                requests.indices.contains { $0 > lastWrite && requests[$0].method == "GET" && requests[$0].path == "/admin/models" },
-                "The rendered selected role must come from a fresh read after the actual writes"
-            )
-            recordContextStage(.currentFinalProofReturned)
-        } catch {
-            recordContextStage(.currentFailureDiagnosticsStarting)
-            try writeRolePickerDiagnostics(
-                mounted.host,
-                nativePopups: Self.nativePopups(mounted.host),
-                stage: stage,
-                tracking: tracking?.facts ?? [:],
-                name: "api-context-current-off-host-picker"
-            )
-            recordContextStage(.currentFailureDiagnosticsReturned)
-            throw error
+            try await DesktopAccessibilityDriver.materializeOwnedApplication()
+            try await wait { (try? DesktopAccessibilityDriver.element("model-role-picker-agent", in: mounted.host)) != nil }
+            var stage = "current-role-cell"
+            var tracking: DesktopOwnedPopupTracking?
+            do {
+                let role = try DesktopAccessibilityDriver.element("model-role-picker-agent", in: mounted.host)
+                let cell = try XCTUnwrap(role.object as? NSCell)
+                let popup = try XCTUnwrap(cell.controlView as? NSPopUpButton)
+                let menu = try XCTUnwrap(popup.menu)
+                let selection = DesktopOwnedPopupTracking(
+                    picker: popup,
+                    cell: cell,
+                    menu: menu,
+                    root: mounted.host,
+                    window: mounted.window,
+                    title: "remote · fictional-chat"
+                )
+                tracking = selection
+                stage = "current-public-popup-selection"
+                try await selection.select()
+                recordContextStage(.currentSelectedAXWaiting)
+                try await wait {
+                    guard let selected = try? DesktopAccessibilityDriver.element("model-role-picker-agent", in: mounted.host),
+                          let save = try? DesktopAccessibilityDriver.element("model-role-save-agent", in: mounted.host)
+                    else { return false }
+                    return selected.accessibilityTextValue() == "remote · fictional-chat" && save.isAccessibilityEnabled()
+                }
+                recordContextStage(.currentSelectedAXObserved)
+                stage = "current-real-save"
+                recordContextStage(.currentSaveStarting)
+                let saveObservation = observation.begin(.save)
+                try DesktopAccessibilityDriver.press("model-role-save-agent", in: mounted.host)
+                observation.end(saveObservation)
+                recordContextStage(.currentSaveReturned)
+                recordContextStage(.currentConsentWaiting)
+                let consentObservation = observation.begin(.consent)
+                try await wait { (try? self.control("model-role-confirm-agent", mounted: mounted)) != nil }
+                observation.end(consentObservation)
+                recordContextStage(.currentConsentObserved)
+                recordContextStage(.currentNoWritesStarting)
+                try await assertNoWrites(pair)
+                recordContextStage(.currentNoWritesReturned)
+                XCTAssertTrue(store.api === pair.apiA)
+                XCTAssertTrue(store.apiContext?.isCurrent == true)
+                stage = "current-real-consent"
+                recordContextStage(.currentConsentLookupStarting)
+                let actionObservation = observation.begin(.consentAction)
+                let consent = try control("model-role-confirm-agent", mounted: mounted)
+                XCTAssertTrue(consent.isAccessibilityEnabled())
+                recordContextStage(.currentConsentLookupReturned)
+                recordContextStage(.currentConsentPressStarting)
+                XCTAssertTrue(consent.accessibilityPerformPress())
+                observation.end(actionObservation)
+                recordContextStage(.currentConsentPressReturned)
+                recordContextStage(.currentFirstWriteWaiting)
+                let writeReceiptObservation = observation.begin(.writeReceipt)
+                observation.record(.writeReceipt, .entered)
+                try await wait { try await pair.writesA().count == 1 }
+                observation.record(.writeReceipt, .returned)
+                observation.end(writeReceiptObservation)
+                recordContextStage(.currentFirstWriteObserved)
+                recordContextStage(.currentHeldWriteReadStarting)
+                let heldWrites = try await pair.writesA()
+                let policy = try XCTUnwrap(heldWrites.first)
+                XCTAssertEqual(policy.method, "PATCH")
+                XCTAssertEqual(policy.path, "/admin/config")
+                XCTAssertEqual((policy.body?["inference"] as? [String: Any])?["allowRemoteInference"] as? Bool, true)
+                recordContextStage(.currentHeldWriteReadReturned)
+                recordContextStage(.currentUnacknowledgedAXStarting)
+                XCTAssertFalse(
+                    try DesktopAccessibilityDriver.contains("Selected: Fictional remote · fictional-chat", in: mounted.host),
+                    "An unacknowledged policy write cannot show the role as selected"
+                )
+                recordContextStage(.currentUnacknowledgedAXReturned)
+                var selectedOverview = overview
+                selectedOverview["assignmentDisplays"] = ["agent": [
+                    "providerId": "remote", "providerLabel": "Fictional remote", "modelName": "fictional-chat",
+                    "available": true, "configured": true,
+                ]]
+                var inference = try XCTUnwrap(overview["inference"] as? [String: Any])
+                inference["allowRemoteInference"] = true
+                inference["assignments"] = ["agent": [
+                    "kind": "http",
+                    "available": true,
+                    "model": "fictional-chat",
+                    "backendKey": "remote",
+                    "onHost": false,
+                ]]
+                selectedOverview["inference"] = inference
+                routes["GET /admin/models"] = ["body": selectedOverview]
+                routes["PATCH /admin/config"] = ["body": [:]]
+                recordContextStage(.currentRouteUpdateStarting)
+                try await pair.configureA(routes)
+                recordContextStage(.currentRouteUpdateReturned)
+                stage = "current-write-acknowledgement"
+                recordContextStage(.currentReleaseStarting)
+                let acknowledgementObservation = observation.begin(.acknowledgement)
+                observation.record(.acknowledgement, .entered)
+                try await pair.releaseA()
+                observation.record(.acknowledgement, .returned)
+                observation.end(acknowledgementObservation)
+                recordContextStage(.currentReleaseReturned)
+                recordContextStage(.currentFreshAXWaiting)
+                try await wait {
+                    guard try await pair.writesA().count == 2 else { return false }
+                    return try DesktopAccessibilityDriver.contains("Selected: Fictional remote · fictional-chat", in: mounted.host)
+                        && DesktopAccessibilityDriver.contains("Selection saved. Current availability is shown above.", in: mounted.host)
+                }
+                recordContextStage(.currentFreshAXObserved)
+                recordContextStage(.currentFinalProofStarting)
+                let writes = try await pair.writesA()
+                XCTAssertEqual(writes.map(\.method), ["PATCH", "PATCH"])
+                XCTAssertEqual(writes.map(\.path), ["/admin/config", "/admin/config"])
+                let assignment = try XCTUnwrap(writes.last?.body?["inference"] as? [String: Any])
+                XCTAssertEqual(assignment["assignments"] as? [String: String], ["agent": "remote/fictional-chat"])
+                let replacementWrites = try await pair.writesB()
+                XCTAssertTrue(replacementWrites.isEmpty)
+                let requests = try await pair.requestsA()
+                let lastWrite = try XCTUnwrap(requests.lastIndex { $0.method == "PATCH" && $0.path == "/admin/config" })
+                XCTAssertTrue(
+                    requests.indices.contains { $0 > lastWrite && requests[$0].method == "GET" && requests[$0].path == "/admin/models" },
+                    "The rendered selected role must come from a fresh read after the actual writes"
+                )
+                recordContextStage(.currentFinalProofReturned)
+            } catch {
+                let originalFailure = error
+                recordContextStage(.currentFailureDiagnosticsStarting)
+                observation.record(.failureDiagnostics, .entered)
+                do {
+                    try writeRolePickerDiagnostics(
+                        mounted.host,
+                        nativePopups: Self.nativePopups(mounted.host),
+                        stage: stage,
+                        tracking: tracking?.facts ?? [:],
+                        name: "api-context-current-off-host-picker"
+                    )
+                    observation.record(.failureDiagnostics, .returned)
+                } catch { observation.record(.failureDiagnostics, .threw) }
+                recordContextStage(.currentFailureDiagnosticsReturned)
+                throw originalFailure
+            }
         }
     }
 
@@ -681,9 +760,13 @@ final class DesktopAPIContextTests: XCTestCase {
     }
 
     private func control(_ id: String, mounted: Mounted) throws -> DesktopAccessibilityDriver.Element {
-        if let sheet = mounted.window.attachedSheet?.contentView,
-           let element = try? DesktopAccessibilityDriver.element(id, in: sheet) { return element }
-        return try DesktopAccessibilityDriver.element(id, in: mounted.host)
+        let sheetElement = DesktopAccessibilityDriver.observed(.consentSheet) { () -> DesktopAccessibilityDriver.Element? in
+            if let sheet = mounted.window.attachedSheet?.contentView,
+               let element = try? DesktopAccessibilityDriver.element(id, in: sheet) { return element }
+            return nil
+        }
+        if let sheetElement { return sheetElement }
+        return try DesktopAccessibilityDriver.observed(.consentRoot) { try DesktopAccessibilityDriver.element(id, in: mounted.host) }
     }
 
     private func type(_ value: String, into identifier: String, in host: NSView) throws {
@@ -1100,6 +1183,9 @@ private enum DesktopContextStage: String {
     case currentFixtureCleanupStarting = "current-fixture-cleanup-starting"
     case currentFixtureCleanupReturned = "current-fixture-cleanup-returned"
 
+    case observationJoinStarting = "observation-join-starting", observationJoinReturned = "observation-join-returned"
+    case observationCleanupBlocked = "observation-cleanup-blocked"
+    case failureDiagnosticsStarting = "failure-diagnostics-starting", failureDiagnosticsReturned = "failure-diagnostics-returned"
     case offMacEntered = "off-mac-entered"
     case fixturesStarting = "fixtures-starting", fixturesReady = "fixtures-ready"
     case configurationStarting = "configuration-starting", configurationReturned = "configuration-returned"
