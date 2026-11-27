@@ -333,7 +333,11 @@ final class DesktopStoreRefreshTests: XCTestCase {
             DesktopSettingsView().environment(store), name: "settings-all-required-ready", size: CGSize(width: 720, height: 640)
         ) { view in
             XCTAssertTrue(try DesktopAccessibilityDriver.contains("Starts automatically when you sign in", in: view))
-            XCTAssertTrue(try DesktopAccessibilityDriver.contains("Closing the window keeps collection running", in: view))
+            XCTAssertTrue(try DesktopAccessibilityDriver.contains("Closing a window leaves Omnesis open", in: view))
+            XCTAssertTrue(try DesktopAccessibilityDriver.contains(
+                "Collection still needs source access and a working background connection",
+                in: view
+            ))
             XCTAssertTrue(try DesktopAccessibilityDriver.contains("Automatic sleep is off while plugged in", in: view))
         }
         let epoch = String(repeating: "a", count: 64)
