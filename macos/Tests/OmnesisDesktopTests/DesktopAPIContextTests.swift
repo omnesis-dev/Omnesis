@@ -440,7 +440,11 @@ final class DesktopAPIContextTests: XCTestCase {
 
     func testCurrentOffMacModelConsentSavesOnlyItsReviewedApiAndShowsFreshSelectedRole() async throws {
         let pair = try await ContextHTTPPair.start()
-        defer { pair.stop() }
+        defer {
+            recordContextStage(.currentFixtureCleanupStarting)
+            pair.stop()
+            recordContextStage(.currentFixtureCleanupReturned)
+        }
         var routes = Self.modelRoutes
         var overview = Self.models
         overview["capabilities"] = [["role": "agent", "title": "Questions", "description": "Fixture answers", "icon": "sparkles"]]
@@ -462,7 +466,11 @@ final class DesktopAPIContextTests: XCTestCase {
         let store = DesktopStore(startRuntime: false)
         store.api = pair.apiA
         let mounted = mount(.models, store: store)
-        defer { mounted.window.close() }
+        defer {
+            recordContextStage(.currentWindowCleanupStarting)
+            mounted.window.close()
+            recordContextStage(.currentWindowCleanupReturned)
+        }
         try await DesktopAccessibilityDriver.materializeOwnedApplication()
         try await wait { (try? DesktopAccessibilityDriver.element("model-role-picker-agent", in: mounted.host)) != nil }
         var stage = "current-role-cell"
@@ -483,31 +491,49 @@ final class DesktopAPIContextTests: XCTestCase {
             tracking = selection
             stage = "current-public-popup-selection"
             try await selection.select()
+            recordContextStage(.currentSelectedAXWaiting)
             try await wait {
                 guard let selected = try? DesktopAccessibilityDriver.element("model-role-picker-agent", in: mounted.host),
                       let save = try? DesktopAccessibilityDriver.element("model-role-save-agent", in: mounted.host) else { return false }
                 return selected.accessibilityTextValue() == "remote · fictional-chat" && save.isAccessibilityEnabled()
             }
+            recordContextStage(.currentSelectedAXObserved)
             stage = "current-real-save"
+            recordContextStage(.currentSaveStarting)
             try DesktopAccessibilityDriver.press("model-role-save-agent", in: mounted.host)
+            recordContextStage(.currentSaveReturned)
+            recordContextStage(.currentConsentWaiting)
             try await wait { (try? self.control("model-role-confirm-agent", mounted: mounted)) != nil }
+            recordContextStage(.currentConsentObserved)
+            recordContextStage(.currentNoWritesStarting)
             try await assertNoWrites(pair)
+            recordContextStage(.currentNoWritesReturned)
             XCTAssertTrue(store.api === pair.apiA)
             XCTAssertTrue(store.apiContext?.isCurrent == true)
             stage = "current-real-consent"
+            recordContextStage(.currentConsentLookupStarting)
             let consent = try control("model-role-confirm-agent", mounted: mounted)
             XCTAssertTrue(consent.isAccessibilityEnabled())
+            recordContextStage(.currentConsentLookupReturned)
+            recordContextStage(.currentConsentPressStarting)
             XCTAssertTrue(consent.accessibilityPerformPress())
+            recordContextStage(.currentConsentPressReturned)
+            recordContextStage(.currentFirstWriteWaiting)
             try await wait { try await pair.writesA().count == 1 }
+            recordContextStage(.currentFirstWriteObserved)
+            recordContextStage(.currentHeldWriteReadStarting)
             let heldWrites = try await pair.writesA()
             let policy = try XCTUnwrap(heldWrites.first)
             XCTAssertEqual(policy.method, "PATCH")
             XCTAssertEqual(policy.path, "/admin/config")
             XCTAssertEqual((policy.body?["inference"] as? [String: Any])?["allowRemoteInference"] as? Bool, true)
+            recordContextStage(.currentHeldWriteReadReturned)
+            recordContextStage(.currentUnacknowledgedAXStarting)
             XCTAssertFalse(
                 try DesktopAccessibilityDriver.contains("Selected: Fictional remote · fictional-chat", in: mounted.host),
                 "An unacknowledged policy write cannot show the role as selected"
             )
+            recordContextStage(.currentUnacknowledgedAXReturned)
             var selectedOverview = overview
             selectedOverview["assignmentDisplays"] = ["agent": [
                 "providerId": "remote", "providerLabel": "Fictional remote", "modelName": "fictional-chat",
@@ -525,14 +551,21 @@ final class DesktopAPIContextTests: XCTestCase {
             selectedOverview["inference"] = inference
             routes["GET /admin/models"] = ["body": selectedOverview]
             routes["PATCH /admin/config"] = ["body": [:]]
+            recordContextStage(.currentRouteUpdateStarting)
             try await pair.configureA(routes)
+            recordContextStage(.currentRouteUpdateReturned)
             stage = "current-write-acknowledgement"
+            recordContextStage(.currentReleaseStarting)
             try await pair.releaseA()
+            recordContextStage(.currentReleaseReturned)
+            recordContextStage(.currentFreshAXWaiting)
             try await wait {
                 guard try await pair.writesA().count == 2 else { return false }
                 return try DesktopAccessibilityDriver.contains("Selected: Fictional remote · fictional-chat", in: mounted.host)
                     && DesktopAccessibilityDriver.contains("Selection saved. Current availability is shown above.", in: mounted.host)
             }
+            recordContextStage(.currentFreshAXObserved)
+            recordContextStage(.currentFinalProofStarting)
             let writes = try await pair.writesA()
             XCTAssertEqual(writes.map(\.method), ["PATCH", "PATCH"])
             XCTAssertEqual(writes.map(\.path), ["/admin/config", "/admin/config"])
@@ -546,7 +579,9 @@ final class DesktopAPIContextTests: XCTestCase {
                 requests.indices.contains { $0 > lastWrite && requests[$0].method == "GET" && requests[$0].path == "/admin/models" },
                 "The rendered selected role must come from a fresh read after the actual writes"
             )
+            recordContextStage(.currentFinalProofReturned)
         } catch {
+            recordContextStage(.currentFailureDiagnosticsStarting)
             try writeRolePickerDiagnostics(
                 mounted.host,
                 nativePopups: Self.nativePopups(mounted.host),
@@ -554,6 +589,7 @@ final class DesktopAPIContextTests: XCTestCase {
                 tracking: tracking?.facts ?? [:],
                 name: "api-context-current-off-host-picker"
             )
+            recordContextStage(.currentFailureDiagnosticsReturned)
             throw error
         }
     }
@@ -670,12 +706,69 @@ final class DesktopAPIContextTests: XCTestCase {
     }
 
     private func wait(_ condition: () async throws -> Bool) async throws {
-        let deadline = ContinuousClock.now + .seconds(5)
-        while ContinuousClock.now < deadline {
-            if try await condition() { return }
-            try await Task.sleep(for: .milliseconds(25))
+        try await DesktopContextWait.run(condition)
+    }
+
+    func testWaitRejectsTrueAtOrAfterItsOriginalDeadline() async throws {
+        let start = ContinuousClock.now
+        for elapsed in [Duration.seconds(5), .seconds(1100)] {
+            var now = start
+            var calls = 0
+            var pauses = 0
+            do {
+                try await DesktopContextWait.run(now: { now }, pause: { pauses += 1 }) {
+                    calls += 1
+                    now = start + elapsed
+                    return true
+                }
+                XCTFail("A late true condition must not escape its original deadline")
+            } catch let error as URLError {
+                XCTAssertEqual(error.code, .timedOut)
+            }
+            XCTAssertEqual(calls, 1)
+            XCTAssertEqual(pauses, 0)
         }
-        throw URLError(.timedOut)
+    }
+
+    func testWaitAcceptsTimelyTrueWithoutRenewingItsDeadlineAfterPolling() async throws {
+        let start = ContinuousClock.now
+        var now = start
+        var calls = 0
+        var pauses = 0
+        try await DesktopContextWait.run(now: { now }, pause: {
+            pauses += 1
+            now = start + .seconds(4)
+        }) {
+            calls += 1
+            return calls == 2
+        }
+        XCTAssertEqual(calls, 2)
+        XCTAssertEqual(pauses, 1)
+        now = start
+        calls = 0
+        do {
+            try await DesktopContextWait.run(now: { now }, pause: { now += .seconds(3) }) {
+                calls += 1
+                return false
+            }
+            XCTFail("Polling must not renew the five-second deadline")
+        } catch let error as URLError {
+            XCTAssertEqual(error.code, .timedOut)
+        }
+        XCTAssertEqual(calls, 2)
+    }
+
+    func testWaitPreservesConditionErrorsAndPauseCancellation() async throws {
+        do {
+            try await DesktopContextWait.run { throw URLError(.badURL) }
+            XCTFail("The condition error must propagate")
+        } catch let error as URLError {
+            XCTAssertEqual(error.code, .badURL)
+        }
+        do {
+            try await DesktopContextWait.run(pause: { throw CancellationError() }) { false }
+            XCTFail("Pause cancellation must propagate")
+        } catch is CancellationError {}
     }
 
     private static let models: [String: Any] = [
@@ -693,6 +786,25 @@ final class DesktopAPIContextTests: XCTestCase {
     private static let storage: [String: Any] = [
         "pressure": ["state": "normal"], "policy": [:], "cleanupJobs": [], "retention": [],
     ]
+}
+
+/// A condition that returns after its deadline cannot establish timely readiness.
+@MainActor
+private enum DesktopContextWait {
+    static func run(
+        now: () -> ContinuousClock.Instant = { ContinuousClock.now },
+        pause: () async throws -> Void = { try await Task.sleep(for: .milliseconds(25)) },
+        _ condition: () async throws -> Bool
+    ) async throws {
+        let deadline = now() + .seconds(5)
+        while now() < deadline {
+            let satisfied = try await condition()
+            guard now() < deadline else { throw URLError(.timedOut) }
+            if satisfied { return }
+            try await pause()
+        }
+        throw URLError(.timedOut)
+    }
 }
 
 @MainActor
@@ -955,6 +1067,39 @@ private final class DesktopOwnedPopupTracking {
 /// Fixed stage names only; emit before synchronous AppKit calls rather than
 /// depending on a catch handler or an accessibility traversal after a blockage.
 private enum DesktopContextStage: String {
+    case currentSelectedAXWaiting = "current-selected-axwaiting"
+    case currentSelectedAXObserved = "current-selected-axobserved"
+    case currentSaveStarting = "current-save-starting"
+    case currentSaveReturned = "current-save-returned"
+    case currentConsentWaiting = "current-consent-waiting"
+    case currentConsentObserved = "current-consent-observed"
+    case currentNoWritesStarting = "current-no-writes-starting"
+    case currentNoWritesReturned = "current-no-writes-returned"
+    case currentConsentLookupStarting = "current-consent-lookup-starting"
+    case currentConsentLookupReturned = "current-consent-lookup-returned"
+    case currentConsentPressStarting = "current-consent-press-starting"
+    case currentConsentPressReturned = "current-consent-press-returned"
+    case currentFirstWriteWaiting = "current-first-write-waiting"
+    case currentFirstWriteObserved = "current-first-write-observed"
+    case currentHeldWriteReadStarting = "current-held-write-read-starting"
+    case currentHeldWriteReadReturned = "current-held-write-read-returned"
+    case currentUnacknowledgedAXStarting = "current-unacknowledged-axstarting"
+    case currentUnacknowledgedAXReturned = "current-unacknowledged-axreturned"
+    case currentRouteUpdateStarting = "current-route-update-starting"
+    case currentRouteUpdateReturned = "current-route-update-returned"
+    case currentReleaseStarting = "current-release-starting"
+    case currentReleaseReturned = "current-release-returned"
+    case currentFreshAXWaiting = "current-fresh-axwaiting"
+    case currentFreshAXObserved = "current-fresh-axobserved"
+    case currentFinalProofStarting = "current-final-proof-starting"
+    case currentFinalProofReturned = "current-final-proof-returned"
+    case currentFailureDiagnosticsStarting = "current-failure-diagnostics-starting"
+    case currentFailureDiagnosticsReturned = "current-failure-diagnostics-returned"
+    case currentWindowCleanupStarting = "current-window-cleanup-starting"
+    case currentWindowCleanupReturned = "current-window-cleanup-returned"
+    case currentFixtureCleanupStarting = "current-fixture-cleanup-starting"
+    case currentFixtureCleanupReturned = "current-fixture-cleanup-returned"
+
     case offMacEntered = "off-mac-entered"
     case fixturesStarting = "fixtures-starting", fixturesReady = "fixtures-ready"
     case configurationStarting = "configuration-starting", configurationReturned = "configuration-returned"

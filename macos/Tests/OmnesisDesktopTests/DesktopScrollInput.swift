@@ -87,15 +87,29 @@ enum DesktopScrollInput {
             )
             return native
         }
-        // Validate the complete input before beginning; no fallback reverses or enlarges it.
-        let began = try event(.began, expected: .began, delta: 0)
-        let ended = try event(.ended, expected: .ended, delta: 0)
-        var changed: [NSEvent] = []
-        var remaining = plannedPixels
-        for _ in 0 ..< Int(count) {
-            let pixels = min(packetSize, remaining)
-            try changed.append(event(.changed, expected: .changed, delta: Int32(pixels)))
-            remaining -= pixels
+        struct Packet {
+            let phase: CGScrollPhase
+            let expected: NSEvent.Phase
+            let delta: Int32
+            let name: String
+        }
+        let began = Packet(phase: .began, expected: .began, delta: 0, name: "began")
+        let ended = Packet(phase: .ended, expected: .ended, delta: 0, name: "ended")
+        // Validate the fixed recipe before beginning; create each event when it occurs.
+        let changed: [Packet] = try {
+            var result: [Packet] = []
+            var remaining = plannedPixels
+            for _ in 0 ..< Int(count) {
+                let pixels = min(packetSize, remaining)
+                try require(pixels.isFinite && pixels >= 1 && pixels <= viewport, "Invalid planned pixel delta")
+                result.append(Packet(phase: .changed, expected: .changed, delta: Int32(pixels), name: "changed"))
+                remaining -= pixels
+            }
+            try require(remaining == 0, "The fixed gesture must account for its complete pixel budget")
+            return result
+        }()
+        for packet in [began] + changed + [ended] {
+            _ = try event(packet.phase, expected: packet.expected, delta: packet.delta)
         }
         let counts = DesktopLiveScrollCounts()
         let notifications: [(Notification.Name, String)] = [
@@ -113,12 +127,40 @@ enum DesktopScrollInput {
             ["x": Double(rect.minX), "y": Double(rect.minY), "width": Double(rect.width), "height": Double(rect.height)]
         }
         var packets: [[String: Any]] = []
-        func deliver(_ event: NSEvent, phase: String) {
+        let deliveryOrigin = ContinuousClock.now
+        var previousEventTimestamp: TimeInterval?
+        var previousCGTimestamp: CGEventTimestamp?
+        func deliver(_ packet: Packet) throws {
+            try require(ownsTarget(), "The local input target changed before packet delivery")
+            let event = try event(packet.phase, expected: packet.expected, delta: packet.delta)
+            let timestamp = event.timestamp
+            guard let cgTimestamp = event.cgEvent?.timestamp else {
+                throw Failure(description: "The converted local event has no Quartz timestamp")
+            }
+            let elapsed = deliveryOrigin.duration(to: .now).components
+            let deliveryMilliseconds = Double(elapsed.seconds) * 1000 + Double(elapsed.attoseconds) / 1e15
+            try require(
+                timestamp.isFinite && timestamp >= 0 && deliveryMilliseconds.isFinite && deliveryMilliseconds >= 0,
+                "Local event timing must be finite and nonnegative"
+            )
+            try require(
+                previousEventTimestamp.map { timestamp >= $0 } ?? true,
+                "Native event occurrence times must not move backwards"
+            )
+            try require(
+                previousCGTimestamp.map { cgTimestamp >= $0 } ?? true,
+                "Quartz event occurrence times must not move backwards"
+            )
+            previousEventTimestamp = timestamp
+            previousCGTimestamp = cgTimestamp
             let before = topDistance()
             scroll.scrollWheel(with: event)
             packets.append([
-                "phase": phase,
+                "phase": packet.name,
                 "eventType": event.type.rawValue,
+                "eventTimestamp": timestamp,
+                "cgTimestampNanoseconds": cgTimestamp,
+                "deliveryMilliseconds": deliveryMilliseconds,
                 "cgPhase": event.cgEvent?.getIntegerValueField(.scrollWheelEventScrollPhase) as Any? ?? NSNull(),
                 "cocoaPhase": event.phase.rawValue,
                 "deltaY": event.scrollingDeltaY,
@@ -134,8 +176,13 @@ enum DesktopScrollInput {
         var firstMovementUp: Bool?
         var outcome = "interrupted"
         defer {
-            if beganDelivered, !endedDelivered { deliver(ended, phase: "ended")
-                endedDelivered = true
+            if beganDelivered, !endedDelivered {
+                do {
+                    try deliver(ended)
+                    endedDelivered = true
+                } catch {
+                    XCTFail("The owned local gesture could not deliver its ending phase")
+                }
             }
             observers.forEach { NotificationCenter.default.removeObserver($0) }
             let record: [String: Any] = [
@@ -155,13 +202,13 @@ enum DesktopScrollInput {
             } catch { XCTFail("Local scroll input evidence could not be retained") }
         }
         try require(ownsTarget(), "The local input target changed before gesture delivery")
-        deliver(began, phase: "began")
+        try deliver(began)
         beganDelivered = true
-        for event in changed {
+        for packet in changed {
             try Task.checkCancellation()
             try require(ownsTarget(), "The local input target changed during gesture delivery")
             let before = topDistance()
-            deliver(event, phase: "changed")
+            try deliver(packet)
             try await Task.sleep(for: .milliseconds(16))
             let after = topDistance()
             packets[packets.count - 1]["topDistanceAfterYield"] = after
@@ -173,7 +220,7 @@ enum DesktopScrollInput {
                 try require(firstMovementUp == true, "The first actual wheel movement was not toward the document top")
             }
         }
-        deliver(ended, phase: "ended")
+        try deliver(ended)
         endedDelivered = true
         await Task.yield()
         try require(firstMovementUp == true, "The local gesture produced no verified upward native movement")
