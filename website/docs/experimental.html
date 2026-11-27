@@ -667,9 +667,26 @@
           (about 46&nbsp;MB) into its models directory and separates the voices of each chunk on the
           gateway before the chunk's audio is deleted. When a recording's document is written, the
           voices are grouped into Speaker&nbsp;1, Speaker&nbsp;2 and so on, and the voice data used
-          to compare them is deleted: nothing recognises a voice from one recording to the next.
-          Speakers are attributed per sentence, so this needs a transcriber that reports timings
-          (local Whisper, or an HTTP transcriber that answers <code>verbose_json</code>).
+          to compare them is deleted: nothing recognises a voice from one recording to the next,
+          except your own when you turn that on (below). Speakers are attributed per sentence, so
+          this needs a transcriber that reports timings (local Whisper, or an HTTP transcriber that
+          answers <code>verbose_json</code>).
+        </p>
+        <p>
+          To have your own voice recognised, also set <code>inference.recordings.selfVoice</code> to
+          <code>"match"</code>. The portal's <strong>Recordings</strong> page then shows
+          <strong>Your voice</strong>: read the passage it shows aloud for at least 20 seconds, with
+          the browser's microphone or as an audio file you send. The gateway separates the clip's
+          voice as it does a recording's, keeps one summary of it and deletes the audio. In each
+          recording written after that, the speaker who sounds most like you is named as you and
+          marked <em>recognised by your voice</em>; clearing or changing that speaker stops the
+          recording from recognising you again. Recordings made on another microphone than the clip
+          may not be recognised; enrol again from the same page with a clip from that microphone,
+          which replaces the first. Nobody else's voice is kept. The summary is tied to the voice
+          model, so a different model asks you to enrol again, and setting
+          <code>selfVoice</code> back to <code>"off"</code> deletes it, as does
+          <strong>Delete my voice</strong>. A clip still being read at that moment is not kept, and
+          of two clips sent together the one sent last is kept.
         </p>
         <p>
           In the app, open a recording under <strong>Recent recordings</strong> to see each speaker
@@ -730,6 +747,11 @@
           <code>inference.recordings.restoreReviewRequired</code> to <code>false</code> through the
           configuration API. Omitting the field from an older API configuration replacement does not
           acknowledge review.
+        </p>
+        <p>
+          Restoring history never enrolls the backup's voice as the destination's owner. Recognition
+          is turned off after restore; turn it on explicitly and enrol your voice again if needed
+          before using recognition on restored data.
         </p>
 
         <h2 id="brain">Omnesis Brain</h2>

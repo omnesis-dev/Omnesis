@@ -11,11 +11,17 @@ export function pauseDesktopRestoreModels(config: OmnesisConfig): OmnesisConfig 
     inference: {
       ...config.inference,
       assignments: Object.fromEntries(CAPABILITY_ROLES.map((role) => [role, null])),
+      ...(config.inference?.recordings?.selfVoice === "match"
+        ? { recordings: { ...config.inference.recordings, selfVoice: "off" } }
+        : {}),
     },
   });
 }
 export function desktopRestoreModelsPaused(config: unknown): boolean {
   const parsed = omnesisConfigSchema.safeParse(config);
   if (!parsed.success) return false;
-  return CAPABILITY_ROLES.every((role) => parsed.data.inference?.assignments?.[role] === null);
+  return (
+    CAPABILITY_ROLES.every((role) => parsed.data.inference?.assignments?.[role] === null) &&
+    (parsed.data.inference?.recordings?.selfVoice ?? "off") === "off"
+  );
 }

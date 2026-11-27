@@ -48,6 +48,8 @@ const groups: Record<
     "oauth_refresh_tokens",
     "pairing_redemption_receipts",
     "principal_credentials",
+    // An enrolled owner identity belongs to the destination, not imported history.
+    "recording_voice_profile",
     "privacy_policy_families",
     "privacy_policy_state",
     "privacy_policy_versions",

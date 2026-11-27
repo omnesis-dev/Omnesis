@@ -53,7 +53,10 @@ import { ReleaseCheckService } from "./release-check/service.js";
 import { createReleaseCheckTask } from "./release-check/task.js";
 import { seedWebSourceMeta } from "./sources/web/source-meta.js";
 import { dictationFeatureStatus } from "./dictation/index.js";
-import { createVoiceSeparatorSource } from "./recordings/voices/loader.js";
+import {
+  bindVoiceSeparatorPolicy,
+  createVoiceSeparatorSource,
+} from "./recordings/voices/loader.js";
 import { documentsAwaitingTranscription } from "./voice-notes/index.js";
 import {
   bootBriefs,
@@ -2334,9 +2337,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     }),
     modelsDir: MODELS_DIR,
   });
-  const stopVoicePolicy = configStore.onChange(() => {
-    voiceSeparatorSource.refresh();
-  });
+  const stopVoicePolicy = bindVoiceSeparatorPolicy(configStore, voiceSeparatorSource);
   let agentConversationsRuntime:
     import("./sources/agent-conversations/index.js").AgentConversationsRuntime | undefined;
   // Held for the delivery loop below (policy review and operator-watch

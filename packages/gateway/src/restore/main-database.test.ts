@@ -36,7 +36,11 @@ import { createToken } from "../data/repositories/TokenRepository.js";
 import { createServer } from "../server.js";
 import { enqueueNewNotes, claimDueNote } from "../brain/note-agent/storage.js";
 import { directWriteGate } from "../write-gate.js";
-import { assignRecordingVoices, listUngroupedRecordingVoices } from "../recordings/storage.js";
+import {
+  assignRecordingVoices,
+  listUngroupedRecordingVoices,
+  setRecordingVoiceProfile,
+} from "../recordings/storage.js";
 import {
   retireDeviceSources,
   sourceArchivedDevices,
@@ -697,6 +701,52 @@ test("completed and unfinished recording blobs and metadata survive reconstructi
     db.close();
   }
 });
+
+test.each([false, true])(
+  "keeps destination voice enrollment without importing the backup's owner identity (target enrolled: %s)",
+  (enrolled) => {
+    const stamp = "2026-03-01T09:00:00.000Z";
+    setRecordingVoiceProfile(source as unknown as Db, {
+      model: "invented-source-voice-model",
+      vector: new Float32Array([1, 0]),
+      speechMs: 2000,
+      enrolledAt: stamp,
+    });
+    if (enrolled) {
+      setRecordingVoiceProfile(target as unknown as Db, {
+        model: "invented-target-voice-model",
+        vector: new Float32Array([0, 1]),
+        speechMs: 3000,
+        enrolledAt: stamp,
+      });
+    }
+    const expected = target.prepare("SELECT * FROM recording_voice_profile").all();
+    source.close();
+    target.close();
+    const sourceBefore = readFileSync(join(dir, "source.db"));
+    const targetBefore = readFileSync(join(dir, "target.db"));
+    reconcileRestoredMainDatabase({
+      sourcePath: join(dir, "source.db"),
+      targetPath: join(dir, "target.db"),
+      destinationPath: join(dir, "destination.db"),
+      sourceKey,
+      targetKey,
+      destinationKey,
+    });
+    expect(readFileSync(join(dir, "source.db"))).toEqual(sourceBefore);
+    expect(readFileSync(join(dir, "target.db"))).toEqual(targetBefore);
+    expect(sqliteFileLooksPlaintext(join(dir, "destination.db"))).toBe(false);
+    const restored = result();
+    try {
+      expect(restored.prepare("SELECT * FROM recording_voice_profile").all()).toEqual(expected);
+      expect(
+        restored.prepare("SELECT title FROM documents WHERE id='doc-invented'").pluck().get(),
+      ).toBe("Invented title");
+    } finally {
+      restored.close();
+    }
+  },
+);
 
 test("restores split-conversation content and packed voices without changing input authority or losing FK ownership", () => {
   const recording = "invented-split-history";

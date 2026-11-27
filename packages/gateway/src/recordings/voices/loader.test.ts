@@ -5,7 +5,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
-import { createVoiceSeparatorSource, type VoiceSeparatorPolicy } from "./loader.js";
+import { ConfigStore } from "../../config-store.js";
+import {
+  bindVoiceSeparatorPolicy,
+  createVoiceSeparatorSource,
+  type VoiceSeparatorPolicy,
+} from "./loader.js";
 import { LocalVoiceSeparator, type VoiceWorkerProcess } from "./local-voice-separator.js";
 import type { VoiceWorkerMessage } from "./voice-worker-protocol.js";
 import type { VoiceSeparator } from "./voices.js";
@@ -19,6 +24,7 @@ function deferred<T>() {
 function separator(): VoiceSeparator {
   return {
     name: "invented-scripted",
+    model: "invented-scripted-model",
     separate: vi.fn(async () => ({ windows: [], vectors: [] })),
     group: vi.fn(async () => []),
     dispose: vi.fn(async () => {}),
@@ -224,7 +230,12 @@ test("current-mode revocation joins an actual LocalVoiceSeparator's active worke
     policy: () => policy,
     available,
     download: async () => {},
-    create: (models) => new LocalVoiceSeparator({ models, spawnWorker: () => worker }),
+    create: (models) =>
+      new LocalVoiceSeparator({
+        models,
+        model: "invented-worker-model",
+        spawnWorker: () => worker,
+      }),
   });
   try {
     expect(await source.settled()).toBe("ready");
@@ -283,6 +294,95 @@ test("disabled feature does not load models or masquerade as an explicit off cho
     expect(create).toHaveBeenCalledOnce();
   } finally {
     await source.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("committed review ABA revokes the voice source while older change listeners are held", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "omnesis-voice-commit-"));
+  const store = new ConfigStore({ filePath: join(directory, "config.json") });
+  const slow = deferred<void>(),
+    firstNotified = deferred<void>(),
+    secondNotified = deferred<void>();
+  const observedReview: boolean[] = [];
+  let stopSlow = () => {},
+    stopBinding = () => {},
+    stopProbe = () => {};
+  let source: ReturnType<typeof createVoiceSeparatorSource> | undefined;
+  let committed = 0,
+    heard = 0;
+  try {
+    await store.load();
+    const initial = await store.patch({
+      inference: { recordings: { speakers: "replay", restoreReviewRequired: false } },
+    });
+    expect(initial).toMatchObject({
+      ok: true,
+      config: { inference: { recordings: { speakers: "replay", restoreReviewRequired: false } } },
+    });
+    source = createVoiceSeparatorSource({
+      modelsDir: join(directory, "models"),
+      policy: () => ({
+        mode: store.get().inference?.recordings?.speakers ?? "off",
+        reviewRequired: store.get().inference?.recordings?.restoreReviewRequired === true,
+      }),
+    });
+    expect(await source.settled()).toBe("ready");
+    const before = source.revision(),
+      original = source.current();
+    expect(original).not.toBeNull();
+    const retired = vi.spyOn(original!, "dispose");
+    stopSlow = store.onChange(() => slow.promise);
+    // This is the same production binding used by runtime.ts, not a test callback copy.
+    stopBinding = bindVoiceSeparatorPolicy(store, source);
+    stopProbe = store.onChange((_before, after) => {
+      observedReview.push(after.inference?.recordings?.restoreReviewRequired === true);
+      heard += 1;
+      if (heard === 1) firstNotified.resolve();
+      if (heard === 2) secondNotified.resolve();
+    });
+    const enabled = await store.patch({
+      inference: { recordings: { restoreReviewRequired: true } },
+    });
+    if (enabled.ok && enabled.changedPaths.length > 0) committed += 1;
+    expect(enabled).toMatchObject({
+      ok: true,
+      config: { inference: { recordings: { restoreReviewRequired: true } } },
+    });
+    if (!enabled.ok) throw new Error("Review mutation refused");
+    expect(enabled.changedPaths).toContain("/inference/recordings/restoreReviewRequired");
+    // No source getter/manual refresh between the two commits: that could hide a broken binding.
+    const disabled = await store.patch({
+      inference: { recordings: { restoreReviewRequired: false } },
+    });
+    if (disabled.ok && disabled.changedPaths.length > 0) committed += 1;
+    expect(disabled).toMatchObject({
+      ok: true,
+      config: { inference: { recordings: { restoreReviewRequired: false } } },
+    });
+    if (!disabled.ok) throw new Error("Review mutation refused");
+    expect(disabled.changedPaths).toContain("/inference/recordings/restoreReviewRequired");
+    expect(heard).toBe(0);
+    expect(source.revision()).toBe(before + 2);
+    expect(await source.settled()).toBe("ready");
+    expect(source.current()).not.toBe(original);
+    expect(retired).toHaveBeenCalledOnce();
+    slow.resolve();
+    await firstNotified.promise;
+    await secondNotified.promise;
+    expect(observedReview).toEqual([true, false]);
+  } finally {
+    slow.resolve();
+    if (committed >= 1) await firstNotified.promise;
+    if (committed >= 2) await secondNotified.promise;
+    stopProbe();
+    stopBinding();
+    stopSlow();
+    try {
+      await source?.dispose();
+    } finally {
+      store.stop();
+    }
     await rm(directory, { recursive: true, force: true });
   }
 });

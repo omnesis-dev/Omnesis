@@ -127,6 +127,13 @@ export type ConfigChangeListener = (
   changedPaths: string[],
 ) => void | Promise<void>;
 
+/** See `ConfigStore.onCommit`. */
+export type ConfigCommitListener = (
+  before: OmnesisConfig,
+  after: OmnesisConfig,
+  changedPaths: string[],
+) => void;
+
 export interface ConfigStoreOptions {
   /** Absolute path to `omnesis.json`. */
   filePath: string;
@@ -185,6 +192,7 @@ export class ConfigStore {
   private writeChain: Promise<unknown> = Promise.resolve();
 
   private readonly listeners = new Set<ConfigChangeListener>();
+  private readonly commitListeners = new Set<ConfigCommitListener>();
 
   constructor(opts: ConfigStoreOptions) {
     this.filePath = opts.filePath;
@@ -264,6 +272,21 @@ export class ConfigStore {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
+    };
+  }
+
+  /**
+   * Called synchronously as each change takes effect: in the order the
+   * changes were made, before `get()` can return anything later and before
+   * any `onChange` listener runs. `onChange` listeners are awaited one after
+   * another, so one may hear of a change after a later one has taken effect;
+   * state that must follow every change, such as refusing work begun before a
+   * setting was switched off and on again, belongs here. Keep it short.
+   */
+  onCommit(listener: ConfigCommitListener): () => void {
+    this.commitListeners.add(listener);
+    return () => {
+      this.commitListeners.delete(listener);
     };
   }
 
@@ -386,9 +409,7 @@ export class ConfigStore {
     this.lastError = null;
     this.lastWrittenHash = hashContent(serialized);
     this.observedDiskHash = this.lastWrittenHash;
-    this.notify(before, after, changedPaths).catch((err) => {
-      log.warn(`Change listener threw: ${err instanceof Error ? err.message : String(err)}`);
-    });
+    this.published(before, after, changedPaths);
     return { ok: true, version: this.version, config: after, changedPaths };
   }
 
@@ -404,9 +425,7 @@ export class ConfigStore {
         const changed = diffConfigPaths(before, this.current);
         if (changed.length > 0) {
           this.advanceVersion();
-          this.notify(before, this.current, changed).catch((err) => {
-            log.warn(`Change listener threw: ${err instanceof Error ? err.message : String(err)}`);
-          });
+          this.published(before, this.current, changed);
         }
       }
       return;
@@ -521,10 +540,22 @@ export class ConfigStore {
       this.advanceVersion();
     }
     if (ctx.source === "watcher" && changedPaths.length > 0) {
-      this.notify(before, after, changedPaths).catch((err) => {
-        log.warn(`Change listener threw: ${err instanceof Error ? err.message : String(err)}`);
-      });
+      this.published(before, after, changedPaths);
     }
+  }
+
+  /** A change just took effect: tell the commit listeners now, the others in turn. */
+  private published(before: OmnesisConfig, after: OmnesisConfig, changedPaths: string[]): void {
+    for (const listener of this.commitListeners) {
+      try {
+        listener(before, after, changedPaths);
+      } catch (err) {
+        log.warn(`Commit listener threw: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    this.notify(before, after, changedPaths).catch((err) => {
+      log.warn(`Change listener threw: ${err instanceof Error ? err.message : String(err)}`);
+    });
   }
 
   private async notify(

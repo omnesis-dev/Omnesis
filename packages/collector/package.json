@@ -33,6 +33,7 @@
     "@omnesis/provider-maildir": "*",
     "@omnesis/provider-notion": "*",
     "@omnesis/provider-obsidian": "*",
+    "@omnesis/provider-omatel": "*",
     "@omnesis/provider-openclaw": "*",
     "@omnesis/provider-outlook": "*",
     "@omnesis/provider-paperless": "*",

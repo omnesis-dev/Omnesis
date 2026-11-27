@@ -9,7 +9,7 @@
  * (replay) transcriber echoes each chunk's bytes back as its transcript.
  */
 
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -26,9 +26,10 @@ import { TranscribeService } from "../../transcribe/index.js";
 import { dictationFeatureStatus } from "../../dictation/index.js";
 import { ReplayVoiceSeparator } from "../../recordings/voices/replay-voice-separator.js";
 import { backfillOnePerson, findOrCreatePerson } from "../../people.js";
+import { ConfigStore, type ConfigChangeListener } from "../../config-store.js";
 import { MAX_RECORDING_CHUNK_BYTES } from "./recordings.js";
 import type { OmnesisConfig } from "@omnesis/config";
-import type { ConfigStore } from "../../config-store.js";
+import type { VoiceSeparator } from "../../recordings/voices/voices.js";
 import type { RecordingTranscriptionService } from "../../recordings/index.js";
 import type Database from "better-sqlite3";
 
@@ -41,9 +42,15 @@ let priorExperimental: string | undefined;
 let recordings: RecordingTranscriptionService | undefined;
 /** The operator's `inference.recordings.keepAudioDays`; undefined leaves it unset. */
 let keepAudioDays: number | undefined;
+/** The operator's `inference.recordings.selfVoice`; undefined leaves it unset. */
+let selfVoice: "off" | "match" | undefined;
 
 const START = "2026-03-02T09:00:00.000Z";
 const voices = new ReplayVoiceSeparator();
+/** The separator the gateway is given. */
+let separator: VoiceSeparator;
+/** The gateway's config-change listeners, whether told at once or in turn. */
+let configListeners: ConfigChangeListener[];
 
 function mintToken(scopes: readonly Scope[]): string {
   const dev = createDevice(db, { name: `test-${randomUUID()}`, kind: "android" });
@@ -108,6 +115,32 @@ beforeEach(() => {
   ADMIN_TOKEN = mintToken([SCOPE_ADMIN, SCOPE_READ]);
   optedIn = undefined;
   keepAudioDays = undefined;
+  selfVoice = undefined;
+  separator = voices;
+  configListeners = [];
+  app = serve({
+    onChange: (listener: ConfigChangeListener) => {
+      configListeners.push(listener);
+      return () => {};
+    },
+    onCommit: (listener: ConfigChangeListener) => {
+      configListeners.push(listener);
+      return () => {};
+    },
+    get: () =>
+      ({
+        inference: {
+          recordings: {
+            ...(keepAudioDays === undefined ? {} : { keepAudioDays }),
+            ...(selfVoice === undefined ? {} : { selfVoice }),
+          },
+        },
+      }) as OmnesisConfig,
+  } as unknown as ConfigStore);
+});
+
+/** A gateway on the test database, reading its settings from `configStore`. */
+function serve(configStore: ConfigStore): ReturnType<typeof createServer> {
   const transcribeService = new TranscribeService({
     resolveAssignment: () => ({ role: "transcriber", kind: "replay" }),
     deps: {
@@ -116,7 +149,7 @@ beforeEach(() => {
       },
     },
   });
-  app = createServer(db, dbPath, {
+  return createServer(db, dbPath, {
     transcribeService,
     getDictationStatus: () =>
       dictationFeatureStatus({
@@ -129,15 +162,10 @@ beforeEach(() => {
     onRecordingService: (service) => {
       recordings = service;
     },
-    voiceSeparator: () => voices,
-    configStore: {
-      get: () =>
-        (keepAudioDays === undefined
-          ? {}
-          : { inference: { recordings: { keepAudioDays } } }) as OmnesisConfig,
-    } as unknown as ConfigStore,
+    voiceSeparator: () => separator,
+    configStore,
   });
-});
+}
 
 afterEach(async () => {
   recordings?.dispose();
@@ -439,6 +467,229 @@ describe("recordings routes", () => {
     ).toBe(403);
   });
 
+  test("the owner's voice is enrolled, recognised in a recording, undone and deleted", async () => {
+    const clip = (seconds: number, voice = "owner") => {
+      const form = new FormData();
+      const segments = Array.from({ length: Math.ceil(seconds / 8) }, (_, i) => ({
+        startMs: i * 8_000,
+        endMs: Math.min((i + 1) * 8_000, seconds * 1000),
+        text: "",
+        voice,
+      }));
+      form.set(
+        "audio",
+        new Blob([new TextEncoder().encode(JSON.stringify({ segments }))], { type: "audio/webm" }),
+        "voice.webm",
+      );
+      return form;
+    };
+    const codeOf = async (res: Response) => ((await res.json()) as { code: string }).code;
+
+    expect(await (await request("GET", "/recordings/self-voice")).json()).toEqual({
+      setting: "off",
+      ready: true,
+      minSpeechMs: 20_000,
+      profile: null,
+    });
+    const off = await request("PUT", "/recordings/self-voice", clip(24));
+    expect(off.status).toBe(409);
+    expect(await codeOf(off)).toBe("SELF_VOICE_OFF");
+
+    selfVoice = "match";
+    const short = await request("PUT", "/recordings/self-voice", clip(10));
+    expect(short.status).toBe(422);
+    expect(await codeOf(short)).toBe("SELF_VOICE_TOO_SHORT");
+    expect((await request("PUT", "/recordings/self-voice", new FormData())).status).toBe(400);
+    const enrolled = await request("PUT", "/recordings/self-voice", clip(24));
+    expect(enrolled.status).toBe(200);
+    expect(await enrolled.json()).toMatchObject({
+      setting: "match",
+      profile: { speechMs: 24_000, current: true },
+    });
+
+    const id = randomUUID();
+    await startRecording(id);
+    const script = JSON.stringify({
+      segments: [
+        { startMs: 0, endMs: 3_000, text: "Is the venue booked?", voice: "jamie" },
+        { startMs: 4_000, endMs: 6_000, text: "Booked for Friday.", voice: "owner" },
+      ],
+    });
+    await request("PUT", `/recordings/${id}/chunks/0`, chunkForm(0, script));
+    await request("POST", `/recordings/${id}/finish`, {
+      chunkCount: 1,
+      endedAt: "2026-03-02T09:01:00.000Z",
+    });
+    await vi.waitFor(async () => {
+      expect(await (await request("GET", `/recordings/${id}`)).json()).toMatchObject({
+        state: "done",
+      });
+    });
+    expect(documentContent(id)).toContain("[00:00:04] You: Booked for Friday.");
+    expect((await (await request("GET", `/recordings/${id}/speakers`)).json()).speakers).toEqual([
+      expect.objectContaining({ speaker: 1, isSelf: false, selfMatched: false }),
+      expect.objectContaining({ speaker: 2, isSelf: true, selfMatched: true }),
+    ]);
+
+    const cleared = await request("PUT", `/recordings/${id}/speakers/2`, { clear: true });
+    expect((await cleared.json()).speakers[1]).toMatchObject({ isSelf: false, selfMatched: false });
+    await vi.waitFor(() => {
+      expect(documentContent(id)).toContain("[00:00:04] Speaker 2: Booked for Friday.");
+    });
+
+    expect((await request("DELETE", "/recordings/self-voice")).status).toBe(204);
+    expect((await (await request("GET", "/recordings/self-voice")).json()).profile).toBeNull();
+    const readOnly = mintToken([SCOPE_READ]);
+    expect((await request("GET", "/recordings/self-voice", undefined, readOnly)).status).toBe(403);
+    expect((await request("PUT", "/recordings/self-voice", clip(24), readOnly)).status).toBe(403);
+  });
+
+  test("an enrolment still being read when the voice is deleted or switched off stores nothing", async () => {
+    const clip = () => {
+      const form = new FormData();
+      const segments = [0, 1, 2].map((i) => ({
+        startMs: i * 8_000,
+        endMs: (i + 1) * 8_000,
+        text: "",
+        voice: "owner",
+      }));
+      form.set(
+        "audio",
+        new Blob([new TextEncoder().encode(JSON.stringify({ segments }))], { type: "audio/webm" }),
+        "voice.webm",
+      );
+      return form;
+    };
+    const waiting: (() => void)[] = [];
+    separator = {
+      name: voices.name,
+      model: voices.model,
+      separate: async (audio) => {
+        await new Promise<void>((resolve) => waiting.push(resolve));
+        return voices.separate(audio);
+      },
+      group: (vectors, durations) => voices.group(vectors, durations),
+      dispose: async () => {},
+    };
+    const profile = async () =>
+      (await (await request("GET", "/recordings/self-voice")).json()).profile;
+    const refusal = async (res: Response) => [
+      res.status,
+      ((await res.json()) as { code: string }).code,
+    ];
+    selfVoice = "match";
+
+    const deleted = request("PUT", "/recordings/self-voice", clip());
+    await vi.waitFor(() => expect(waiting).toHaveLength(1));
+    expect((await request("DELETE", "/recordings/self-voice")).status).toBe(204);
+    waiting[0]!();
+    expect(await refusal(await deleted)).toEqual([409, "SELF_VOICE_SUPERSEDED"]);
+    expect(await profile()).toBeNull();
+
+    // Switched off and on again by the operator while the clip is read.
+    const switched = request("PUT", "/recordings/self-voice", clip());
+    await vi.waitFor(() => expect(waiting).toHaveLength(2));
+    const change = async (to: "off" | "match") => {
+      const before = { inference: { recordings: { selfVoice } } } as OmnesisConfig;
+      selfVoice = to;
+      const after = { inference: { recordings: { selfVoice } } } as OmnesisConfig;
+      for (const listener of configListeners) await listener(before, after, []);
+    };
+    await change("off");
+    await change("match");
+    waiting[1]!();
+    expect(await refusal(await switched)).toEqual([409, "SELF_VOICE_SUPERSEDED"]);
+    expect(await profile()).toBeNull();
+
+    // Enrolling after both works.
+    const enrolled = request("PUT", "/recordings/self-voice", clip());
+    await vi.waitFor(() => expect(waiting).toHaveLength(3));
+    waiting[2]!();
+    expect((await enrolled).status).toBe(200);
+    expect(await profile()).toMatchObject({ speechMs: 24_000 });
+  });
+
+  test("switched off and on again before the change is heard, an enrolment under way stores nothing", async () => {
+    // The real config store, already matching, with a listener ahead of the
+    // gateway's that is slow to finish: every change waits on it in turn.
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-test-"));
+    const filePath = join(dir, "omnesis.json");
+    writeFileSync(filePath, JSON.stringify({ inference: { recordings: { selfVoice: "match" } } }));
+    const store = new ConfigStore({ filePath, watchDebounceMs: 60_000 });
+    try {
+      await store.load();
+      let release!: () => void;
+      const slow = new Promise<void>((resolve) => (release = resolve));
+      store.onChange(() => slow);
+      recordings?.dispose();
+      await recordings?.idle();
+      app = serve(store);
+      let heard = 0;
+      store.onChange(() => {
+        heard++;
+      });
+      const waiting: (() => void)[] = [];
+      separator = {
+        name: voices.name,
+        model: voices.model,
+        separate: async (audio) => {
+          await new Promise<void>((resolve) => waiting.push(resolve));
+          return voices.separate(audio);
+        },
+        group: (vectors, durations) => voices.group(vectors, durations),
+        dispose: async () => {},
+      };
+      const clip = () => {
+        const segments = [0, 1, 2].map((i) => ({
+          startMs: i * 8_000,
+          endMs: (i + 1) * 8_000,
+          text: "",
+          voice: "owner",
+        }));
+        const form = new FormData();
+        form.set(
+          "audio",
+          new Blob([new TextEncoder().encode(JSON.stringify({ segments }))], {
+            type: "audio/webm",
+          }),
+          "voice.webm",
+        );
+        return form;
+      };
+      const profile = async () =>
+        (await (await request("GET", "/recordings/self-voice")).json()).profile;
+
+      const enrolment = request("PUT", "/recordings/self-voice", clip());
+      await vi.waitFor(() => expect(waiting).toHaveLength(1));
+      expect((await store.patch({ inference: { recordings: { selfVoice: "off" } } })).ok).toBe(
+        true,
+      );
+      expect((await store.patch({ inference: { recordings: { selfVoice: "match" } } })).ok).toBe(
+        true,
+      );
+      // Every listener hears both changes only now, with the setting on again.
+      release();
+      await vi.waitFor(() => expect(heard).toBe(2));
+      waiting[0]!();
+      const res = await enrolment;
+      expect([res.status, ((await res.json()) as { code?: string }).code]).toEqual([
+        409,
+        "SELF_VOICE_SUPERSEDED",
+      ]);
+      expect(await profile()).toBeNull();
+
+      // Enrolling afresh works.
+      const fresh = request("PUT", "/recordings/self-voice", clip());
+      await vi.waitFor(() => expect(waiting).toHaveLength(2));
+      waiting[1]!();
+      expect((await fresh).status).toBe(200);
+      expect(await profile()).toMatchObject({ speechMs: 24_000 });
+    } finally {
+      store.stop();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("a session's chunks are listed, and audio kept by the operator is served as audio only", async () => {
     keepAudioDays = 3;
     const id = randomUUID();
@@ -709,6 +960,7 @@ describe("recordings routes", () => {
     delete process.env.OMNESIS_EXPERIMENTAL;
     expect((await startRecording()).status).toBe(404);
     expect((await request("GET", `/recordings/${randomUUID()}`)).status).toBe(404);
+    expect((await request("GET", "/recordings/self-voice")).status).toBe(404);
     const stable = await (await app.request("/health")).json();
     expect(stable.capabilities.recordings).toBeUndefined();
   });

@@ -1953,6 +1953,7 @@
         "packages/providers/apple/src/call-log.test.ts",
         "packages/providers/apple/src/imessage-normalizer.test.ts",
         "packages/providers/google/src/gmail.test.ts",
+        "packages/providers/omatel/src/calls.test.ts",
         "packages/providers/whatsapp/src/normalizer.test.ts",
         "packages/providers/whatsapp/src/provider.e2e.test.ts",
         "packages/source-sdk/src/provider.ts",

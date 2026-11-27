@@ -13,12 +13,15 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 const api = vi.hoisted(() => ({
   addRecordingParticipant: vi.fn(),
   deleteRecording: vi.fn(),
+  deleteSelfVoice: vi.fn(),
   dismissRecordingSuggestion: vi.fn(),
+  enrollSelfVoice: vi.fn(),
   getPeople: vi.fn(),
   getRecordingChunkAudio: vi.fn(),
   getRecordingChunks: vi.fn(),
   getRecordingSpeakers: vi.fn(),
   getRecordingSuggestions: vi.fn(),
+  getSelfVoice: vi.fn(),
   listRecordings: vi.fn(),
   removeRecordingParticipant: vi.fn(),
   setRecordingConversationTitle: vi.fn(),
@@ -114,6 +117,7 @@ describe("Recordings page", () => {
     api.getRecordingChunks.mockResolvedValue({ recording: recording(), chunks: CHUNKS });
     api.getRecordingSpeakers.mockResolvedValue({ speakers: [speaker(1), speaker(2)] });
     api.getRecordingSuggestions.mockResolvedValue({ suggestions: [] });
+    api.getSelfVoice.mockResolvedValue({ setting: "off", ready: true, minSpeechMs: 20_000, profile: null });
   });
 
   afterEach(() => {
@@ -235,6 +239,98 @@ describe("Recordings page", () => {
     // A named speaker can be cleared; being them already, "This is me" is gone.
     expect(within(speakerRow(1), "Clear")).toBeDefined();
     expect(within(speakerRow(1), "This is me")).toBeUndefined();
+  });
+
+  test("a speaker recognised by the owner's voice says so and can be cleared", async () => {
+    api.getRecordingSpeakers.mockResolvedValue({
+      speakers: [speaker(1), speaker(2, { isSelf: true, selfMatched: true })],
+    });
+    api.setRecordingSpeaker.mockResolvedValue({ speakers: [speaker(1), speaker(2)] });
+    await mount({ recordingId: ID });
+    expect(speakerRow(2).querySelector(".recording-speaker-who")?.textContent).toBe(
+      "You · recognised by your voice",
+    );
+    await click(within(speakerRow(2), "Clear"));
+    expect(api.setRecordingSpeaker).toHaveBeenCalledWith(ID, 2, { clear: true });
+    expect(speakerRow(2).querySelector(".recording-speaker-who")?.textContent).toBe("Not named yet");
+  });
+
+  describe("your voice", () => {
+    const enrolled = {
+      setting: "match",
+      ready: true,
+      minSpeechMs: 20_000,
+      profile: { enrolledAt: "2026-03-01T10:00:00.000Z", speechMs: 34_000, current: true },
+    };
+    const panel = () => host.querySelector(".recording-self-voice") as HTMLElement | null;
+
+    beforeEach(() => {
+      api.listRecordings.mockResolvedValue({ recordings: [recording()] });
+    });
+
+    test("is not offered while the operator has not turned it on", async () => {
+      await mount();
+      expect(panel()).toBeNull();
+      api.getSelfVoice.mockRejectedValue(Object.assign(new Error("404"), { status: 404 }));
+      await mount();
+      expect(panel()).toBeNull();
+    });
+
+    test("offers a passage to read and a clip to send, and enrols what is sent", async () => {
+      api.getSelfVoice.mockResolvedValue({ ...enrolled, profile: null });
+      api.enrollSelfVoice.mockResolvedValue(enrolled);
+      await mount();
+      expect(panel()!.textContent).toContain("never the audio");
+      expect(panel()!.textContent).toContain("at least 20 seconds");
+      expect(panel()!.querySelector(".recording-self-voice-passage")?.textContent).toContain("market");
+      const input = panel()!.querySelector("input[type=file]") as HTMLInputElement;
+      const clip = new Blob(["clip"], { type: "audio/mp4" });
+      Object.defineProperty(input, "files", { value: [Object.assign(clip, { name: "me.m4a" })] });
+      await act(async () => {
+        input.dispatchEvent(new window.Event("change", { bubbles: true }));
+      });
+      await settle();
+      expect(api.enrollSelfVoice).toHaveBeenCalledWith(clip, "me.m4a");
+      expect(panel()!.textContent).toContain("34 s of speech");
+      expect(within(panel()!, "Delete my voice")).toBeDefined();
+    });
+
+    test("a refused clip says why", async () => {
+      api.getSelfVoice.mockResolvedValue({ ...enrolled, profile: null });
+      api.enrollSelfVoice.mockRejectedValue(
+        Object.assign(new Error("422"), {
+          status: 422,
+          code: "SELF_VOICE_TOO_SHORT",
+          serverMessage: "The recording holds 9 seconds of speech; read aloud for at least 20.",
+        }),
+      );
+      await mount();
+      const input = panel()!.querySelector("input[type=file]") as HTMLInputElement;
+      Object.defineProperty(input, "files", { value: [new Blob(["x"])] });
+      await act(async () => {
+        input.dispatchEvent(new window.Event("change", { bubbles: true }));
+      });
+      await settle();
+      expect(panel()!.querySelector("[role=alert]")?.textContent).toContain("holds 9 seconds");
+    });
+
+    test("an enrolled voice can be deleted, after asking", async () => {
+      api.getSelfVoice.mockResolvedValue(enrolled);
+      api.deleteSelfVoice.mockResolvedValue(null);
+      await mount();
+      await click(within(panel()!, "Delete my voice"));
+      await click(button("Delete"));
+      expect(api.deleteSelfVoice).toHaveBeenCalled();
+      expect(panel()!.textContent).toContain("Enrol your voice");
+    });
+
+    test("a voice from another model asks to be enrolled again", async () => {
+      api.getSelfVoice.mockResolvedValue({ ...enrolled, profile: { ...enrolled.profile, current: false } });
+      await mount();
+      expect(panel()!.textContent).toContain("Enrol again: your voice was enrolled with another voice model");
+      await click(within(panel()!, "Enrol again"));
+      expect(panel()!.querySelector(".recording-self-voice-passage")).not.toBeNull();
+    });
   });
 
   test("the owner gives a speaker a plain name", async () => {

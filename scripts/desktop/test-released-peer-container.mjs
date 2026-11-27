@@ -22,11 +22,13 @@ export const releasedCollector = Object.freeze({
     platform: "linux/arm64",
     manifest: "sha256:b5efb78100d825058207431d8684914bd877ef16c876be0dc3817a781a9e8cca",
     config: "sha256:6acb07e9d1a09f52d75bd8864e625670ea1d6f3a7c0add0cf2ff683a191a9f55",
+    manifestSize: 2578,
   }),
   x64: Object.freeze({
     platform: "linux/amd64",
     manifest: "sha256:b3fda717200c3260721bee2489bc1f819aa973e11ec89211a029194430a8baef",
     config: "sha256:042910b8f219872f78b4b0ff0e3c280a1ff61e4ef3f82757fef24a9e9bf58b32",
+    manifestSize: 2578,
   }),
 });
 export const releasedGateway = Object.freeze({
@@ -37,11 +39,13 @@ export const releasedGateway = Object.freeze({
     platform: "linux/arm64",
     manifest: "sha256:045ca61f4c428e5824a46313c46e0b10d14f5c076523de548310b3708e942a62",
     config: "sha256:266cc9b17a14a03e0036b5ae877ed0516111ad116266cbee134a7044f424a899",
+    manifestSize: 2960,
   }),
   x64: Object.freeze({
     platform: "linux/amd64",
     manifest: "sha256:ab635b6ccf6d76ccc4cf10894ea5150caa2b5dc979a869ab40dc990fc43b65cd",
     config: "sha256:133cef6423cc14b8094b89f7dffac20ea549c5b690ae78dd50269596ab84d194",
+    manifestSize: 2960,
   }),
 });
 export function releasedDirection(value = "released-collector") {
@@ -69,7 +73,46 @@ function selected(architecture, direction = "released-collector") {
   const pin = release[architecture];
   const imageRepository =
     direction === "released-gateway" ? "ghcr.io/omnesis-dev/omnesis-gateway" : repository;
-  return { ...pin, reference: `${imageRepository}@${pin.manifest}` };
+  return { ...pin, index: release.index, reference: `${imageRepository}@${pin.manifest}` };
+}
+// The pinned platform manifests are OCI image manifests, not indexes or attestations.
+const manifestMediaType = "application/vnd.oci.image.manifest.v1+json";
+function manifestDescriptorMatches(value, pin, requirePlatform = false) {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    value.digest !== pin.manifest ||
+    value.mediaType !== manifestMediaType ||
+    value.size !== pin.manifestSize
+  )
+    return false;
+  if (value.platform === undefined) return !requirePlatform;
+  const platform = value.platform;
+  return (
+    platform !== null &&
+    typeof platform === "object" &&
+    !Array.isArray(platform) &&
+    platform.os === "linux" &&
+    platform.architecture === pin.platform.split("/")[1] &&
+    (platform.variant === undefined ||
+      platform.variant === "" ||
+      (platform.architecture === "arm64" && platform.variant === "v8"))
+  );
+}
+function identityKind(value, pin) {
+  return value === pin.config
+    ? "config"
+    : value === pin.manifest
+      ? "manifest"
+      : value === pin.index
+        ? "index"
+        : "other";
+}
+function fixedChecks(checks) {
+  return Object.entries(checks)
+    .map(([name, valid]) => `${name}=${valid}`)
+    .join(",");
 }
 export function verifyReleasedCollectorImage(
   value,
@@ -80,33 +123,54 @@ export function verifyReleasedCollectorImage(
   if (!Array.isArray(value) || value.length !== 1) throw Error("Released image inspection refused");
   const image = value[0],
     config = image?.Config;
-  if (
-    image?.Id !== pin.config ||
-    image.Os !== "linux" ||
-    image.Architecture !== pin.platform.split("/")[1] ||
-    !Array.isArray(image.RepoDigests) ||
-    !image.RepoDigests.includes(pin.reference) ||
-    config?.WorkingDir !== "/app" ||
-    config.User !== "10001:10001" ||
-    JSON.stringify(config.Cmd) !==
+  const kind = identityKind(image?.Id, pin);
+  const descriptorAbsent = image?.Descriptor === undefined || image?.Descriptor === null;
+  const descriptorMatches = manifestDescriptorMatches(image?.Descriptor, pin);
+  const checks = {
+    identity:
+      (kind === "config" && (descriptorAbsent || descriptorMatches)) ||
+      (kind === "manifest" && descriptorMatches),
+    platform: image?.Os === "linux" && image?.Architecture === pin.platform.split("/")[1],
+    repository: Array.isArray(image?.RepoDigests) && image.RepoDigests.includes(pin.reference),
+    workingDirectory: config?.WorkingDir === "/app",
+    user: config?.User === "10001:10001",
+    command:
+      JSON.stringify(config?.Cmd) ===
       JSON.stringify([
         "node",
         direction === "released-gateway"
           ? "packages/gateway/dist/index.js"
           : "packages/collector/dist/main.js",
-      ]) ||
-    (direction === "released-gateway"
-      ? JSON.stringify(config.Entrypoint) !==
-        JSON.stringify(["/app/scripts/seeded-state/entrypoint.sh"])
-      : Object.hasOwn(config, "Entrypoint") &&
-        config.Entrypoint !== null &&
-        (!Array.isArray(config.Entrypoint) || config.Entrypoint.length !== 0)) ||
-    config.Labels?.["org.opencontainers.image.revision"] !== releasedCollector.revision ||
-    config.Labels?.["org.opencontainers.image.version"] !== releasedCollector.version ||
-    config.Labels?.["org.opencontainers.image.source"] !== "https://github.com/omnesis-dev/Omnesis"
-  )
-    throw Error("Released image identity or metadata differs");
-  return pin;
+      ]),
+    entrypoint:
+      direction === "released-gateway"
+        ? JSON.stringify(config?.Entrypoint) ===
+          JSON.stringify(["/app/scripts/seeded-state/entrypoint.sh"])
+        : config !== null &&
+          typeof config === "object" &&
+          (!Object.hasOwn(config, "Entrypoint") ||
+            config.Entrypoint === null ||
+            (Array.isArray(config.Entrypoint) && config.Entrypoint.length === 0)),
+    revision: config?.Labels?.["org.opencontainers.image.revision"] === releasedCollector.revision,
+    version: config?.Labels?.["org.opencontainers.image.version"] === releasedCollector.version,
+    source:
+      config?.Labels?.["org.opencontainers.image.source"] ===
+      "https://github.com/omnesis-dev/Omnesis",
+  };
+  if (!Object.values(checks).every(Boolean)) {
+    // Only closed classifications/booleans, never Docker config, env or arbitrary values.
+    const descriptor = descriptorAbsent
+      ? "absent"
+      : descriptorMatches
+        ? "matched"
+        : "contradictory";
+    throw Error(
+      `Released image identity or metadata differs; identity[${kind}],descriptor[${descriptor}]; checks[${fixedChecks(checks)}]`,
+    );
+  }
+  // The pinned manifest commits its config; retain the daemon's exact verified local
+  // representation for every later exact-created-container inspection and cleanup.
+  return { ...pin, localImageId: image.Id, localImageKind: kind };
 }
 
 /** Fixed copied-current entry; /app remains the genuine released image closure. */
@@ -311,15 +375,23 @@ async function command(executable, args, { signal, env, cwd, milliseconds = 3000
 }
 
 function ownedContainer(value, id, nonce, pin) {
-  if (
-    !Array.isArray(value) ||
-    value.length !== 1 ||
-    value[0]?.Id !== id ||
-    value[0]?.Image !== pin.config ||
-    value[0]?.Config?.Labels?.[label] !== nonce ||
-    value[0]?.Name !== `/omnesis-released-peer-${nonce}`
-  )
-    throw Error("Released container ownership unconfirmed");
+  const container = Array.isArray(value) && value.length === 1 ? value[0] : undefined;
+  const descriptorAbsent =
+    container?.ImageManifestDescriptor === undefined || container?.ImageManifestDescriptor === null;
+  const descriptorMatches =
+    pin && manifestDescriptorMatches(container?.ImageManifestDescriptor, pin, true);
+  const checks = {
+    id: container?.Id === id,
+    image: pin?.localImageId !== undefined && container?.Image === pin.localImageId,
+    descriptor:
+      pin?.localImageKind === "manifest"
+        ? descriptorMatches === true
+        : descriptorAbsent || descriptorMatches === true,
+    nonce: container?.Config?.Labels?.[label] === nonce,
+    name: container?.Name === `/omnesis-released-peer-${nonce}`,
+  };
+  if (!Object.values(checks).every(Boolean))
+    throw Error(`Released container ownership unconfirmed; checks[${fixedChecks(checks)}]`);
   const state = value[0].State;
   if (
     !state ||
@@ -406,6 +478,7 @@ export async function runReleasedPeerContainer({
   verifyControlMounts(root, modules, scratch, result, marker, files);
   const sourceFingerprint = treeFingerprint("HEAD").fingerprint;
   let id,
+    verifiedImage,
     verified = false,
     createAttempted = false,
     failure,
@@ -440,7 +513,12 @@ export async function runReleasedPeerContainer({
       onClosed: capture(args[0]),
     });
   const inspect = async () =>
-    ownedContainer(JSON.parse(await execute(["container", "inspect", id], false)), id, nonce, pin);
+    ownedContainer(
+      JSON.parse(await execute(["container", "inspect", id], false)),
+      id,
+      nonce,
+      verifiedImage,
+    );
   try {
     const daemon = await execute(["info", "--format", "{{.OSType}}/{{.Architecture}}"]);
     const native =
@@ -449,7 +527,7 @@ export async function runReleasedPeerContainer({
       throw Error("Released collector requires a matching native Linux Docker daemon");
     process.stdout.write(`Preparing the digest-pinned ${direction} image.\n`);
     await execute(["pull", "--platform", pin.platform, pin.reference], true, 900000);
-    verifyReleasedCollectorImage(
+    verifiedImage = verifyReleasedCollectorImage(
       JSON.parse(await execute(["image", "inspect", pin.reference])),
       architecture,
       direction,
@@ -604,6 +682,7 @@ export async function runReleasedPeerContainer({
         format: 1,
         reference: pin.reference,
         config: pin.config,
+        localImageKind: verifiedImage?.localImageKind ?? "unverified",
         index: direction === "released-gateway" ? releasedGateway.index : releasedCollector.index,
         direction,
         revisionLabel: releasedCollector.revision,

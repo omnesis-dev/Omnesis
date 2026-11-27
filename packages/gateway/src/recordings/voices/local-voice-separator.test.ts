@@ -37,7 +37,11 @@ const models = { segmentation: "/example/segmentation.onnx", embedding: "/exampl
 test("disposing STARTING worker rejects startup and joins physical closure; late ready cannot resurrect it", async () => {
   const worker = new Worker();
   const spawn = vi.fn(() => worker);
-  const local = new LocalVoiceSeparator({ models, spawnWorker: spawn });
+  const local = new LocalVoiceSeparator({
+    model: "invented-scripted-model",
+    models,
+    spawnWorker: spawn,
+  });
   const call = local.group([new Float32Array([1, 0])], [1]);
   const rejected = expect(call).rejects.toThrow("disposed");
   await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce());
@@ -61,7 +65,11 @@ test("disposing STARTING worker rejects startup and joins physical closure; late
 
 test("active native request is cancelled but separator disposal remains pending until actual join", async () => {
   const worker = new Worker();
-  const local = new LocalVoiceSeparator({ models, spawnWorker: () => worker });
+  const local = new LocalVoiceSeparator({
+    model: "invented-scripted-model",
+    models,
+    spawnWorker: () => worker,
+  });
   const call = local.group([new Float32Array([1, 0])], [1]);
   const rejected = expect(call).rejects.toThrow("disposed");
   await vi.waitFor(() => expect(worker.message).toBeDefined());
@@ -82,7 +90,12 @@ test("request timeout retains old process until joined before admitting a replac
   const first = new Worker(),
     second = new Worker();
   const spawn = vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second);
-  const local = new LocalVoiceSeparator({ models, spawnWorker: spawn, requestTimeoutMs: 10 });
+  const local = new LocalVoiceSeparator({
+    model: "invented-scripted-model",
+    models,
+    spawnWorker: spawn,
+    requestTimeoutMs: 10,
+  });
   const call = local.group([new Float32Array([1, 0])], [1]);
   const rejected = expect(call).rejects.toThrow("timed out");
   await vi.waitFor(() => expect(first.message).toBeDefined());
@@ -106,7 +119,11 @@ test("early exit during startup rejects without publishing a worker and later di
     worker.exit = handler;
     handler({ code: 1, signal: null });
   };
-  const local = new LocalVoiceSeparator({ models, spawnWorker: () => worker });
+  const local = new LocalVoiceSeparator({
+    model: "invented-scripted-model",
+    models,
+    spawnWorker: () => worker,
+  });
   const failed = expect(local.group([new Float32Array([1, 0])], [1])).rejects.toThrow(
     "failed to start",
   );
@@ -127,7 +144,11 @@ test("uncertain owned cleanup stays refused and cannot admit another worker", as
     throw new Error("Owned cleanup unconfirmed");
   });
   const spawn = vi.fn(() => worker);
-  const local = new LocalVoiceSeparator({ models, spawnWorker: spawn });
+  const local = new LocalVoiceSeparator({
+    model: "invented-scripted-model",
+    models,
+    spawnWorker: spawn,
+  });
   const call = local.group([new Float32Array([1, 0])], [1]);
   const rejected = expect(call).rejects.toThrow("disposed");
   await vi.waitFor(() => expect(worker.message).toBeDefined());

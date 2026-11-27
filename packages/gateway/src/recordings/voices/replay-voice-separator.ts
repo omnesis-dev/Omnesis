@@ -15,6 +15,7 @@ const DIM = 32;
 
 export class ReplayVoiceSeparator implements VoiceSeparator {
   readonly name = "replay";
+  readonly model = "replay";
 
   async separate(audio: Uint8Array): Promise<SeparatedVoices> {
     const text = new TextDecoder().decode(audio).trim();

@@ -18,6 +18,7 @@ import { createLogger } from "@omnesis/core";
 import { startDownload } from "../../models/downloader.js";
 import { LocalVoiceSeparator, type VoiceModelPaths } from "./local-voice-separator.js";
 import { ReplayVoiceSeparator } from "./replay-voice-separator.js";
+import type { ConfigStore } from "../../config-store.js";
 import type { VoiceSeparator } from "./voices.js";
 
 const log = createLogger("gateway:recordings:voices");
@@ -46,6 +47,9 @@ export const EMBEDDING_MODEL = {
   sizeBytes: 39_593_761,
   sha256: "1a331345f04805badbb495c775a6ddffcdd1a732567d5ec8b3d5749e3c7a5e4b",
 };
+
+/** The embedding model's identity, recorded with the owner's voice profile. */
+export const EMBEDDING_MODEL_ID = `3dspeaker-eres2net-base@${EMBEDDING_MODEL.sha256.slice(0, 12)}`;
 
 /** Whether the sherpa-onnx native binding loads on this machine. */
 export async function sherpaAvailable(): Promise<boolean> {
@@ -79,6 +83,14 @@ export interface VoiceSeparatorSource {
   settled(): Promise<VoiceSeparatorReadiness>;
   dispose(): Promise<void>;
 }
+/** Observe every committed policy before an asynchronous listener can miss an off/on transition. */
+export function bindVoiceSeparatorPolicy(
+  configStore: Pick<ConfigStore, "onCommit">,
+  source: Pick<VoiceSeparatorSource, "refresh">,
+): () => void {
+  return configStore.onCommit(() => source.refresh());
+}
+
 export interface VoiceSeparatorSourceOptions {
   mode?: SpeakerSeparationMode;
   policy?: () => VoiceSeparatorPolicy;
@@ -160,7 +172,10 @@ export function createVoiceSeparatorSource(
             if (!current()) return;
           }
           if (!current()) return;
-          created = await (opts.create ?? ((models) => new LocalVoiceSeparator({ models })))({
+          created = await (
+            opts.create ??
+            ((models) => new LocalVoiceSeparator({ models, model: EMBEDDING_MODEL_ID }))
+          )({
             segmentation: join(opts.modelsDir, SEGMENTATION_MODEL.filename),
             embedding: join(opts.modelsDir, EMBEDDING_MODEL.filename),
           });

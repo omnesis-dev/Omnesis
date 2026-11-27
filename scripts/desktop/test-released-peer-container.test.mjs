@@ -93,6 +93,11 @@ else if(args[0]==='create'){
    writeFileSync(join(state.results,'docker-config','config.json'),JSON.stringify({currentContext:'foreign-context'}));
  }
  state.container={Id:id,Name:'/omnesis-released-peer-'+nonce,Image:state.image[0].Id,Config:{Labels:{'dev.omnesis.test.released-peer':nonce}},State:{Status:'created',Running:false,StartedAt:'0001-01-01T00:00:00Z',ExitCode:0,OOMKilled:false}};
+ if(state.image[0].Descriptor)state.container.ImageManifestDescriptor={...state.image[0].Descriptor,platform:{os:'linux',architecture:state.image[0].Architecture}};
+ if(state.containerFault==='image-switch')state.container.Image=state.alternateImageId;
+ if(state.containerFault==='descriptor-missing')delete state.container.ImageManifestDescriptor;
+ if(state.containerFault==='descriptor-digest')state.container.ImageManifestDescriptor={...state.container.ImageManifestDescriptor,digest:'sha256:'+'e'.repeat(64)};
+ if(state.containerFault==='descriptor-platform')state.container.ImageManifestDescriptor={...state.container.ImageManifestDescriptor,platform:{os:'windows',architecture:state.image[0].Architecture}};
  if(state.mode==='foreign'){state.container.Config.Labels['dev.omnesis.test.released-peer']='foreign'}
  if(state.mode==='ambiguous'){code=1}else{output=id}
 }else if(args[0]==='container'){output=JSON.stringify([state.container])}
@@ -111,6 +116,7 @@ else if(args[0]==='start'){
     receipt.direction='released-collector';writeFileSync(file,JSON.stringify(receipt),{mode:0o600});
   }
  }
+ if(state.containerFault==='late-descriptor')state.container.ImageManifestDescriptor={...state.container.ImageManifestDescriptor,digest:'sha256:'+'e'.repeat(64)};
 }else if(args[0]==='stop'){
  if(state.mode==='stop-failure'||state.mode==='compound-failure'){code=1}else{state.container.State.Running=false;state.container.State.Status='exited'}
 }else if(args[0]==='wait'){output=String(state.mode==='mismatched-exit'?17:state.container.State.ExitCode)}
@@ -171,6 +177,250 @@ async function onStarted(fake) {
     clearTimeout(timer);
   }
 }
+
+function platformDescriptor(arch, direction, withPlatform = false) {
+  const pin = (direction === "released-gateway" ? releasedGateway : releasedCollector)[arch];
+  return {
+    mediaType: "application/vnd.oci.image.manifest.v1+json",
+    digest: pin.manifest,
+    size: pin.manifestSize,
+    ...(withPlatform
+      ? { platform: { os: "linux", architecture: arch === "arm64" ? "arm64" : "amd64" } }
+      : {}),
+  };
+}
+function inspectedBackend(arch, direction, backend) {
+  const value = image(arch, direction);
+  if (backend === "containerd") {
+    value[0].Id = platformDescriptor(arch, direction).digest;
+    value[0].Descriptor = platformDescriptor(arch, direction);
+  }
+  return value;
+}
+async function backendFixture(direction, backend, containerFault) {
+  const fixture = await fake("success", direction);
+  const state = await fixture.read();
+  state.image = inspectedBackend(process.arch, direction, backend);
+  state.containerFault = containerFault;
+  const pin = (direction === "released-gateway" ? releasedGateway : releasedCollector)[
+    process.arch
+  ];
+  state.alternateImageId = backend === "containerd" ? pin.config : pin.manifest;
+  await writeFile(fixture.state, JSON.stringify(state), { mode: 0o600 });
+  return fixture;
+}
+
+const backendCases = ["released-collector", "released-gateway"].flatMap((direction) =>
+  ["arm64", "x64"].flatMap((arch) =>
+    ["classic", "containerd"].map((backend) => [direction, arch, backend]),
+  ),
+);
+describe("exact released identity across Docker image stores", () => {
+  it.each(backendCases)("keeps native pins for %s/%s/%s", (direction, arch, backend) => {
+    const value = inspectedBackend(arch, direction, backend);
+    const verified = verifyReleasedCollectorImage(value, arch, direction);
+    const pin = (direction === "released-gateway" ? releasedGateway : releasedCollector)[arch];
+    expect(verified.config).toBe(pin.config);
+    expect(verified.manifest).toBe(pin.manifest);
+    expect(verified.localImageId).toBe(backend === "classic" ? pin.config : pin.manifest);
+    expect(verified.localImageKind).toBe(backend === "classic" ? "config" : "manifest");
+    // A classic daemon may supply the same correct optional manifest descriptor.
+    value[0].Descriptor = platformDescriptor(arch, direction, true);
+    expect(verifyReleasedCollectorImage(value, arch, direction).localImageId).toBe(
+      verified.localImageId,
+    );
+    if (arch === "arm64") {
+      value[0].Descriptor.platform.variant = "v8";
+      expect(verifyReleasedCollectorImage(value, arch, direction).localImageId).toBe(
+        verified.localImageId,
+      );
+    }
+  });
+
+  it.each(backendCases)(
+    "rejects every contradictory descriptor for %s/%s/%s",
+    (direction, arch, backend) => {
+      const mutations = [
+        (descriptor) => {
+          descriptor.digest = "sha256:" + "f".repeat(64);
+        },
+        (descriptor) => {
+          descriptor.size += 1;
+        },
+        (descriptor) => {
+          descriptor.mediaType = "application/vnd.oci.image.index.v1+json";
+        },
+        (descriptor) => {
+          descriptor.mediaType = "application/vnd.docker.distribution.manifest.v2+json";
+        },
+        (descriptor) => {
+          descriptor.platform.os = "windows";
+        },
+        (descriptor) => {
+          descriptor.platform.architecture = arch === "arm64" ? "amd64" : "arm64";
+        },
+        (descriptor) => {
+          descriptor.platform.variant = "unreviewed-variant";
+        },
+      ];
+      for (const mutate of mutations) {
+        const value = inspectedBackend(arch, direction, backend);
+        value[0].Descriptor = platformDescriptor(arch, direction, true);
+        mutate(value[0].Descriptor);
+        expect(() => verifyReleasedCollectorImage(value, arch, direction)).toThrow(
+          "descriptor[contradictory]",
+        );
+      }
+      for (const descriptor of ["private arbitrary value", [], 42]) {
+        const value = inspectedBackend(arch, direction, backend);
+        value[0].Descriptor = descriptor;
+        expect(() => verifyReleasedCollectorImage(value, arch, direction)).toThrow();
+      }
+    },
+  );
+
+  it.each(backendCases)("preserves metadata refusals for %s/%s/%s", (direction, arch, backend) => {
+    for (const mutate of [
+      (value) => {
+        value[0].RepoDigests = ["mutable:0.8.1"];
+      },
+      (value) => {
+        value[0].Os = "windows";
+      },
+      (value) => {
+        value[0].Architecture = arch === "arm64" ? "amd64" : "arm64";
+      },
+      (value) => {
+        value[0].Config.WorkingDir = "/foreign";
+      },
+      (value) => {
+        value[0].Config.User = "0:0";
+      },
+      (value) => {
+        value[0].Config.Cmd = ["installer"];
+      },
+      (value) => {
+        value[0].Config.Entrypoint = ["foreign-entrypoint"];
+      },
+      (value) => {
+        value[0].Config.Labels["org.opencontainers.image.revision"] = "foreign";
+      },
+      (value) => {
+        value[0].Config.Labels["org.opencontainers.image.version"] = "9.9.9";
+      },
+      (value) => {
+        value[0].Config.Labels["org.opencontainers.image.source"] = "https://example.org/foreign";
+      },
+    ]) {
+      const value = inspectedBackend(arch, direction, backend);
+      mutate(value);
+      expect(() => verifyReleasedCollectorImage(value, arch, direction)).toThrow(
+        "Released image identity or metadata differs",
+      );
+    }
+  });
+
+  it("refuses missing manifest proof and index IDs without dumping unknown fields", () => {
+    for (const direction of ["released-collector", "released-gateway"])
+      for (const arch of ["arm64", "x64"]) {
+        const pin = direction === "released-gateway" ? releasedGateway : releasedCollector;
+        for (const descriptor of [undefined, null]) {
+          const value = inspectedBackend(arch, direction, "containerd");
+          value[0].Descriptor = descriptor;
+          expect(() => verifyReleasedCollectorImage(value, arch, direction)).toThrow(
+            "identity=false",
+          );
+        }
+        const value = inspectedBackend(arch, direction, "containerd");
+        value[0].Id = pin.index;
+        expect(() => verifyReleasedCollectorImage(value, arch, direction)).toThrow(
+          "identity[index]",
+        );
+        value[0].Id = "invented-private-unknown-id";
+        value[0].Config.Env = ["INVENTED_SECRET=never-print-this-value"];
+        let failure;
+        try {
+          verifyReleasedCollectorImage(value, arch, direction);
+        } catch (error) {
+          failure = error;
+        }
+        expect(failure).toBeInstanceOf(Error);
+        expect(failure.message).toContain("identity[other]");
+        expect(failure.message.length).toBeLessThan(400);
+        expect(failure.message).not.toMatch(/invented-private|INVENTED_SECRET|never-print/);
+      }
+  });
+});
+
+describe.skipIf(process.platform !== "linux")(
+  "verified image identity through real fake-Docker ownership",
+  () => {
+    it.each(
+      ["released-collector", "released-gateway"].flatMap((direction) =>
+        ["classic", "containerd"].map((backend) => [direction, backend]),
+      ),
+    )("retires only the exact verified image for %s/%s", async (direction, backend) => {
+      const fixture = await backendFixture(direction, backend);
+      const result = await resultOf(runReleasedPeerContainer({ ...options(fixture), direction }));
+      expect(result.error).toBeUndefined();
+      const state = await fixture.read();
+      expect(state.removed).toBe(true);
+      expect(state.calls.filter((args) => args[0] === "start")).toHaveLength(1);
+      expect(state.calls.filter((args) => args[0] === "rm")).toEqual([["rm", "a".repeat(64)]]);
+      expect(
+        JSON.parse(await readFile(join(result.value.evidenceDirectory, "runner.json"), "utf8")),
+      ).toMatchObject({
+        retired: true,
+        passed: true,
+        localImageKind: backend === "classic" ? "config" : "manifest",
+      });
+    });
+
+    it.each([
+      ["classic", "image-switch"],
+      ["containerd", "image-switch"],
+      ["containerd", "descriptor-missing"],
+      ["containerd", "descriptor-digest"],
+      ["containerd", "descriptor-platform"],
+      ["classic", "descriptor-digest"],
+    ])("retains unconfirmed creation without cleanup for %s/%s", async (backend, fault) => {
+      const fixture = await backendFixture("released-collector", backend, fault);
+      const result = await resultOf(runReleasedPeerContainer(options(fixture)));
+      expect(result.error).toBeInstanceOf(Error);
+      const state = await fixture.read();
+      expect(state.calls.some((args) => ["start", "stop", "wait", "rm"].includes(args[0]))).toBe(
+        false,
+      );
+      expect(state.removed).toBeUndefined();
+      expect(
+        JSON.parse(await readFile(join(result.error.evidenceDirectory, "runner.json"), "utf8")),
+      ).toMatchObject({
+        verified: false,
+        retired: false,
+        passed: false,
+      });
+    });
+
+    it("does not stop or remove an initially verified container after its manifest descriptor contradicts at cleanup", async () => {
+      const fixture = await backendFixture("released-gateway", "containerd", "late-descriptor");
+      const result = await resultOf(
+        runReleasedPeerContainer({ ...options(fixture), direction: "released-gateway" }),
+      );
+      expect(result.error?.cleanupFailure).toBe("container-retirement");
+      const state = await fixture.read();
+      expect(state.calls.filter((args) => args[0] === "start")).toHaveLength(1);
+      expect(state.calls.some((args) => ["stop", "wait", "rm"].includes(args[0]))).toBe(false);
+      expect(state.removed).toBeUndefined();
+      expect(
+        JSON.parse(await readFile(join(result.error.evidenceDirectory, "runner.json"), "utf8")),
+      ).toMatchObject({
+        verified: true,
+        retired: false,
+        passed: false,
+      });
+    });
+  },
+);
 
 describe("immutable released image policy", () => {
   it("accepts both native immutable platform/config pairs, refusing emulation and wrong metadata", () => {

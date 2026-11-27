@@ -142,6 +142,7 @@
         "@omnesis/provider-notion-synth",
         "@omnesis/provider-obsidian",
         "@omnesis/provider-obsidian-synth",
+        "@omnesis/provider-omatel",
         "@omnesis/provider-openclaw",
         "@omnesis/provider-outlook",
         "@omnesis/provider-outlook-synth",

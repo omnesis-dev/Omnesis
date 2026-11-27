@@ -114,6 +114,9 @@ const FORBIDDEN_TABLES = new Set([
   "recording_sessions",
   "recording_speakers",
   "recording_suggestion_dismissals",
+  // The owner's enrolled voice is biometric and belongs to this installation;
+  // a clone recognises nobody until its owner enrols there.
+  "recording_voice_profile",
   "access_audit_events",
   "access_grant_capabilities",
   "access_grants",

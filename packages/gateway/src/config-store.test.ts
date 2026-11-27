@@ -293,6 +293,34 @@ describe("ConfigStore — listeners + file watcher", () => {
     expect(captured).toEqual(["/search/params/rrfK"]);
   });
 
+  test("a commit listener hears each change as it takes effect, even while change listeners wait", async () => {
+    let release!: () => void;
+    const slow = new Promise<void>((resolve) => (release = resolve));
+    store.onChange(() => slow);
+    const heard: (string | undefined)[] = [];
+    store.onChange((_b, after) => {
+      heard.push(after.indexer?.cycleInterval);
+    });
+    const committed: (string | undefined)[] = [];
+    store.onCommit((before, after, paths) => {
+      expect(store.get()).toBe(after);
+      expect(paths).toEqual(["/indexer/cycleInterval"]);
+      committed.push(`${before.indexer?.cycleInterval}>${after.indexer?.cycleInterval}`);
+    });
+    const stop = store.onCommit(() => {
+      throw new Error("a listener that throws");
+    });
+    await store.patch({ indexer: { cycleInterval: "15m" } });
+    await store.patch({ indexer: { cycleInterval: "20m" } });
+    expect(committed).toEqual(["undefined>15m", "15m>20m"]);
+    expect(heard).toEqual([]);
+    release();
+    await vi.waitFor(() => expect(heard).toHaveLength(2));
+    stop();
+    await store.patch({ indexer: { cycleInterval: "25m" } });
+    expect(committed).toHaveLength(3);
+  });
+
   test("listener unsubscribe stops receiving updates", async () => {
     let count = 0;
     const stop = store.onChange(() => {

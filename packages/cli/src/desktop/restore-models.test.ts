@@ -91,6 +91,29 @@ test("optional previous-choice projection is bounded below the private bridge fr
   expect(serialized).toBe(JSON.stringify(large));
 });
 
+test.each([0, 1])(
+  "restoring history never enables owner recognition (%s recordings)",
+  (recordings) => {
+    const original = omnesisConfigSchema.parse({
+      inference: { recordings: { selfVoice: "match", keepAudioDays: 14 } },
+    });
+    const before = JSON.stringify(original);
+    const paused = pauseDesktopRestoreProcessing(original, recordings).config;
+    expect(paused.inference?.recordings).toMatchObject({ selfVoice: "off", keepAudioDays: 14 });
+    expect(desktopRestoreModelsPaused(paused)).toBe(true);
+    expect(
+      desktopRestoreModelsPaused({
+        ...paused,
+        inference: {
+          ...paused.inference,
+          recordings: { ...paused.inference?.recordings, selfVoice: "match" },
+        },
+      }),
+    ).toBe(false);
+    expect(JSON.stringify(original)).toBe(before);
+  },
+);
+
 test("only actual restored recordings require review, and an existing review choice is retained", () => {
   const config = omnesisConfigSchema.parse({ inference: { recordings: { keepAudioDays: 14 } } });
   expect(

@@ -15,6 +15,11 @@
  * the main database so it shares the corpus's encryption at rest, as voice
  * notes do.
  *
+ * `recording_voice_profile` holds at most one row: the owner's enrolled voice
+ * as one mean vector and the embedding model it came from, used to recognise
+ * the owner among a session's speakers (`inference.recordings.selfVoice`).
+ * Nobody else's voice is ever kept.
+ *
  * Pure SQL over a better-sqlite3 handle. Writes go through the WriteGate
  * (`recordings.*` writer ops); reads run on the gateway's read handle.
  */
@@ -216,7 +221,18 @@ export function createRecordingTables(db: Db): void {
       person_id TEXT,
       is_self INTEGER NOT NULL DEFAULT 0,
       name TEXT,
+      -- 'matched' when the gateway recognised the owner's voice; 'rejected'
+      -- once the owner changed such a mapping. Null for the owner's own.
+      self_match TEXT,
       PRIMARY KEY (session_id, speaker)
+    );
+
+    CREATE TABLE IF NOT EXISTS recording_voice_profile (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      model TEXT NOT NULL,
+      vector BLOB NOT NULL,
+      speech_ms INTEGER NOT NULL,
+      enrolled_at TEXT NOT NULL
     );
   `);
   // Columns added after the table first shipped: a gateway that already has
@@ -235,6 +251,12 @@ export function createRecordingTables(db: Db): void {
     ["settled_at", "TEXT"],
   ] as const) {
     if (!chunkColumns.has(name)) db.exec(`ALTER TABLE recording_chunks ADD COLUMN ${name} ${type}`);
+  }
+  const speakerColumns = db
+    .prepare("SELECT name FROM pragma_table_info('recording_speakers')")
+    .all() as Array<{ name: string }>;
+  if (!speakerColumns.some((column) => column.name === "self_match")) {
+    db.exec("ALTER TABLE recording_speakers ADD COLUMN self_match TEXT");
   }
   // Suggestions the owner dismissed for a session (calendar attendees, names
   // heard in the transcript, a calendar title), so they are not offered again.
@@ -925,7 +947,11 @@ export interface RecordingSpeaker {
   isSelf: boolean;
   /** A name given without linking a person. */
   name: string | null;
+  /** Whether the gateway mapped the owner by voice, or the owner undid such a mapping. */
+  selfMatch: RecordingSelfMatch | null;
 }
+
+export type RecordingSelfMatch = "matched" | "rejected";
 
 /** How the owner maps one speaker. */
 export type RecordingSpeakerMapping =
@@ -959,13 +985,16 @@ export function listUngroupedRecordingVoices(
 
 /**
  * Record each chunk's windows with their session speakers, add the speakers
- * not seen before, and delete those chunks' voice vectors. Does not mark the
- * session changed: the caller writes its document next.
+ * not seen before, and delete those chunks' voice vectors. A speaker in
+ * `selfSpeakers` is mapped as the owner, recognised by voice, when it is new
+ * and the owner has not undone such a mapping in this session. Does not mark
+ * the session changed: the caller writes its document next.
  */
 export function assignRecordingVoices(
   db: Db,
   sessionId: string,
   chunks: ReadonlyArray<{ seq: number; windows: VoiceWindow[] }>,
+  selfSpeakers: readonly number[] = [],
 ): void {
   const update = db.prepare(
     `UPDATE recording_chunks SET voices = ?, voice_vectors = NULL WHERE session_id = ? AND seq = ?`,
@@ -978,7 +1007,30 @@ export function assignRecordingVoices(
   const insert = db.prepare(
     `INSERT OR IGNORE INTO recording_speakers (session_id, speaker) VALUES (?, ?)`,
   );
-  for (const speaker of speakers) insert.run(sessionId, speaker);
+  const added = new Set<number>();
+  for (const speaker of speakers) {
+    if (insert.run(sessionId, speaker).changes > 0) added.add(speaker);
+  }
+  const fresh = selfSpeakers.filter((s) => added.has(s));
+  if (fresh.length > 0 && !hasRejectedSelfMatch(db, sessionId)) {
+    const mark = db.prepare(
+      `UPDATE recording_speakers SET is_self = 1, self_match = 'matched'
+        WHERE session_id = ? AND speaker = ?`,
+    );
+    for (const speaker of fresh) mark.run(sessionId, speaker);
+  }
+}
+
+/** Whether the owner undid a voice-recognised mapping in this session. */
+export function hasRejectedSelfMatch(db: Db, sessionId: string): boolean {
+  return (
+    db
+      .prepare<[string], { n: number }>(
+        `SELECT 1 AS n FROM recording_speakers
+          WHERE session_id = ? AND self_match = 'rejected' LIMIT 1`,
+      )
+      .get(sessionId) !== undefined
+  );
 }
 
 interface SpeakerRow {
@@ -987,6 +1039,7 @@ interface SpeakerRow {
   person_id: string | null;
   is_self: number;
   name: string | null;
+  self_match: string | null;
 }
 
 export function listRecordingSpeakers(db: Db, sessionId: string): RecordingSpeaker[] {
@@ -1001,12 +1054,17 @@ export function listRecordingSpeakers(db: Db, sessionId: string): RecordingSpeak
       personId: row.person_id,
       isSelf: row.is_self === 1,
       name: row.name,
+      selfMatch:
+        row.self_match === "matched" || row.self_match === "rejected" ? row.self_match : null,
     }));
 }
 
 /**
  * Map one speaker of a session and mark the session changed so its document
- * is written again. False when the session has no such speaker.
+ * is written again. False when the session has no such speaker. The owner
+ * mapping a speaker the gateway recognised by voice settles it: as the owner,
+ * it becomes the owner's own mapping; as anything else, the recognition is
+ * rejected and no speaker of this session is recognised again.
  */
 export function setRecordingSpeaker(
   db: Db,
@@ -1018,10 +1076,21 @@ export function setRecordingSpeaker(
   const name = mapping.kind === "name" ? mapping.name : null;
   const changed = db
     .prepare(
-      `UPDATE recording_speakers SET person_id = ?, is_self = ?, name = ?
+      `UPDATE recording_speakers
+          SET person_id = ?, is_self = ?, name = ?,
+              self_match = CASE WHEN self_match = 'matched'
+                                THEN CASE WHEN ? = 1 THEN NULL ELSE 'rejected' END
+                                ELSE self_match END
         WHERE session_id = ? AND speaker = ?`,
     )
-    .run(personId, mapping.kind === "self" ? 1 : 0, name, sessionId, speaker).changes;
+    .run(
+      personId,
+      mapping.kind === "self" ? 1 : 0,
+      name,
+      mapping.kind === "self" ? 1 : 0,
+      sessionId,
+      speaker,
+    ).changes;
   if (changed === 0) return false;
   db.prepare(`UPDATE recording_sessions SET revision = revision + 1 WHERE id = ?`).run(sessionId);
   return true;
@@ -1162,4 +1231,45 @@ export function listRecentRecordingSessions(db: Db, limit: number): RecordingSes
     )
     .all(limit)
     .map(toSession);
+}
+
+// ── the owner's voice ─────────────────────────────────────────────────
+
+/** The owner's enrolled voice: one mean vector of the model it came from. */
+export interface RecordingVoiceProfile {
+  model: string;
+  vector: Float32Array;
+  /** How much speech the enrolment clip held, ms. */
+  speechMs: number;
+  enrolledAt: string;
+}
+
+export function getRecordingVoiceProfile(db: Db): RecordingVoiceProfile | null {
+  const row = db
+    .prepare<[], { model: string; vector: Buffer; speech_ms: number; enrolled_at: string }>(
+      `SELECT model, vector, speech_ms, enrolled_at FROM recording_voice_profile WHERE id = 1`,
+    )
+    .get();
+  if (!row) return null;
+  return {
+    model: row.model,
+    vector: unpackVectors(row.vector, 1)[0]!,
+    speechMs: row.speech_ms,
+    enrolledAt: row.enrolled_at,
+  };
+}
+
+/** Keep the owner's voice, replacing any enrolled before. */
+export function setRecordingVoiceProfile(db: Db, profile: RecordingVoiceProfile): void {
+  db.prepare(
+    `INSERT INTO recording_voice_profile (id, model, vector, speech_ms, enrolled_at)
+     VALUES (1, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET model = excluded.model, vector = excluded.vector,
+       speech_ms = excluded.speech_ms, enrolled_at = excluded.enrolled_at`,
+  ).run(profile.model, packVectors([profile.vector]), profile.speechMs, profile.enrolledAt);
+}
+
+/** Delete the owner's voice. False when none was enrolled. */
+export function deleteRecordingVoiceProfile(db: Db): boolean {
+  return db.prepare(`DELETE FROM recording_voice_profile`).run().changes > 0;
 }
