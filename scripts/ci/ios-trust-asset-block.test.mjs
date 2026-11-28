@@ -161,3 +161,153 @@ describe("the iOS trust asset block", () => {
     });
   });
 });
+
+const trustDomains = [
+  "mesu.apple.com",
+  "gdmf.apple.com",
+  "updates.cdn-apple.com",
+  "updates-http.cdn-apple.com",
+  "appldnld.apple.com",
+  "lcdn-locator.apple.com",
+  "valid.apple.com",
+];
+
+/** Actual block shell; every OS/DNS command is an owned deterministic stand-in. */
+function blockFixture(scenario) {
+  const dir = mkdtempSync(join(tmpdir(), "omnesis-trust-domain-evidence-"));
+  dirs.push(dir);
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  const shim = `#!${process.execPath}
+const fs = require('node:fs');
+const {join,basename} = require('node:path');
+const root = process.env.OWNED_TRUST_FIXTURE;
+const scenario = process.env.OWNED_TRUST_SCENARIO;
+const domains = ${JSON.stringify(trustDomains)};
+const record = join(root,'ios-trust-assets/dns-sink.log');
+const args = process.argv.slice(2), role = basename(process.argv[1]);
+const audit = value => fs.appendFileSync(join(root,'audit'),JSON.stringify(value)+'\\n');
+const refusal = domain => fs.appendFileSync(record,'00:00:00 DNS query for '+domain+'\\n');
+const refused = () => { process.stderr.write('Unexpected owned command\\n');process.exit(91); };
+if (role === 'uname') {
+ if (args.length !== 1 || args[0] !== '-s') refused();
+ fs.writeFileSync(1,'Darwin\\n');
+} else if (role === 'nohup') {
+ if (JSON.stringify(args) !== JSON.stringify(['python3',${JSON.stringify(join(root, "scripts/ci/dns-sink.py"))},'5534',record])) refused();
+ if (scenario === 'stale') refusal('gdmf.apple.com');
+ audit({kind:'sink-ready'});fs.writeFileSync(1,'ready\\n');
+} else if (role === 'sudo') {
+ if (JSON.stringify(args) === JSON.stringify(['mkdir','-p','/etc/resolver'])) {
+  fs.mkdirSync(join(root,'resolver'));audit({kind:'resolver-directory'});
+ } else if (args.length === 2 && args[0] === 'tee' && args[1].startsWith('/etc/resolver/')) {
+  const domain = args[1].slice('/etc/resolver/'.length);
+  if (!domains.includes(domain)) refused();
+  const rule = fs.readFileSync(0,'utf8');
+  if (rule !== 'nameserver 127.0.0.1\\nport 5534\\ntimeout 2\\n') refused();
+  fs.writeFileSync(join(root,'resolver',domain),rule);audit({kind:'install',domain});
+ } else if (JSON.stringify(args) === JSON.stringify(['dscacheutil','-flushcache'])) {
+  if (!domains.every(domain => fs.existsSync(join(root,'resolver',domain)))) refused();
+  audit({kind:'cache-flush'});
+  if (scenario === 'early') refusal('GDMF.APPLE.COM');
+ } else if (JSON.stringify(args) === JSON.stringify(['killall','-HUP','mDNSResponder'])) {
+  audit({kind:'resolver-refresh'});
+ } else refused();
+} else if (role === 'node') {
+ const domain = args[2];
+ if (args.length !== 3 || args[0] !== '-e' || process.env.NODE_OPTIONS !== '' || ![...domains,'github.com'].includes(domain)) refused();
+ audit({kind:'probe',domain});
+ let resolves = domain === 'github.com' ? scenario !== 'general-fails' : scenario === 'target-resolves' && domain === 'gdmf.apple.com';
+ if (domains.includes(domain)) {
+  if (domain !== 'gdmf.apple.com' || !['early','stale','unrelated','malformed','suffix'].includes(scenario)) refusal(domain);
+  else if (scenario === 'unrelated') refusal('mesu.apple.com');
+  else if (scenario === 'malformed') fs.appendFileSync(record,'malformed journal entry for gdmf.apple.com\\n');
+  else if (scenario === 'suffix') refusal('gdmf.apple.com.example.test');
+ }
+ fs.writeFileSync(2,domain+': '+(resolves?'resolved':'ENOTFOUND')+'\\n');
+ process.exitCode = resolves ? 0 : 1;
+} else refused();
+`;
+  for (const name of ["uname", "nohup", "sudo", "node"])
+    writeFileSync(join(bin, name), shim, { mode: 0o700 });
+  // The actual script's fake sink is a direct owned background job. Even a
+  // failing block returns only after this isolated shell has joined that job.
+  const result = spawnSync(
+    "/bin/bash",
+    [
+      "--noprofile",
+      "--norc",
+      "-c",
+      "trap 'wait' EXIT; source \"$1\" block",
+      "owned-trust-fixture",
+      SCRIPT,
+    ],
+    {
+      env: {
+        PATH: `${bin}:/usr/bin:/bin`,
+        HOME: dir,
+        LANG: "C",
+        RUNNER_TEMP: dir,
+        OWNED_TRUST_FIXTURE: dir,
+        OWNED_TRUST_SCENARIO: scenario,
+      },
+      encoding: "utf8",
+      timeout: 15000,
+    },
+  );
+  expect(result.error).toBeUndefined();
+  const audit = readFileSync(join(dir, "audit"), "utf8").trim().split("\n").map(JSON.parse);
+  expect(audit.filter(({ kind }) => kind === "install").map(({ domain }) => domain)).toEqual(
+    trustDomains,
+  );
+  for (const domain of trustDomains)
+    expect(readFileSync(join(dir, "resolver", domain), "utf8")).toBe(
+      "nameserver 127.0.0.1\nport 5534\ntimeout 2\n",
+    );
+  expect(audit.filter(({ kind }) => kind === "cache-flush")).toHaveLength(1);
+  expect(audit.filter(({ kind }) => kind === "resolver-refresh")).toHaveLength(1);
+  return { ...result, audit };
+}
+
+describe("the actual trust guard requires per-domain evidence from the installed configuration", () => {
+  test("a matching post-configuration refusal before its own probe qualifies a later negative lookup", () => {
+    const result = blockFixture("early");
+    expect(result.status).toBe(0);
+    expect(result.audit.filter(({ kind }) => kind === "probe").map(({ domain }) => domain)).toEqual(
+      [...trustDomains, "github.com"],
+    );
+  });
+
+  test("an unrelated domain's new refusal cannot qualify the target's failed lookup", () => {
+    const result = blockFixture("unrelated");
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("gdmf.apple.com");
+  });
+
+  test("a matching refusal only before configuration cannot qualify a later failed lookup", () => {
+    expect(blockFixture("stale").status).toBe(1);
+  });
+
+  test.each(["malformed", "suffix"])(
+    "%s journal evidence cannot qualify the target",
+    (scenario) => {
+      expect(blockFixture(scenario).status).toBe(1);
+    },
+  );
+
+  test("fresh exact domain refusals and a positive general lookup qualify the block", () => {
+    const result = blockFixture("fresh");
+    expect(result.status).toBe(0);
+    expect(result.audit.at(-1)).toEqual({ kind: "probe", domain: "github.com" });
+  });
+
+  test("recorded refusals do not qualify a target that still resolves", () => {
+    expect(blockFixture("target-resolves").status).toBe(1);
+  });
+
+  test("a positive general DNS lookup remains required", () => {
+    const result = blockFixture("general-fails");
+    expect(result.status).toBe(1);
+    expect(result.audit.at(-1)).toEqual({ kind: "probe", domain: "github.com" });
+    expect(result.stderr).toContain("broke name resolution for everything else");
+  });
+});
