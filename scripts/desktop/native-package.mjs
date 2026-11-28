@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { createHash } from "node:crypto";
+import { constants } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { lstat, mkdir, open, readFile, realpath, writeFile } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { acquireNodeArchive, extractNodeArchive, NODE_RUNTIME } from "./node-runtime.mjs";
 import { parseArguments } from "./arguments.mjs";
@@ -89,6 +91,217 @@ export async function ensureNativePackageCache(scratch) {
   return cache;
 }
 
+const processReceiptKeys = ["format", "role", "rootClosed", "treeJoined", "code", "forced"];
+const qualificationKeys = [
+  "format",
+  "compiledEntry",
+  "staticModule",
+  "sourceUnchanged",
+  "keyedRowsAndConstraints",
+  "encryptedPrivateOutputs",
+  "authenticatedStagingRemoved",
+  "nativeDataFdMatched",
+];
+function exactKeys(value, keys) {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...keys].sort())
+  );
+}
+async function ownedReceiptBytes(path, { maximum = 4096, privateFile = true } = {}) {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const before = await handle.stat({ bigint: true });
+    if (
+      !before.isFile() ||
+      before.uid !== BigInt(process.getuid()) ||
+      before.nlink !== 1n ||
+      (privateFile ? (before.mode & 0o7777n) !== 0o600n : (before.mode & 0o022n) !== 0n) ||
+      before.size < 1n ||
+      before.size > BigInt(maximum)
+    )
+      throw new Error("Analytics receipt file refused");
+    const bytes = Buffer.alloc(Number(before.size) + 1);
+    let count = 0;
+    while (count < bytes.length) {
+      const read = await handle.read(bytes, count, bytes.length - count, null);
+      if (!read.bytesRead) break;
+      count += read.bytesRead;
+    }
+    const after = await handle.stat({ bigint: true }),
+      published = await lstat(path, { bigint: true });
+    const identity = (v) => [v.dev, v.ino, v.size, v.mtimeNs, v.ctimeNs];
+    if (
+      BigInt(count) !== before.size ||
+      !published.isFile() ||
+      published.isSymbolicLink() ||
+      identity(before).some((v, i) => v !== identity(after)[i] || v !== identity(published)[i])
+    )
+      throw new Error("Analytics receipt file changed");
+    return bytes.subarray(0, count);
+  } finally {
+    await handle.close();
+  }
+}
+function parseReceipt(bytes) {
+  // Producers write canonical JSON. This also refuses duplicate keys without
+  // echoing potentially untrusted receipt contents through a parser error.
+  try {
+    const text = bytes.toString("utf8"),
+      value = JSON.parse(text);
+    const canonical = JSON.stringify(value);
+    if (text === canonical || text === canonical + "\n") return value;
+  } catch {
+    /* Report only a fixed refusal below. */
+  }
+  throw new Error("Analytics receipt JSON refused");
+}
+async function runtimeManifest(runtime) {
+  if ((await realpath(runtime)) !== runtime) throw new Error("Analytics runtime path refused");
+  const bytes = await ownedReceiptBytes(join(runtime, "desktop-runtime.json"), {
+    maximum: 32 * 1024 * 1024,
+    privateFile: false,
+  });
+  const manifest = JSON.parse(bytes.toString("utf8"));
+  if (!["arm64", "x64"].includes(manifest.architecture))
+    throw new Error("Analytics architecture refused");
+  return {
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    architecture: manifest.architecture,
+  };
+}
+
+/** Only this exact attempt's private artifact is a writable export destination. */
+export async function validateAnalyticsReceiptDestination(runtime, destination) {
+  const output = dirname(runtime),
+    scratch = dirname(output),
+    attempt = basename(output);
+  if (
+    runtime !== resolve(runtime) ||
+    basename(runtime) !== "runtime" ||
+    !/^package-[0-9]+-[0-9]+$/u.test(attempt) ||
+    destination !== join(scratch, "evidence", attempt, "analytics-restore.json")
+  )
+    throw new Error("Analytics receipt destination refused");
+  await requirePackageScratch(scratch);
+  for (const directory of [output, join(scratch, "evidence"), dirname(destination)])
+    await requirePrivateDirectory(directory);
+  try {
+    await lstat(destination);
+  } catch (error) {
+    if (error.code === "ENOENT") return;
+    throw error;
+  }
+  throw new Error("Analytics receipt destination already exists");
+}
+
+/** Export fixed facts only after both real clients and their compiled proof succeeded. */
+export async function preserveAnalyticsRestoreReceipt({
+  runtime,
+  home,
+  destination,
+  manifestSha256,
+}) {
+  try {
+    await validateAnalyticsReceiptDestination(runtime, destination);
+    await requirePrivateDirectory(home);
+    const source = parseReceipt(
+      await ownedReceiptBytes(join(home, "analytics-restore-source-process.json")),
+    );
+    const target = parseReceipt(
+      await ownedReceiptBytes(join(home, "analytics-restore-target-process.json")),
+    );
+    const work = join(home, "database-fixture", "analytics-restore");
+    await requirePrivateDirectory(work);
+    const qualification = parseReceipt(await ownedReceiptBytes(join(work, "qualification.json")));
+    for (const [role, receipt] of [
+      ["source", source],
+      ["target", target],
+    ]) {
+      if (
+        !exactKeys(receipt, processReceiptKeys) ||
+        receipt.format !== 1 ||
+        receipt.role !== role ||
+        receipt.rootClosed !== true ||
+        receipt.treeJoined !== true ||
+        receipt.code !== 0 ||
+        receipt.forced !== false
+      )
+        throw new Error("Analytics process receipt refused");
+    }
+    if (
+      !exactKeys(qualification, qualificationKeys) ||
+      qualification.format !== 1 ||
+      qualificationKeys.slice(1).some((key) => qualification[key] !== true)
+    )
+      throw new Error("Analytics compiled receipt refused");
+    const manifest = await runtimeManifest(runtime);
+    if (manifest.sha256 !== manifestSha256) throw new Error("Analytics manifest changed");
+    const bytes =
+      JSON.stringify({
+        format: 1,
+        scope: "compiled-analytics-restore",
+        runtimeManifestSha256: manifest.sha256,
+        architecture: manifest.architecture,
+        source,
+        target,
+        qualification,
+      }) + "\n";
+    await writeFile(destination, bytes, { flag: "wx", mode: 0o600 });
+    await readAnalyticsRestoreReceipt({ artifact: dirname(destination), runtime });
+  } catch (cause) {
+    throw Object.assign(new Error("Analytics restore evidence was not confirmed", { cause }), {
+      cleanupFailure: "analytics-restore-evidence",
+    });
+  }
+}
+
+export async function readAnalyticsRestoreReceipt({ artifact, runtime }) {
+  await requirePrivateDirectory(artifact);
+  const receipt = parseReceipt(await ownedReceiptBytes(join(artifact, "analytics-restore.json")));
+  const manifest = await runtimeManifest(runtime);
+  if (
+    !exactKeys(receipt, [
+      "format",
+      "scope",
+      "runtimeManifestSha256",
+      "architecture",
+      "source",
+      "target",
+      "qualification",
+    ]) ||
+    receipt.format !== 1 ||
+    receipt.scope !== "compiled-analytics-restore" ||
+    receipt.runtimeManifestSha256 !== manifest.sha256 ||
+    receipt.architecture !== manifest.architecture
+  )
+    throw new Error("Analytics package evidence refused");
+  for (const [role, value] of [
+    ["source", receipt.source],
+    ["target", receipt.target],
+  ]) {
+    if (
+      !exactKeys(value, processReceiptKeys) ||
+      value.format !== 1 ||
+      value.role !== role ||
+      value.rootClosed !== true ||
+      value.treeJoined !== true ||
+      value.code !== 0 ||
+      value.forced !== false
+    )
+      throw new Error("Analytics package process refused");
+  }
+  if (
+    !exactKeys(receipt.qualification, qualificationKeys) ||
+    receipt.qualification.format !== 1 ||
+    qualificationKeys.slice(1).some((key) => receipt.qualification[key] !== true)
+  )
+    throw new Error("Analytics package proof refused");
+  return receipt;
+}
+
 /** Runs only inside the native pool's owned scratch and existing build reservation. */
 export async function buildNativePackage(
   { scratch, architecture = process.arch },
@@ -104,6 +317,9 @@ export async function buildNativePackage(
   const attempt = `package-${Date.now()}-${process.pid}`;
   const output = join(scratch, attempt);
   await mkdir(output, { mode: 0o700 });
+  await requirePrivateDirectory(join(scratch, "evidence"));
+  const artifact = join(scratch, "evidence", attempt);
+  await mkdir(artifact, { mode: 0o700 });
   const home = join(output, "home");
   const temporary = join(output, "tmp");
   await mkdir(home, { mode: 0o700 });
@@ -128,6 +344,8 @@ export async function buildNativePackage(
     "scripts/desktop/prepare-runtime.mjs",
     "--out",
     runtime,
+    "--analytics-receipt",
+    join(artifact, "analytics-restore.json"),
     "--cache",
     cache,
     "--runtime-exec",
@@ -158,8 +376,6 @@ export async function buildNativePackage(
   ]);
   // This lane qualifies an ephemeral build. Distribution owns any archive;
   // native hosts must not accumulate completed archives on their build disk.
-  const artifact = join(scratch, "evidence", attempt);
-  await mkdir(artifact, { mode: 0o700 });
   await qualifyNativePackageEvidence({ artifact, runtime, architecture, version, output, env });
   return artifact;
 }
@@ -169,6 +385,7 @@ export async function qualifyNativePackageEvidence(
   { artifact, runtime, architecture, version, output, env },
   qualifyServices = qualifyNativeCompositionServices,
 ) {
+  const analytics = await readAnalyticsRestoreReceipt({ artifact, runtime });
   await qualifyServices({
     runtime,
     artifact: join(artifact, "services"),
@@ -177,6 +394,11 @@ export async function qualifyNativePackageEvidence(
     work: join(output, "services-state"),
     env: { ...env, ...qualificationEnvironment },
   });
+  if (
+    JSON.stringify(await readAnalyticsRestoreReceipt({ artifact, runtime })) !==
+    JSON.stringify(analytics)
+  )
+    throw new Error("Analytics package evidence changed during services");
   await writeFile(
     join(artifact, "qualification.json"),
     JSON.stringify(
@@ -189,6 +411,8 @@ export async function qualifyNativePackageEvidence(
         runtimeSmoke: "passed",
         assembledRuntimeSmoke: "passed",
         compositionServicesSmoke: "passed",
+        analyticsRestore: "passed",
+        analyticsRuntimeManifestSha256: analytics.runtimeManifestSha256,
       },
       null,
       2,

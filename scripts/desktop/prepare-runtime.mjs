@@ -44,6 +44,7 @@ export async function prepareRuntime({
   cache,
   runtimeExec,
   build = true,
+  analyticsReceipt,
 }) {
   if (process.platform !== "darwin" || process.arch !== architecture)
     throw new Error("Prepare the desktop runtime on macOS with the target architecture");
@@ -175,7 +176,9 @@ export async function prepareRuntime({
       )}\n`,
     );
     // Native restore requires the sealed inventory and real runtime-exec/data-use owner.
-    await smokeRuntime(target, { analyticsRestore: { input, upstreamNode: node, architecture } });
+    await smokeRuntime(target, {
+      analyticsRestore: { input, upstreamNode: node, architecture, receipt: analyticsReceipt },
+    });
     return target;
   } catch (error) {
     // target is exclusively created by stageRuntime during this invocation.
@@ -189,7 +192,7 @@ export async function prepareRuntime({
 
 if (import.meta.main) {
   const args = parseArguments(process.argv.slice(2), {
-    values: ["out", "cache", "arch", "runtime-exec"],
+    values: ["out", "cache", "arch", "runtime-exec", "analytics-receipt"],
     booleans: ["no-build"],
     required: ["out", "cache", "runtime-exec"],
   });
@@ -199,5 +202,6 @@ if (import.meta.main) {
     architecture: args.get("arch") ?? process.arch,
     runtimeExec: args.get("runtime-exec"),
     build: !args.has("no-build"),
+    analyticsReceipt: args.get("analytics-receipt"),
   });
 }

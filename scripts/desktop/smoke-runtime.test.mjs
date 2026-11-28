@@ -1,7 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  renameSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { spawnSync } from "node:child_process";
 import * as filesystem from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -85,7 +94,7 @@ afterEach(() => {
   for (const home of ownedHomes.splice(0)) rmSync(home, { recursive: true, force: true });
 });
 function analyticsSmokeFixture() {
-  const home = mkdtempSync(join(tmpdir(), "omnesis-analytics-smoke-test-"));
+  const home = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-analytics-smoke-test-")));
   ownedHomes.push(home);
   const runtime = join(home, "runtime");
   mkdirSync(runtime, { mode: 0o700 });
@@ -187,4 +196,107 @@ test("home removal refusal preserves the primary qualification error and exact r
   expect(remove).toHaveBeenCalledExactlyOnceWith(ownedHome, { recursive: true, force: true });
   expect(statSync(ownedHome).mode & 0o777).toBe(0o700);
   expect(readdirSync(f.home)).toContain(ownedHome.slice(f.home.length + 1));
+});
+
+function receiptSmokeFixture() {
+  const f = analyticsSmokeFixture();
+  const output = join(f.home, "package-1-1"),
+    artifact = join(f.home, "evidence/package-1-1");
+  mkdirSync(output, { mode: 0o700 });
+  mkdirSync(join(f.home, "evidence"), { mode: 0o700 });
+  mkdirSync(artifact, { mode: 0o700 });
+  writeFileSync(join(f.home, ".omnesis-desktop-scratch"), "desktop-native-v1\n", { mode: 0o600 });
+  // This is an actual canonical owned package attempt, not an arbitrary export path.
+  const runtime = join(output, "runtime");
+  renameSync(f.runtime, runtime);
+  f.runtime = runtime;
+  f.destination = join(artifact, "analytics-restore.json");
+  f.options.analyticsRestore.receipt = f.destination;
+  return f;
+}
+async function writeSmokeProof({ home }) {
+  const receipt = (role) => ({
+    format: 1,
+    role,
+    rootClosed: true,
+    treeJoined: true,
+    code: 0,
+    forced: false,
+  });
+  for (const role of ["source", "target"])
+    await filesystem.writeFile(
+      join(home, `analytics-restore-${role}-process.json`),
+      JSON.stringify(receipt(role)),
+      { mode: 0o600 },
+    );
+  await filesystem.mkdir(join(home, "database-fixture/analytics-restore"), { mode: 0o700 });
+  await filesystem.writeFile(
+    join(home, "database-fixture/analytics-restore/qualification.json"),
+    JSON.stringify({
+      format: 1,
+      compiledEntry: true,
+      staticModule: true,
+      sourceUnchanged: true,
+      keyedRowsAndConstraints: true,
+      encryptedPrivateOutputs: true,
+      authenticatedStagingRemoved: true,
+      nativeDataFdMatched: true,
+    }),
+    { mode: 0o600 },
+  );
+}
+
+test("analytics smoke exports actual private proof before its successful home cleanup", async () => {
+  const f = receiptSmokeFixture();
+  let ownedHome;
+  vi.spyOn(analytics, "qualifyDesktopAnalyticsRestore").mockImplementation(async (args) => {
+    ownedHome = args.home;
+    await writeSmokeProof(args);
+  });
+  await smokeRuntime(f.runtime, f.options);
+  const receipt = JSON.parse(await filesystem.readFile(f.destination, "utf8"));
+  expect(receipt).toMatchObject({
+    scope: "compiled-analytics-restore",
+    source: { treeJoined: true, rootClosed: true },
+    target: { treeJoined: true, rootClosed: true },
+    qualification: { compiledEntry: true },
+  });
+  expect(statSync(f.destination).mode & 0o777).toBe(0o600);
+  await expect(filesystem.lstat(ownedHome)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await filesystem.readFile(f.destination, "utf8")).not.toContain(f.home);
+});
+
+test("an unconfirmed export retains its home and never turns qualification failure into success", async () => {
+  const f = receiptSmokeFixture();
+  let ownedHome;
+  vi.spyOn(analytics, "qualifyDesktopAnalyticsRestore").mockImplementation(async (args) => {
+    ownedHome = args.home;
+    await writeSmokeProof(args);
+    await filesystem.writeFile(
+      join(args.home, "analytics-restore-target-process.json"),
+      JSON.stringify({
+        format: 1,
+        role: "target",
+        rootClosed: true,
+        treeJoined: false,
+        code: 0,
+        forced: false,
+      }),
+    );
+  });
+  await expect(smokeRuntime(f.runtime, f.options)).rejects.toMatchObject({
+    cleanupFailure: "analytics-restore-evidence",
+  });
+  expect(statSync(ownedHome).mode & 0o777).toBe(0o700);
+  await expect(filesystem.lstat(f.destination)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+test("duplicate export refuses before any analytics process and preserves the original artifact", async () => {
+  const f = receiptSmokeFixture();
+  writeFileSync(f.destination, "invented prior receipt", { mode: 0o600 });
+  const qualify = vi.spyOn(analytics, "qualifyDesktopAnalyticsRestore");
+  await expect(smokeRuntime(f.runtime, f.options)).rejects.toThrow("already exists");
+  expect(qualify).not.toHaveBeenCalled();
+  expect(analytics.qualifyDesktopAnalytics).not.toHaveBeenCalled();
+  expect(await filesystem.readFile(f.destination, "utf8")).toBe("invented prior receipt");
 });

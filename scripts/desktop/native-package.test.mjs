@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { createHash } from "node:crypto";
 import {
   mkdtemp,
   realpath,
@@ -20,6 +21,10 @@ import {
   packageEnvironment,
   ensureNativePackageCache,
   createPackageNpmConfigs,
+  preserveAnalyticsRestoreReceipt,
+  readAnalyticsRestoreReceipt,
+  validateAnalyticsReceiptDestination,
+  qualifyNativePackageEvidence,
 } from "./native-package.mjs";
 
 test("package processes use pinned Node and an isolated home without inherited account configuration", () => {
@@ -202,9 +207,10 @@ posixTest(
     await mkdir(artifact, { mode: 0o700 });
     const entered = Promise.withResolvers();
     const release = Promise.withResolvers();
+    const runtime = await packageAnalyticsFixture(root, artifact);
     const options = {
       artifact,
-      runtime: join(root, "real-runtime"),
+      runtime,
       architecture: "arm64",
       version: "0.8.1",
       output: root,
@@ -248,9 +254,10 @@ posixTest("uncertain service closure never publishes successful package evidence
   const root = await scratchFixture();
   const artifact = join(root, "evidence");
   await mkdir(artifact, { mode: 0o700 });
+  const runtime = await packageAnalyticsFixture(root, artifact);
   try {
     await expect(
-      qualifyNativePackageEvidence({ artifact, output: root }, async () => {
+      qualifyNativePackageEvidence({ artifact, runtime, output: root }, async () => {
         throw Object.assign(new Error("owned uncertain join"), { cleanupFailure: "fixture" });
       }),
     ).rejects.toMatchObject({ cleanupFailure: "fixture" });
@@ -268,13 +275,14 @@ posixTest(
     const root = await scratchFixture();
     const artifact = join(root, "evidence");
     await mkdir(artifact, { mode: 0o700 });
+    const runtime = await packageAnalyticsFixture(root, artifact);
     const env = {
       OMNESIS_RUNTIME_MODE: "production",
       OMNESIS_TELEMETRY: "1",
       OMNESIS_E2E_DESKTOP_COMPOSITION_SMOKE: "0",
     };
     try {
-      await qualifyNativePackageEvidence({ artifact, output: root, env }, async (args) => {
+      await qualifyNativePackageEvidence({ artifact, runtime, output: root, env }, async (args) => {
         const output = execFileSync(
           process.execPath,
           [
@@ -293,6 +301,202 @@ posixTest(
       expect(await readFile(join(artifact, "qualification.json"), "utf8")).not.toContain(
         "OMNESIS_",
       );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+const compiledProof = {
+  format: 1,
+  compiledEntry: true,
+  staticModule: true,
+  sourceUnchanged: true,
+  keyedRowsAndConstraints: true,
+  encryptedPrivateOutputs: true,
+  authenticatedStagingRemoved: true,
+  nativeDataFdMatched: true,
+};
+const processProof = (role) => ({
+  format: 1,
+  role,
+  rootClosed: true,
+  treeJoined: true,
+  code: 0,
+  forced: false,
+});
+async function privateJSON(path, value) {
+  await writeFile(path, JSON.stringify(value), { mode: 0o600 });
+}
+async function packageAnalyticsFixture(root, artifact) {
+  const runtime = join(root, "real-runtime");
+  await mkdir(runtime, { mode: 0o700 });
+  const manifest = JSON.stringify({ format: 1, architecture: "arm64", inventory: [] });
+  await writeFile(join(runtime, "desktop-runtime.json"), manifest);
+  await privateJSON(join(artifact, "analytics-restore.json"), {
+    format: 1,
+    scope: "compiled-analytics-restore",
+    architecture: "arm64",
+    runtimeManifestSha256: createHash("sha256").update(manifest).digest("hex"),
+    source: processProof("source"),
+    target: processProof("target"),
+    qualification: compiledProof,
+  });
+  return runtime;
+}
+async function exportFixture() {
+  const root = await scratchFixture(),
+    output = join(root, "package-1-1");
+  await mkdir(output, { mode: 0o700 });
+  const runtime = join(output, "runtime"),
+    home = join(output, "home"),
+    artifact = join(root, "evidence/package-1-1");
+  for (const path of [
+    runtime,
+    home,
+    join(root, "evidence"),
+    artifact,
+    join(home, "database-fixture"),
+    join(home, "database-fixture/analytics-restore"),
+  ])
+    await mkdir(path, { mode: 0o700 });
+  const manifest = JSON.stringify({ format: 1, architecture: "arm64", inventory: [] });
+  await writeFile(join(runtime, "desktop-runtime.json"), manifest);
+  await privateJSON(join(home, "analytics-restore-source-process.json"), processProof("source"));
+  await privateJSON(join(home, "analytics-restore-target-process.json"), processProof("target"));
+  await privateJSON(
+    join(home, "database-fixture/analytics-restore/qualification.json"),
+    compiledProof,
+  );
+  return {
+    root,
+    artifact,
+    runtime,
+    home,
+    destination: join(artifact, "analytics-restore.json"),
+    manifestSha256: createHash("sha256").update(manifest).digest("hex"),
+  };
+}
+
+posixTest(
+  "compiled joined facts survive private smoke-home removal outside the sealed inventory",
+  async () => {
+    const f = await exportFixture();
+    try {
+      const before = await readFile(join(f.runtime, "desktop-runtime.json"));
+      await preserveAnalyticsRestoreReceipt(f);
+      await rm(f.home, { recursive: true });
+      const receipt = await readAnalyticsRestoreReceipt(f);
+      expect(receipt).toMatchObject({
+        scope: "compiled-analytics-restore",
+        runtimeManifestSha256: f.manifestSha256,
+        source: processProof("source"),
+        target: processProof("target"),
+        qualification: compiledProof,
+      });
+      expect((await lstat(f.destination)).mode & 0o777).toBe(0o600);
+      expect(await readFile(join(f.runtime, "desktop-runtime.json"))).toEqual(before);
+      const text = await readFile(f.destination, "utf8");
+      expect(text).not.toContain(f.root);
+      expect(text).not.toContain("invented-private-value");
+    } finally {
+      await rm(f.root, { recursive: true, force: true });
+    }
+  },
+);
+
+posixTest.each([
+  "unjoined",
+  "forced",
+  "nonzero",
+  "extra-secret",
+  "duplicate-key",
+  "oversize",
+  "symlink",
+  "manifest-changed",
+])(
+  "export refuses %s facts without successful evidence or deleting its private inputs",
+  async (kind) => {
+    const f = await exportFixture();
+    try {
+      const path = join(f.home, "analytics-restore-target-process.json");
+      const target = processProof("target");
+      if (kind === "unjoined") target.treeJoined = false;
+      if (kind === "forced") target.forced = true;
+      if (kind === "nonzero") target.code = 1;
+      if (kind === "extra-secret") target.secret = "invented-private-value";
+      await privateJSON(path, target);
+      if (kind === "duplicate-key")
+        await writeFile(path, JSON.stringify(target).replace('"code":0', '"code":1,"code":0'));
+      if (kind === "oversize") await writeFile(path, "x".repeat(4097));
+      if (kind === "symlink") {
+        await rm(path);
+        await symlink(join(f.home, "analytics-restore-source-process.json"), path);
+      }
+      if (kind === "manifest-changed")
+        await writeFile(
+          join(f.runtime, "desktop-runtime.json"),
+          JSON.stringify({ architecture: "arm64", changed: true }),
+        );
+      await expect(preserveAnalyticsRestoreReceipt(f)).rejects.toMatchObject({
+        cleanupFailure: "analytics-restore-evidence",
+      });
+      await expect(lstat(f.destination)).rejects.toMatchObject({ code: "ENOENT" });
+      expect((await lstat(f.home)).mode & 0o777).toBe(0o700);
+    } finally {
+      await rm(f.root, { recursive: true, force: true });
+    }
+  },
+);
+
+posixTest(
+  "output authority rejects arbitrary, duplicate and aliased destinations without adoption",
+  async () => {
+    const f = await exportFixture();
+    const alias = f.root + "-alias";
+    try {
+      await expect(
+        validateAnalyticsReceiptDestination(f.runtime, join(f.root, "other.json")),
+      ).rejects.toThrow("destination refused");
+      await symlink(f.root, alias);
+      await expect(
+        validateAnalyticsReceiptDestination(
+          join(alias, "package-1-1/runtime"),
+          join(alias, "evidence/package-1-1/analytics-restore.json"),
+        ),
+      ).rejects.toThrow("private owned canonical");
+      await writeFile(f.destination, "invented prior evidence", { mode: 0o600 });
+      await expect(preserveAnalyticsRestoreReceipt(f)).rejects.toMatchObject({
+        cleanupFailure: "analytics-restore-evidence",
+      });
+      expect(await readFile(f.destination, "utf8")).toBe("invented prior evidence");
+    } finally {
+      await rm(alias, { force: true });
+      await rm(f.root, { recursive: true, force: true });
+    }
+  },
+);
+
+posixTest(
+  "changed analytics facts during service qualification prevent final package success",
+  async () => {
+    const root = await scratchFixture(),
+      artifact = join(root, "evidence");
+    await mkdir(artifact, { mode: 0o700 });
+    const runtime = await packageAnalyticsFixture(root, artifact);
+    try {
+      await expect(
+        qualifyNativePackageEvidence({ artifact, runtime, output: root }, async () => {
+          const receipt = JSON.parse(
+            await readFile(join(artifact, "analytics-restore.json"), "utf8"),
+          );
+          receipt.target.treeJoined = false;
+          await privateJSON(join(artifact, "analytics-restore.json"), receipt);
+        }),
+      ).rejects.toThrow("process refused");
+      await expect(lstat(join(artifact, "qualification.json"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }

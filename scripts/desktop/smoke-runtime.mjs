@@ -50,6 +50,10 @@ export async function smokeRuntime(sourceRuntime, { analyticsRestore } = {}) {
   );
   if (JSON.stringify(inventory) !== JSON.stringify(manifest.inventory))
     throw new Error("Runtime differs from its sealed build inventory");
+  if (analyticsRestore?.receipt) {
+    const { validateAnalyticsReceiptDestination } = await import("./native-package.mjs");
+    await validateAnalyticsReceiptDestination(sourceRuntime, analyticsRestore.receipt);
+  }
   const home = await realpath(await mkdtemp(join(tmpdir(), "omnesis-desktop-bundle-smoke-")));
   const cache = join(home, "runtime-cache");
 
@@ -116,6 +120,15 @@ export async function smokeRuntime(sourceRuntime, { analyticsRestore } = {}) {
         env,
         upstream,
       });
+      if (analyticsRestore.receipt) {
+        const { preserveAnalyticsRestoreReceipt } = await import("./native-package.mjs");
+        await preserveAnalyticsRestoreReceipt({
+          runtime: sourceRuntime,
+          home,
+          destination: analyticsRestore.receipt,
+          manifestSha256: createHash("sha256").update(manifestBytes).digest("hex"),
+        });
+      }
     } else {
       // Instantiate both SQLite builds and DuckDB, rather than merely dlopen their
       // modules. In-memory databases cannot contain or modify an existing library.
