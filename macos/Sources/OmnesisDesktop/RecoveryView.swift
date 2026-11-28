@@ -20,9 +20,63 @@ struct DesktopRecoveryView: View {
     @State private var codeSaved = false
     @State private var keptSeparately = false
     @State private var error: String?
+    @State private var bodyHeight: CGFloat?
+    private static let maximumBodyHeight: CGFloat = 360
     var body: some View {
         VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.regular) {
             Text("Recovery protection").font(DesktopDesignTokens.Typography.pageTitle).accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("recovery-protection-title")
+            ScrollView {
+                recoveryContent.frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                    .background(GeometryReader { geometry in
+                        Color.clear.preference(key: RecoveryProtectionBodyHeight.self, value: geometry.size.height)
+                    })
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            // Reserve room for the heading and dismissal action in a small window.
+            .frame(height: min(bodyHeight ?? Self.maximumBodyHeight, Self.maximumBodyHeight))
+            .onPreferenceChange(RecoveryProtectionBodyHeight.self) { height in
+                if let height, height.isFinite, height >= 0 { bodyHeight = height }
+            }
+            .accessibilityIdentifier("recovery-protection-content")
+            HStack {
+                Spacer()
+                Button(store.recoverySaved ? "Done" : "Cancel") {
+                    if importing, store.busy { store.command("cancel") }
+                    importCode = ""
+                    cancel()
+                    dismiss()
+                }.disabled(store.busy && !importing).keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("recovery-protection-dismiss")
+            }
+        }.buttonStyle(DesktopButtonStyle()).padding(DesktopDesignTokens.Space.section).frame(width: 520)
+            .fixedSize(horizontal: false, vertical: true)
+            .interactiveDismissDisabled(store.busy)
+            .task(id: store.recoveryDraft?.draftId) {
+                guard let draft = store.recoveryDraft else { return }
+                let remaining = max(0, draft.expiresAt / 1000 - Date().timeIntervalSince1970)
+                do { try await Task.sleep(for: .seconds(remaining)) } catch { return }
+                while store.busy {
+                    do { try await Task.sleep(for: .seconds(1)) } catch { return }
+                }
+                guard store.recoveryDraft?.draftId == draft.draftId else { return }
+                store.command("recoveryCancel", params: ["draftId": .string(draft.draftId)])
+                store.recoveryDraft = nil
+                revealed = false
+                fileSaved = false
+                codeSaved = false
+                error = "This recovery draft expired. Prepare another before confirming."
+            }
+            .onAppear { if loadStatus { store.command("recoveryStatus") } }
+            .onAppear { store.recoveryImportOutcome = nil }
+            .onDisappear { importCode = ""
+                importFile = nil
+                cancel()
+            }
+    }
+
+    private var recoveryContent: some View {
+        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.regular) {
             if let outcome = store.recoveryImportOutcome, outcome.verified {
                 Label(
                     outcome.status == "restored" ? "Library access restored" : "This Mac already has the matching protection",
@@ -67,7 +121,10 @@ struct DesktopRecoveryView: View {
                 Button("Save recovery file…") { saveEnvelope(draft) }.disabled(store.busy)
                 if fileSaved { Label("Recovery file saved", systemImage: "checkmark") }
                 Button(revealed ? "Hide recovery code" : "Reveal recovery code") { revealed.toggle() }
-                if revealed { Text(draft.recoveryCode).font(.body.monospaced()).privacySensitive() }
+                    .accessibilityIdentifier("recovery-protection-reveal")
+                if revealed { Text(draft.recoveryCode).font(.body.monospaced()).privacySensitive()
+                    .accessibilityIdentifier("recovery-protection-code")
+                }
                 Button("Save code separately…") { saveCode(draft) }.disabled(store.busy)
                 if codeSaved { Label("Recovery code saved", systemImage: "checkmark") }
                 Toggle("I have kept the code separate from the recovery file", isOn: $keptSeparately)
@@ -77,6 +134,7 @@ struct DesktopRecoveryView: View {
                     }
                     store.command("recoveryCommit", params: ["draftId": .string(draft.draftId)])
                 }.buttonStyle(DesktopButtonStyle(primary: true)).disabled(!fileSaved || !codeSaved || !keptSeparately || store.busy)
+                    .accessibilityIdentifier("recovery-protection-confirm")
             } else if let status = store.recoveryStatus {
                 if status.available {
                     Text(
@@ -105,39 +163,10 @@ struct DesktopRecoveryView: View {
                     if let name = store.state.homeName { LabeledContent("Library server", value: name) }
                 }
             } else { ProgressView("Checking recovery protection…") }
-            if let message = error ?? store.failure { Text(message).foregroundStyle(DesktopTheme.danger) }
-            HStack {
-                Spacer()
-                Button(store.recoverySaved ? "Done" : "Cancel") {
-                    if importing, store.busy { store.command("cancel") }
-                    importCode = ""
-                    cancel()
-                    dismiss()
-                }.disabled(store.busy && !importing).keyboardShortcut(.cancelAction)
+            if let message = error ?? store.failure { Text(message).foregroundStyle(DesktopTheme.danger)
+                .accessibilityIdentifier("recovery-protection-error")
             }
-        }.buttonStyle(DesktopButtonStyle()).padding(DesktopDesignTokens.Space.section).frame(width: 520)
-            .interactiveDismissDisabled(store.busy)
-            .task(id: store.recoveryDraft?.draftId) {
-                guard let draft = store.recoveryDraft else { return }
-                let remaining = max(0, draft.expiresAt / 1000 - Date().timeIntervalSince1970)
-                do { try await Task.sleep(for: .seconds(remaining)) } catch { return }
-                while store.busy {
-                    do { try await Task.sleep(for: .seconds(1)) } catch { return }
-                }
-                guard store.recoveryDraft?.draftId == draft.draftId else { return }
-                store.command("recoveryCancel", params: ["draftId": .string(draft.draftId)])
-                store.recoveryDraft = nil
-                revealed = false
-                fileSaved = false
-                codeSaved = false
-                error = "This recovery draft expired. Prepare another before confirming."
-            }
-            .onAppear { if loadStatus { store.command("recoveryStatus") } }
-            .onAppear { store.recoveryImportOutcome = nil }
-            .onDisappear { importCode = ""
-                importFile = nil
-                cancel()
-            }
+        }
     }
 
     private func chooseRecoveryFile() {
@@ -190,5 +219,13 @@ struct DesktopRecoveryView: View {
             file.discard()
             throw error
         }
+    }
+}
+
+private struct RecoveryProtectionBodyHeight: PreferenceKey {
+    static let defaultValue: CGFloat? = nil
+    static func reduce(value: inout CGFloat?, nextValue: () -> CGFloat?) {
+        guard let next = nextValue() else { return }
+        value = value.map { max($0, next) } ?? next
     }
 }

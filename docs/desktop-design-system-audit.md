@@ -187,8 +187,15 @@ Runtime interaction sheets also bound long messages and choices while keeping
 comparison codes beside their original warning and approval. The existing Cancel
 and browser-completion actions stay reachable. Compact, long and code-only body
 fixtures use the production presenter in both appearances; their native execution
-and capture inspection remain pending. The recovery-protection dialog still needs
-its long-content qualification.
+and capture inspection remain pending.
+
+Recovery protection bounds its variable states and full errors while keeping
+the heading and existing dismissal action visible. Recovery code masking,
+save confirmations, expiry and cancellation guards remain intact. Eighteen
+paired cases mount the actual recovery view through the shared sheet wrapper
+with status requests disabled. These qualify neither the production root's
+status request nor file dialogs or runtime cancellation. Native compilation,
+execution and capture inspection of this follow-up remain pending.
 
 ### Source follow-ups and earlier local evidence
 
