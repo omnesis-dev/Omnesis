@@ -732,10 +732,21 @@ final class DesktopStore {
         }
     }
 
-    func respond(_ value: String) {
-        guard let prompt = interaction else { return }
+    func respond(_ value: String, interactionID: String) {
+        guard let prompt = interaction, prompt.id == interactionID else { return }
         command("respond", params: ["interactionId": .string(prompt.id), "value": .string(value)])
         interaction = nil
+    }
+
+    func cancelInteraction(_ interactionID: String) {
+        guard interaction?.id == interactionID else { return }
+        command("cancel")
+        interaction = nil
+    }
+
+    func openInteractionBrowser(_ url: URL, interactionID: String) {
+        guard interaction?.id == interactionID else { return }
+        openBrowser(url)
     }
 
     func request(_ name: String, params: [String: BridgeValue] = [:]) async throws -> BridgeValue {

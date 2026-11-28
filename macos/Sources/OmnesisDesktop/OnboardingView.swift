@@ -300,17 +300,17 @@ struct RuntimeInteractionView: View {
                         Text(code).font(.largeTitle.monospaced()).textSelection(.enabled).accessibilityIdentifier("comparison-code")
                     }
                     Text("Only approve if the same code is shown on your other device.")
-                    Button("The codes match") { store.respond("approve") }.buttonStyle(DesktopButtonStyle(primary: true))
+                    Button("The codes match") { store.respond("approve", interactionID: interaction.id) }
+                        .buttonStyle(DesktopButtonStyle(primary: true))
                         .accessibilityIdentifier("runtime-prompt-approve")
                 }
             }
             HStack {
-                Button("Cancel") { store.command("cancel")
-                    store.interaction = nil
-                }.keyboardShortcut(.cancelAction).accessibilityIdentifier("runtime-prompt-cancel")
+                Button("Cancel") { store.cancelInteraction(interaction.id) }.keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("runtime-prompt-cancel")
                 Spacer()
                 if interaction.kind == "openBrowser" || interaction.kind == "connectCode" {
-                    Button("I’ve finished in the browser") { store.respond("continue") }
+                    Button("I’ve finished in the browser") { store.respond("continue", interactionID: interaction.id) }
                         .accessibilityIdentifier("runtime-prompt-continue")
                 }
             }
@@ -325,11 +325,12 @@ struct RuntimeInteractionView: View {
             }
             if let url = interaction.url {
                 Text("Continue securely in your browser, then return to Omnesis.").foregroundStyle(DesktopTheme.secondary)
-                Button("Open sign-in page") { store.openBrowser(url) }.buttonStyle(DesktopButtonStyle(primary: true))
+                Button("Open sign-in page") { store.openInteractionBrowser(url, interactionID: interaction.id) }
+                    .buttonStyle(DesktopButtonStyle(primary: true))
                     .accessibilityIdentifier("runtime-prompt-browser")
             }
             ForEach(interaction.choices ?? []) { choice in
-                Button(choice.name) { store.respond(choice.id) }.buttonStyle(.bordered)
+                Button(choice.name) { store.respond(choice.id, interactionID: interaction.id) }.buttonStyle(.bordered)
                     .accessibilityIdentifier("runtime-prompt-choice-" + choice.id)
             }
         }

@@ -36,6 +36,11 @@ responses; raw exception text and credentials must not become diagnostics.
 `RuntimeBridge.swift` launches the bundled Node and compiled CLI directly,
 without invoking a shell or locating a system installation.
 
+Native prompt controls retain the interaction ID they rendered. A replaced or
+dismissed prompt cannot answer, cancel or open a link for the current native
+prompt. Cancellation of a matching prompt retains the existing whole-operation
+abort behavior; this does not change the runtime protocol.
+
 Presentation and lifecycle authority have separate responsibilities:
 
 | Owner                    | Responsibilities                                                                                                                             |
