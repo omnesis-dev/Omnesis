@@ -17,7 +17,12 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { atomicWriteFileSync, readWindowsPrivateFileSync } from "@omnesis/core";
+import {
+  atomicWriteFileSync,
+  readWindowsPrivateFileSync,
+  ensurePrivateDirs,
+  codexKeyringAccount,
+} from "@omnesis/core";
 
 import {
   CodexAppServerRuntime,
@@ -26,13 +31,15 @@ import {
   type CodexTurnRunner,
 } from "./codex-app-server-backend.js";
 import { bindCodexPoolAuthOwner, prepareCodexPrivateState } from "./codex-private-state.js";
+import { assertNoManagedCodexAuthFile, managedCodexAuth } from "./codex-managed-auth.js";
 import type { AgentEvent, Logger } from "@omnesis/core";
 
 /**
  * Omnesis tracks one active turn per Codex app-server runtime. Each member
  * serializes its turns; the pool assigns FIFO waiters to idle members so up to
- * N turns run concurrently. Members have isolated CODEX_HOME state directories
- * and reconcile auth.json against one login-owning home.
+ * N turns run concurrently. Headless members reconcile auth.json against one
+ * login-owning home. Managed desktop members instead use the same scoped
+ * Keychain home with separate diagnostic state and workspaces.
  *
  * The gateway owns separate pools for interactive work, background work,
  * inference, and nested execution depths. A nested call always receives
@@ -62,7 +69,7 @@ export interface CodexRuntimePoolOptions {
     CodexAppServerRuntimeOptions,
     "codexHome" | "workspaceDir" | "logger"
   >;
-  /** The login-owning home whose `auth.json` every member shares. */
+  /** The login owner: headless members share its file; managed members use its Keychain scope. */
   readonly sharedHome: string;
   /** Base directory under which each member's isolated CODEX_HOME lives. */
   readonly poolHomeBase: string;
@@ -192,10 +199,12 @@ export class CodexRuntimePool implements CodexTurnRunner {
         const runtime = new CodexAppServerRuntime({
           ...opts.runtimeOptions,
           codexHome: home,
+          stateHome: join(opts.poolHomeBase, String(index)),
           workspaceDir: workspace,
           logger: this.log.child(`member-${index}`),
         });
-        bindCodexPoolAuthOwner(runtime, opts.sharedHome);
+        if (!managedCodexAuth(opts.runtimeOptions.env ?? process.env))
+          bindCodexPoolAuthOwner(runtime, opts.sharedHome);
         return runtime;
       });
     for (let index = 0; index < size; index += 1) {
@@ -204,7 +213,11 @@ export class CodexRuntimePool implements CodexTurnRunner {
         index,
         home,
         inFlight: 0,
-        runtime: createRuntime(home, join(opts.poolWorkspaceBase, String(index)), index),
+        runtime: createRuntime(
+          managedCodexAuth(opts.runtimeOptions.env ?? process.env) ? opts.sharedHome : home,
+          join(opts.poolWorkspaceBase, String(index)),
+          index,
+        ),
       });
     }
   }
@@ -302,6 +315,14 @@ export class CodexRuntimePool implements CodexTurnRunner {
 
   private async prepareMemberOwned(member: PoolMember): Promise<void> {
     if (this.disposed) throw new Error("Codex runtime pool disposed");
+    const env = this.opts.runtimeOptions.env ?? process.env;
+    if (managedCodexAuth(env)) {
+      codexKeyringAccount(this.opts.sharedHome);
+      codexKeyringAccount(member.home);
+      await ensurePrivateDirs([this.opts.sharedHome, member.home]);
+      await assertNoManagedCodexAuthFile(env, [this.opts.sharedHome, member.home]);
+      return;
+    }
     if (process.platform === "win32") {
       try {
         await (this.sharedPrivacy ??= prepareCodexPrivateState([this.opts.sharedHome]));

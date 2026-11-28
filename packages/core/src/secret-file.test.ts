@@ -13,9 +13,14 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { ensureInstallRootKey } from "./secret-store.js";
+import {
+  createSecretStore,
+  ensureInstallRootKey,
+  OMNESIS_INSTALL_ROOT_KEY,
+} from "./secret-store.js";
 import {
   clearSecretFileKeyCacheForTests,
+  invalidateSecretFileKeyCache,
   decodeSecretTextFileValue,
   decodeSecretTextFileValueSync,
   isEncryptedSecretFile,
@@ -26,6 +31,7 @@ import {
   readSecretTextFile,
   readSecretTextFileSync,
   secretFileEncryptionRequired,
+  serializeSecretFileValue,
   writeSecretJsonFile,
   writeSecretTextFile,
   writeSecretTextFileSync,
@@ -46,6 +52,32 @@ describe("secret-file encryption", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  test("empty protected text remains authenticated and interoperates between async and sync readers", async () => {
+    await ensureInstallRootKey({ backend: "file", configDir: dir });
+    const opts = { backend: "file" as const, configDir: dir };
+    await writeSecretTextFile(path, "", opts);
+    expect(isEncryptedSecretFile(readFileSync(path, "utf8"))).toBe(true);
+    expect(readSecretTextFileSync(path, opts)).toBe("");
+    expect(await readSecretTextFile(path, opts)).toBe("");
+    writeSecretTextFileSync(path, "Synchronous compatibility fixture", opts);
+    expect(await readSecretTextFile(path, opts)).toBe("Synchronous compatibility fixture");
+  });
+
+  test("production cache invalidation releases purged authority without reminting a root", async () => {
+    const opts = { backend: "file" as const, configDir: dir };
+    await ensureInstallRootKey(opts);
+    await primeSecretFileKeyCache(opts);
+    await writeSecretTextFile(path, "Invented protected content", opts);
+    const previous = readFileSync(path, "utf8");
+    const store = createSecretStore(opts);
+    await store.delete(OMNESIS_INSTALL_ROOT_KEY);
+    invalidateSecretFileKeyCache();
+    await expect(readSecretTextFile(path, opts)).rejects.toThrow("install root key");
+    await expect(writeSecretTextFile(path, "replacement", opts)).rejects.toThrow();
+    expect(readFileSync(path, "utf8")).toBe(previous);
+    expect(await store.read(OMNESIS_INSTALL_ROOT_KEY)).toBeNull();
+  });
+
   test("writes plaintext when no install root key exists", async () => {
     const result = await writeSecretTextFile(path, "plain-token", {
       backend: "file",
@@ -55,6 +87,22 @@ describe("secret-file encryption", () => {
     expect(result.encrypted).toBe(false);
     expect(readFileSync(path, "utf8")).toBe("plain-token");
     expect(await readSecretTextFile(path, { backend: "file", configDir: dir })).toBe("plain-token");
+  });
+
+  test("prepares scope-bound ciphertext without publishing before the caller's ownership fence", async () => {
+    const opts = { backend: "file" as const, configDir: dir };
+    await ensureInstallRootKey(opts);
+    const prepared = await serializeSecretFileValue(path, "Invented owner identity", opts);
+    expect(prepared.encrypted).toBe(true);
+    expect(existsSync(path)).toBe(false);
+    expect(prepared.value).not.toContain("Invented owner identity");
+    expect(await decodeSecretTextFileValue(path, prepared.value, opts)).toBe(
+      "Invented owner identity",
+    );
+    await expect(
+      decodeSecretTextFileValue(join(dir, "other-key"), prepared.value, opts),
+    ).rejects.toThrow();
+    expect(existsSync(path)).toBe(false);
   });
 
   test("writes and reads an encrypted envelope once a root key exists", async () => {
@@ -265,6 +313,7 @@ describe("writing secrets while the keyring directory is unreadable", () => {
       try {
         const result = await writeSecretTextFile(path, JSON.stringify({ token: "abc" }), {
           configDir,
+          backend: "auto",
         });
         expect(result.encrypted).toBe(true);
         expect(isEncryptedSecretFile(readFileSync(path, "utf8"))).toBe(true);

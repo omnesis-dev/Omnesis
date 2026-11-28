@@ -128,7 +128,7 @@
             <li><a href="search">Search</a></li>
             <li><a href="agent">The agent</a></li>
             <li><a href="connect">Agents &amp; MCP</a></li>
-            <li><a href="apps">Mobile apps</a></li>
+            <li><a href="apps">Apps</a></li>
             <li><a href="notifications">Notifications</a></li>
             <li><a href="operating">Operating</a></li>
             <li>
@@ -179,6 +179,23 @@
           gateway and collector refuse to start rather than open data unencrypted. The installer
           offers encryption on a fresh install; this section covers turning it on later, headless
           machines, and recovery.
+        </p>
+
+        <p>
+          With a root key available, document exports, analytics CSV, backup configuration copies
+          and their full manifests are encrypted as they are written. A keyed database snapshot
+          retains its database encryption before the backup adds its artifact envelope. Archive
+          filenames and public manifest metadata remain readable. On an installation that requires
+          encryption, conversation histories, their summary index, background transcripts, standing
+          instructions and sweep files are also encrypted on disk. Edit instructions and sweeps
+          through Omnesis. Existing prose is protected before the library opens. Plaintext headless
+          installations keep their editable Markdown files.
+        </p>
+        <p>
+          The Mac app also requires the home computer to report protected live storage before a
+          joined Mac can open the library or collect data. A missing or older protection report
+          keeps the connection unavailable; open or update Omnesis on the home computer to repair
+          it.
         </p>
 
         <h3 id="encryption-setup">Turn it on</h3>
@@ -329,6 +346,15 @@
         </p>
 
         <h3 id="recovery">Recovery code</h3>
+        <p>
+          The Mac app requires encrypted local storage and uses its own Keychain identity, separate
+          from a command-line installation. On the Mac that keeps the library, Settings → General →
+          Recovery protection prepares a recovery file and a separate code from the existing key.
+          Save them deliberately and keep the code somewhere other than this computer. Cancelling
+          setup leaves the existing protection unchanged. Replacing recovery protection requires
+          confirmation; keep the new file and code together with the backups they protect. Preparing
+          recovery on a joined Mac does not export the library Mac's key.
+        </p>
         <p>
           Losing the root key means losing every encrypted store and every encrypted backup made
           with it. <code>omnesis keyring export-recovery</code> writes a recovery envelope into the

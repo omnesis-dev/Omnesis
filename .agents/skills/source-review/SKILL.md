@@ -259,6 +259,26 @@ through the registry. Verify:
   failing ceiling through the wrapper and runner with the prior cursor intact.
   Class instances retain getters, private-field receivers and lifecycle hooks.
 
+### Local permission capability
+
+- Required-root capability must not be confused with full enumeration coverage. For folder sources, bind instance `probePermissionAccess` to actual resolved roots and retain the full-tree doctor/read-gap checks. Large legitimate folders must not be permanently unverified merely because exhaustive health discovery is bounded.
+
+- If access is needed, declare provider-owned `permissionRequirements` with precise scope,
+  bounded display text and fixed action kinds. Omitted is unknown; `[]` means no local
+  permission is required. Do not prescribe FDA for cloud-only sources or every local folder.
+- Candidate and configured `probePermissionAccess` (or the configured `probeReadAccess` fallback) perform fresh bounded
+  metadata checks inside the collector, without creating providers, reading records,
+  refreshing credentials or saving state. Close late handles and preserve physical ownership.
+- A readable result is source/device/scope access, not a global OS authorization or proof of
+  the responsible application. Never read TCC databases or equate Settings navigation with a grant.
+- Readers that safely catch real EPERM/EACCES report `permissionDenied: true` on the page. Generic gaps, corrupt input and scan ceilings must not manufacture permission denial. Managed retry keeps known negative access evidence until actual successful completion.
+- Test denied → regrant and loss during enumeration. Preserve cursors and existing data;
+  withhold snapshots, tombstones and pages on explicitly denied reads. Bounded or indeterminate
+  health scans stay unknown, not granted; configured readers may continue only under their own
+  existing incomplete-enumeration/snapshot safeguards. Test large legitimate trees beyond the
+  health-scan limit. Healthy siblings continue; headless defaults remain compatible. A probe
+  cannot excuse incomplete-reader bugs.
+
 ## 4. Auth and credentials
 
 - `authType` matches the real flow (`oauth | qr | api-key | link-widget |
@@ -575,6 +595,20 @@ includeAudioTypes })` and the injected `extractAttachment`; no bespoke
   shows "docs" and its raw type id. Flag it, and prefer the generic fix over
   extending the switch.
 - The rendered check (portal sources page and timeline) is a § 17 item.
+
+- External installation guides declare provider-owned `setupGuideContent` alongside
+  their existing opaque `setupGuide` marker. Check both descriptor extraction paths
+  and JSON projection. Source-specific instructions, install URLs and credential
+  explanations stay in the provider; shared clients render bounded, versioned plain
+  content and safe HTTPS links. Cross-client string limits use explicit UTF-8 bytes;
+  include combining-mark/emoji boundary regressions. Optional device pairing only navigates existing
+  first-party setup: no scopes, credentials, code issuance or arbitrary commands.
+  Preserve legacy markers for older clients and declaration presence for explicit
+  null/content-only metadata; only two absent fields permit ordinary collector setup.
+  Test unknown/missing/malformed content,
+  unsafe links, no collector/auth fallback or false completion, and the new-native /
+  old-gateway authenticated portal fallback. Render and inspect both native and portal
+  supported/fallback states after any guide UI change.
 
 ## 11. Watch and the ontology
 

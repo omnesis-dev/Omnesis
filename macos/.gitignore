@@ -1,0 +1,12 @@
+.build/
+.swiftpm/
+OmnesisDesktop.xcodeproj/
+build/
+DerivedData/
+Local.xcconfig
+
+.node-fixture/
+.codex-keychain-fixture/
+.analytics-build-fixture/
+.package-build-fixture/
+.codex-backend-fixture/

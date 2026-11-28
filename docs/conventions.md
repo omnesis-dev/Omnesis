@@ -1559,6 +1559,7 @@ When you set out to write code that matches one of the patterns above, open the 
 | Pattern                            | Canonical example                                                                                                     |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | Developer check admission          | `scripts/run-check.mjs` + `scripts/lib/check-process.mjs`                                                             |
+| Native desktop presentation        | `docs/desktop-design-system.md` (foundation files and screen usage)                                                   |
 | File-backed SQLite logic fixtures  | `packages/gateway/src/near-dupes/meta.test.ts`                                                                        |
 | `defineSource()` over class        | `packages/providers/things/src/index.ts`                                                                              |
 | Façade (data layer)                | `packages/gateway/src/analytics-db.ts`                                                                                |

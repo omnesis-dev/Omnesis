@@ -2,6 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { readFile, lstat } from "node:fs/promises";
+import { dirname } from "node:path";
+import { ManagedTextFiles } from "../managed-text-files.js";
 
 export interface ConversationRetentionFile {
   id: string;
@@ -69,7 +71,12 @@ export async function readConversationCleanupCandidates(
         out.push({ id: file.id, bytesEstimate: 0, protectedReason: "unsafe" });
         continue;
       }
-      const parsed: unknown = JSON.parse(await readFile(file.path, "utf8"));
+      const parsed: unknown = JSON.parse(
+        await new ManagedTextFiles(dirname(dirname(file.path))).decode(
+          file.path,
+          await readFile(file.path, "utf8"),
+        ),
+      );
       const after = await lstat(file.path, { bigint: true });
       if (fileIdentity(before) !== fileIdentity(after)) {
         out.push({ id: file.id, bytesEstimate: 0, protectedReason: "changed" });

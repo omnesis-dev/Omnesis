@@ -20,6 +20,7 @@ import { lazy } from "./lib/lazy.js";
 // etc. transitively pulled in by the heavier views) down to just the
 // preact + htm + search-view shell on first paint of /portal/.
 import { SearchView } from "./views/search.js";
+import { RecordingRestoreReview } from "./components/recording-restore-review.js";
 import {
   checkSession,
   login,
@@ -834,6 +835,7 @@ function App() {
       </aside>
 
       <main class="app-main">
+        <${RecordingRestoreReview} refreshKey=${`${route.view}:${route.tab ?? ""}`} />
         <${WaitingDevicesBanner}
           devices=${attention.devices}
           paused=${route.view === "settings" && route.tab === "devices"}

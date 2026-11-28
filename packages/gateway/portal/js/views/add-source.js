@@ -54,7 +54,7 @@ import { KindIcon } from "../lib/device-kind-icon.js";
 import { AuthStep, useAuthFlow } from "../components/auth-flow.js";
 import { ConfirmModal } from "../components/confirm-modal.js";
 import { CopyBlock } from "../components/copy-button.js";
-import { ExtensionPromoCard } from "../components/extension-promo.js";
+import { SourceSetupGuide, hasSourceSetupGuide } from "../components/source-setup-guide.js";
 import { SetupMarkdown } from "../components/setup-markdown.js";
 import { CredentialsWizard } from "./credentials-wizard.js";
 
@@ -627,14 +627,14 @@ export function AddSourceModal({ onClose, onAdded }) {
   const visibleDescriptors = useMemo(() => {
     return descriptors
       .map((d) => {
-        const state = d.setupGuide === "browser-extension"
+        const state = hasSourceSetupGuide(d)
           ? { kind: "add" }
           : describeTileState(d, registeredSources, devices);
         return { d, state, configured: state.kind === "configured" };
       })
       // Externally fed sources with an install guide stay discoverable;
       // their guide replaces the collector setup flow.
-      .filter(({ d }) => d.setupGuide === "browser-extension" || !(d.pushBased || d.execution === "external"))
+      .filter(({ d }) => hasSourceSetupGuide(d) || !(d.pushBased || d.execution === "external"))
       .filter(({ d }) => {
         if (!filter.trim()) return true;
         const q = filter.toLowerCase();
@@ -673,7 +673,7 @@ export function AddSourceModal({ onClose, onAdded }) {
     setMoveTarget(null);
     setMemberAction(null);
 
-    if (d.setupGuide === "browser-extension") {
+    if (hasSourceSetupGuide(d)) {
       setStep("installation");
       return;
     }
@@ -1164,7 +1164,7 @@ export function AddSourceModal({ onClose, onAdded }) {
       hasDescriptors=${descriptors.length > 0}
     />`,
     installation: () => html`
-      <${ExtensionPromoCard} />
+      <${SourceSetupGuide} descriptor=${descriptor} />
       <div class="add-source-actions">
         <button class="btn-tiny" onClick=${() => setStep("picker")}>Back</button>
       </div>

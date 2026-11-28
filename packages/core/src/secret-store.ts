@@ -15,6 +15,12 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { runManagedKeyRecoveryCommand } from "./managed-key-recovery.js";
+import {
+  managedRuntimeExecutableInvocation,
+  managedDesktopMetadataInvocation,
+  managedRuntimeSubprocessStdio,
+} from "./node-command.js";
 import { atomicWriteFile } from "./atomic-write.js";
 import {
   openStringEnvelope,
@@ -42,6 +48,7 @@ import {
   retireLegacySecretEntry,
   deleteSecretEntry,
 } from "./secret-store-entry.js";
+import type { ManagedDesktopKeyRecoveryContext } from "./node-command.js";
 
 export const OMNESIS_SECRET_SERVICE = DEFAULT_SECRET_STORE_SERVICE;
 export const OMNESIS_INSTALL_ROOT_KEY = "install-root-key-v1";
@@ -79,7 +86,7 @@ const PASSPHRASE_ENVELOPE_MARKER = "omnesis.passphrase-secret";
 /**
  * Every environment variable the secret store reads to reach its keys — the
  * three sources {@link resolveKeyringPassphrase} consults, plus the backend
- * selector.
+ * and service namespace selectors.
  *
  * Anything that hands a child process a curated environment instead of
  * inheriting one must forward these, or the child selects a backend it has no
@@ -88,8 +95,8 @@ const PASSPHRASE_ENVELOPE_MARKER = "omnesis.passphrase-secret";
  * it: a new source added to the resolver is added here in the same change and
  * every restricted environment picks it up.
  *
- * Note what forwarding all of them means. Three are locators — a backend name
- * and two paths — but `OMNESIS_KEYRING_PASSPHRASE` is the passphrase itself,
+ * Note what forwarding all of them means. Backend/service names and paths
+ * are locators, but `OMNESIS_KEYRING_PASSPHRASE` is the passphrase itself,
  * so a child given the whole list can read it out of its own environment. That
  * is the right trade for a child that must open the same keys as its parent;
  * it is the wrong one for a child that must not, and such a caller should take
@@ -97,6 +104,7 @@ const PASSPHRASE_ENVELOPE_MARKER = "omnesis.passphrase-secret";
  */
 export const KEYRING_ENV_KEYS: readonly string[] = [
   "OMNESIS_SECRET_STORE",
+  "OMNESIS_SECRET_SERVICE",
   PASSPHRASE_ENV,
   PASSPHRASE_FILE_ENV,
   // Set by systemd for a unit with `LoadCredential=`; the passphrase file
@@ -113,6 +121,9 @@ export interface SecretCommandResult {
 export interface SecretCommandOptions {
   /** Secret Service accepts secrets on stdin; macOS `security` does not. */
   input?: string;
+  metadataGeneration?: string;
+  /** A fixed, original-key recovery operation; never ordinary Keychain mutation authority. */
+  keyRecovery?: ManagedDesktopKeyRecoveryContext;
 }
 
 export type SecretCommandRunner = (
@@ -173,10 +184,21 @@ export function parseSecretStoreBackend(raw: string | undefined): SecretStoreBac
   );
 }
 
+/** Resolve an install namespace without letting environment input escape a file backend. */
+export function resolveSecretStoreService(raw = process.env.OMNESIS_SECRET_SERVICE): string {
+  if (raw === undefined) return OMNESIS_SECRET_SERVICE;
+  if (raw.length > 255 || !/^[A-Za-z0-9]/.test(raw) || /[^A-Za-z0-9._-]/.test(raw)) {
+    throw new Error(
+      "Invalid OMNESIS_SECRET_SERVICE: expected a service identifier using letters, digits, dots, underscores or dashes.",
+    );
+  }
+  return raw;
+}
+
 export function createSecretStore(opts: CreateSecretStoreOptions = {}): SecretStore {
   const requestedBackend =
     opts.backend ?? parseSecretStoreBackend(process.env.OMNESIS_SECRET_STORE);
-  const service = opts.service ?? OMNESIS_SECRET_SERVICE;
+  const service = opts.service ?? resolveSecretStoreService();
   const platform = opts.platform ?? process.platform;
   const runCommand = opts.runCommand ?? defaultSecretCommandRunner;
   const configDir = opts.configDir ?? DEFAULT_CONFIG_DIR;
@@ -248,7 +270,7 @@ export function readInstallRootKeySync(opts: CreateSecretStoreOptions = {}): str
   const requestedBackend =
     opts.backend ?? parseSecretStoreBackend(process.env.OMNESIS_SECRET_STORE);
   const platform = opts.platform ?? process.platform;
-  const service = opts.service ?? OMNESIS_SECRET_SERVICE;
+  const service = opts.service ?? resolveSecretStoreService();
   const configDir = opts.configDir ?? DEFAULT_CONFIG_DIR;
   const backend =
     requestedBackend === "auto"
@@ -311,14 +333,13 @@ export function readInstallRootKeySync(opts: CreateSecretStoreOptions = {}): str
       return isInstallRootKey(value) ? value : null;
     }
     if (backend === "macos-keychain") {
-      const res = spawnSync("security", [
-        "find-generic-password",
-        "-a",
-        OMNESIS_INSTALL_ROOT_KEY,
-        "-s",
-        service,
-        "-w",
-      ]);
+      const invocation = managedRuntimeExecutableInvocation(
+        process.platform === "darwin" ? "/usr/bin/security" : "security",
+        ["find-generic-password", "-a", OMNESIS_INSTALL_ROOT_KEY, "-s", service, "-w"],
+      );
+      const res = spawnSync(invocation.command, invocation.args, {
+        stdio: managedRuntimeSubprocessStdio(["pipe", "pipe", "pipe"]),
+      });
       if (res.status !== 0 || res.error) return null;
       const value = stripFinalNewline(String(res.stdout ?? ""));
       return isInstallRootKey(value) ? value : null;
@@ -412,9 +433,51 @@ export function isInstallRootKey(value: string): boolean {
   return ROOT_KEY_RE.test(value);
 }
 
-export const defaultSecretCommandRunner: SecretCommandRunner = (cmd, args, options = {}) =>
-  new Promise((resolve) => {
-    const child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
+/** Authoritative absence for a narrowly named macOS service; access errors never mean missing. */
+export async function confirmMacosKeychainEntriesAbsent(
+  names: readonly string[],
+  options: CreateSecretStoreOptions,
+  metadataGeneration?: string,
+): Promise<boolean> {
+  if (
+    names.length < 1 ||
+    names.length > 8 ||
+    names.some((name) => !name || name.length > 256 || /[\x00-\x1f\x7f]/u.test(name))
+  )
+    throw new Error("Invalid Keychain absence request");
+  if (options.backend !== "macos-keychain")
+    throw new Error("A scoped macOS Keychain backend is required");
+  const runner = options.runCommand ?? defaultSecretCommandRunner;
+  const store = createSecretStore(
+    metadataGeneration
+      ? {
+          ...options,
+          runCommand: (cmd, args, opts) =>
+            runner(
+              cmd,
+              args,
+              args[0] === "find-generic-password" ? { ...opts, metadataGeneration } : opts,
+            ),
+        }
+      : options,
+  );
+  if (!(store instanceof MacosKeychainSecretStore) || !(await store.status()).available)
+    throw new Error("macOS Keychain is unavailable");
+  for (const name of names) if (!(await store.confirmAbsent(name))) return false;
+  return true;
+}
+
+export const defaultSecretCommandRunner: SecretCommandRunner = (cmd, args, options = {}) => {
+  if (options.keyRecovery) return runManagedKeyRecoveryCommand(cmd, args, options.keyRecovery);
+  return new Promise((resolve) => {
+    const executable =
+      process.platform === "darwin" && cmd === "security" ? "/usr/bin/security" : cmd;
+    const invocation = options.metadataGeneration
+      ? managedDesktopMetadataInvocation(executable, args, options.metadataGeneration)
+      : managedRuntimeExecutableInvocation(executable, args);
+    const child = spawn(invocation.command, invocation.args, {
+      stdio: managedRuntimeSubprocessStdio(["pipe", "pipe", "pipe"]),
+    });
     let settled = false;
     let stdout = "";
     let stderr = "";
@@ -425,12 +488,12 @@ export const defaultSecretCommandRunner: SecretCommandRunner = (cmd, args, optio
       resolve(result);
     };
 
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => {
+    child.stdout!.setEncoding("utf8");
+    child.stderr!.setEncoding("utf8");
+    child.stdout!.on("data", (chunk) => {
       stdout += chunk;
     });
-    child.stderr.on("data", (chunk) => {
+    child.stderr!.on("data", (chunk) => {
       stderr += chunk;
     });
     child.on("error", (err) => {
@@ -439,13 +502,13 @@ export const defaultSecretCommandRunner: SecretCommandRunner = (cmd, args, optio
     child.on("close", (code) => {
       finish({ code: code ?? 1, stdout, stderr });
     });
-    child.stdin.on("error", (err) => {
+    child.stdin!.on("error", (err) => {
       if ((err as NodeJS.ErrnoException).code === "EPIPE") return;
       finish({ code: 127, stdout, stderr: stderr || err.message });
     });
 
     try {
-      child.stdin.end(options.input ?? "");
+      child.stdin!.end(options.input ?? "");
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
       if (e.code !== "EPIPE") {
@@ -453,6 +516,7 @@ export const defaultSecretCommandRunner: SecretCommandRunner = (cmd, args, optio
       }
     }
   });
+};
 
 class MacosKeychainSecretStore implements SecretStore {
   readonly backend = "macos-keychain" as const;
@@ -521,7 +585,37 @@ class MacosKeychainSecretStore implements SecretStore {
   }
 
   async delete(name: string): Promise<void> {
-    await this.runCommand("security", ["delete-generic-password", "-a", name, "-s", this.service]);
+    const result = await this.runCommand("security", [
+      "delete-generic-password",
+      "-a",
+      name,
+      "-s",
+      this.service,
+    ]);
+    if (result.code !== 0 && result.code !== 44)
+      throw new Error(
+        "macOS Keychain did not confirm deletion. Unlock the login Keychain and retry.",
+      );
+    if (!(await this.confirmAbsent(name)))
+      throw new Error(
+        "The macOS Keychain item remains after deletion. Unlock the login Keychain and retry.",
+      );
+  }
+
+  async confirmAbsent(name: string): Promise<boolean> {
+    // Query metadata only: a presence check must never retrieve or echo the secret.
+    const result = await this.runCommand("security", [
+      "find-generic-password",
+      "-a",
+      name,
+      "-s",
+      this.service,
+    ]);
+    if (result.code === 44) return true;
+    if (result.code === 0) return false;
+    throw new Error(
+      "macOS Keychain could not confirm absence. Unlock the login Keychain and retry.",
+    );
   }
 }
 

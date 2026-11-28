@@ -150,7 +150,7 @@ describe("CI lane scope", { timeout: 30_000 }, () => {
   });
 
   test.each([
-    ["ios/Sources/Omnesis/App.swift", ["apple", "swift_lint"]],
+    ["ios/Sources/Omnesis/App.swift", ["apple", "desktop", "swift_lint"]],
     ["android/app/src/main/java/dev/omnesis/Ui.kt", ["android_render"]],
     ["scripts/install.sh", ["installer_coverage", "node_macos"]],
     ["packages/providers/apple-notes/src/index.ts", ["node_macos"]],
@@ -167,7 +167,7 @@ describe("CI lane scope", { timeout: 30_000 }, () => {
     expect(failed.scope).toBe("full");
     expect(lanesOf(failed)).toEqual(linuxLanes);
     const ios = pullRequestFullScope("boom", ["ios/Sources/Omnesis/App.swift"]);
-    expect(lanesOf(ios)).toEqual([...linuxLanes, "apple", "swift_lint"].sort());
+    expect(lanesOf(ios)).toEqual([...linuxLanes, "apple", "desktop", "swift_lint"].sort());
     // Without a file list nothing says a macOS lane is unneeded, so they run.
     expect(lanesOf(pullRequestFullScope("boom", null))).toEqual([...LANES].sort());
     expect(lanesOf(fullScope("boom"))).toEqual([...LANES].sort());
@@ -187,14 +187,23 @@ describe("CI lane scope", { timeout: 30_000 }, () => {
 
   test("the macOS lanes are exactly the lanes that take a macOS runner", () => {
     expect([...MACOS_LANES].sort()).toEqual(
-      ["android_render", "apple", "installer_coverage", "node_macos", "swift_lint"].sort(),
+      [
+        "android_render",
+        "apple",
+        "desktop",
+        "installer_coverage",
+        "node_macos",
+        "swift_lint",
+      ].sort(),
     );
     for (const lane of MACOS_LANES) expect(LANES).toContain(lane);
   });
 
   test.each([
-    ["ios/Sources/Omnesis/App.swift", ["apple", "swift_lint"]],
+    ["ios/Sources/Omnesis/App.swift", ["apple", "desktop", "swift_lint"]],
     ["scripts/ios-logic.sh", ["apple", "swift_lint"]],
+    ["macos/Sources/OmnesisDesktop/OmnesisApp.swift", ["desktop"]],
+    ["scripts/macos-logic.sh", ["desktop"]],
     ["android/app/src/main/java/dev/omnesis/Ui.kt", ["android", "android_render"]],
     [
       "scripts/install.sh",
@@ -249,6 +258,7 @@ describe("CI lane scope", { timeout: 30_000 }, () => {
     const scope = scopeOf([file]);
     expect(scope.scope).toBe("affected");
     const native = [
+      "desktop",
       "apple",
       "swift_lint",
       "android",

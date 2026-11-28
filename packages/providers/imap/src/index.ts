@@ -70,6 +70,7 @@ const ADDRESS_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default defineProvider<ImapContext>({
   provider: { id: "imap", name: "IMAP" },
+  permissionRequirements: [],
   authType: "api-key",
   credentials: imapCredentialsSpec,
 

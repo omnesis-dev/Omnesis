@@ -163,7 +163,7 @@ export async function checkSession() {
     const res = await fetch("/portal/api/session", { credentials: "same-origin", signal: controller.signal });
     const data = await res.json();
     _authenticated = data.authenticated;
-    _scope = data.scope ?? null;
+    _scope = data.scope ?? data.scopes ?? null;
     _csrfToken = data.authenticated ? (data.csrfToken ?? null) : null;
     if (data.authenticated) resetSessionExpired();
     return data;
@@ -193,7 +193,7 @@ export async function login(token) {
   const data = await res.json();
   if (data.ok) {
     _authenticated = true;
-    _scope = data.scope;
+    _scope = data.scope ?? data.scopes ?? null;
     _csrfToken = data.csrfToken ?? null;
     resetSessionExpired();
   }
@@ -217,6 +217,7 @@ export function isAuthenticated() {
   return _authenticated;
 }
 
+/** Cached session scope(s) only; protected requests are always authorized by the gateway. */
 export function getScope() {
   return _scope;
 }

@@ -121,12 +121,26 @@ export interface SyncIssueAssessment {
  * audience as `errorMessage` — the administrative status routes and every
  * paired device's status stream — and nothing wider.
  */
+/** Fixed UI actions, never a provider-supplied URL, executable or shell command. */
+export type PermissionAction =
+  | {
+      kind: "open-system-settings";
+      category: "full-disk-access" | "files-and-folders" | "privacy-security";
+    }
+  | { kind: "retry-access" }
+  | { kind: "restart-collector" }
+  | { kind: "choose-folder" };
+
 export interface SyncRemediation {
+  /** Scoped negative evidence invalidates an earlier local-source access proof, never grants OS access. */
+  access?: { status: "denied"; checkedAt: string; scopeDigest: string; target: "unverified" };
+  /** Optional bounded, platform-neutral affordances for capable clients. */
+  actions?: PermissionAction[];
   /** The condition in one line, e.g. "Full Disk Access is required". */
   summary: string;
   /** What the operator does, in order; each step one sentence. */
   steps: string[];
-  /** The executable the grant must be given to — the one running the collector. */
+  /** Legacy headless executable guidance, not a verified native responsible-app identity. */
   executable?: string;
   /** Whether the collector must be restarted once the steps are done. */
   restartRequired: boolean;

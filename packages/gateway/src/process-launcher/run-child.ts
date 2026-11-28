@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { killWindowsJob, runWindowsJob } from "@omnesis/core";
+import { killWindowsJob, runWindowsJob, nodeCommandInvocation } from "@omnesis/core";
 
 /** How to run one short-lived external program and what to collect from it. */
 export interface RunProcessOptions {
@@ -74,6 +74,7 @@ export function runChild(
   onSpawn?: (pid: number) => void,
 ): Promise<ProcessResult> {
   if (process.platform === "win32") return runWindowsJob(command, args, opts, onSpawn);
+  const invocation = nodeCommandInvocation(command, args);
   return new Promise((resolve) => {
     const empty = (failure: ProcessResult["failure"], failureMessage?: string): ProcessResult => ({
       exitCode: null,
@@ -89,7 +90,7 @@ export function runChild(
     }
     let proc: ChildProcess;
     try {
-      proc = spawn(command, [...args], {
+      proc = spawn(invocation.command, invocation.args, {
         detached: process.platform !== "win32",
         windowsHide: true,
         stdio: [

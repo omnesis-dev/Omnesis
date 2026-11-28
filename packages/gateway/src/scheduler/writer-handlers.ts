@@ -1467,6 +1467,8 @@ export const writerHandlers = {
     id: string,
     patch: {
       config?: Record<string, unknown>;
+      memberConfigOverride?: Record<string, unknown>;
+      expectedRevision?: string;
       enabled?: boolean;
       deviceId?: DeviceId;
       expectDeviceId?: DeviceId;
@@ -1525,6 +1527,7 @@ export const writerHandlers = {
     configOverride: Record<string, unknown>,
     memberScopedParams: readonly string[],
     pairingFence?: PairingGenerationFence,
+    expectedRevision?: string,
   ) =>
     withPairingGenerationFence(db, pairingFence, () =>
       updateExistingSourceMemberConfigOverride(
@@ -1533,6 +1536,7 @@ export const writerHandlers = {
         DeviceId(deviceId),
         configOverride,
         memberScopedParams,
+        expectedRevision,
       ),
     ),
   "sources.removeMember": (
@@ -1580,9 +1584,14 @@ export const writerHandlers = {
     recordSourceStreamCleanupFailure(db, job, message),
   "sources.completeStreamCleanup": (db: Db, job: SourceStreamCleanupJob) =>
     completeSourceStreamCleanup(db, job),
-  "sources.removeSource": (db: Db, id: string, pairingFence?: PairingGenerationFence) =>
+  "sources.removeSource": (
+    db: Db,
+    id: string,
+    pairingFence?: PairingGenerationFence,
+    expectedRevision?: string,
+  ) =>
     withPairingGenerationFence(db, pairingFence, () =>
-      removeSourceWithPermissionInvalidation(db, SourceId(id)),
+      removeSourceWithPermissionInvalidation(db, SourceId(id), Date.now(), expectedRevision),
     ),
   "sources.markSourceRemoved": (db: Db, id: string, opts?: { cleanupPending?: boolean }) =>
     markSourceRemoved(db, SourceId(id), opts),

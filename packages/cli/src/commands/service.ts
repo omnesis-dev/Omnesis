@@ -62,6 +62,7 @@ import {
   repositoryNeedsCredential,
   resolveBootstrapTarget,
 } from "../service/hardened-bootstrap.js";
+import { macServerGuidance } from "./mac-server-guidance.js";
 
 const COMPONENT_CHOICES = `${SERVICE_COMPONENTS.join(" | ")} | all`;
 
@@ -875,6 +876,8 @@ const serviceInstallCommand = defineCommand({
         `Installed and started ${c.bold}${supervisor.unitName(component, instance)}${c.reset} ${c.dim}(${supervisor.unitPath(component, instance)})${c.reset}`,
       );
       console.log(`  ${c.dim}exec: ${exec.join(" ")}${c.reset}`);
+      const availabilityGuide = macServerGuidance(supervisor.platform, component === "gateway");
+      if (availabilityGuide) process.stdout.write(`\n${availabilityGuide}\n\n`);
       const fdaNote = collectorFdaNote(component, supervisor.platform, process.execPath);
       if (fdaNote) {
         console.log(`  ${c.yellow}${fdaNote}${c.reset}`);

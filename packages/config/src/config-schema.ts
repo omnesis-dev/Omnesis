@@ -3801,7 +3801,7 @@ const dictationSettings = z
 
 // Recorded conversations (experimental). `speakers` tells the voices of one
 // recording apart so the owner can say who each speaker is: `local` runs
-// sherpa-onnx on the gateway (its two models, about 46 MB, are downloaded
+// sherpa-onnx on the gateway (its voice models are downloaded
 // into the models directory on first use), `replay` is the test double.
 // `keepAudioDays` keeps each chunk's audio that long after it is transcribed,
 // for the portal to play; 0, the default, deletes it at once.
@@ -3812,6 +3812,12 @@ const dictationSettings = z
 // silences that long, each written as soon as it ends; 0 never splits.
 const recordingsSettings = z
   .object({
+    restoreReviewRequired: z
+      .boolean()
+      .optional()
+      .describe(
+        "Restored recording history remains inert until the owner reviews transcription, speaker models and audio deletion. Explicit false acknowledges those choices.",
+      ),
     speakers: z
       .enum(["off", "local", "replay"])
       .describe(

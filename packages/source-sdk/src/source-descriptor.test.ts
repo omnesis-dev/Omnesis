@@ -114,3 +114,30 @@ describe("serializeDescriptor", () => {
     ]);
   });
 });
+
+describe("provider-owned setup guide projection", () => {
+  it("carries generic guide content through JSON without changing a legacy string marker", () => {
+    const content = {
+      version: 1 as const,
+      title: "Install a companion",
+      paragraphs: ["Install and connect the companion."],
+      links: [{ label: "Get companion", url: "https://companion.example.com/install" }],
+      pairing: { deviceKind: "browser" as const, label: "Open device setup" },
+    };
+    const wire = JSON.parse(
+      JSON.stringify(
+        serializeDescriptor(
+          descriptor({ setupGuide: "browser-extension", setupGuideContent: content }),
+        ),
+      ),
+    );
+    expect(wire.setupGuide).toBe("browser-extension");
+    expect(wire.setupGuideContent).toEqual(content);
+    const legacy = JSON.parse(
+      JSON.stringify(serializeDescriptor(descriptor({ setupGuide: "legacy-companion" }))),
+    );
+    expect(legacy.setupGuide).toBe("legacy-companion");
+    expect(legacy).not.toHaveProperty("setupGuideContent");
+    expect(serializeDescriptor(descriptor()).setupGuideContent).toBeUndefined();
+  });
+});

@@ -33,7 +33,6 @@ import { CopyBlock, CopyValue } from "../components/copy-button.js";
 import { navigate, replaceRoute } from "../lib/router.js";
 import { accessLevels, accessRules, errorMessage, overviewPolicies } from "./access/shared.js";
 import { answerPrivacySummary, reachSummary } from "./access/terms.js";
-import { CHROME_WEB_STORE_URL } from "../lib/extension-links.js";
 import { TESTFLIGHT_URL } from "../lib/ios-links.js";
 import { ANDROID_OPT_IN_URL, ANDROID_TESTER_GROUP_URL } from "../lib/android-links.js";
 import { KindIcon, PairKindIcon } from "../lib/device-kind-icon.js";
@@ -1153,7 +1152,7 @@ export function PairInstructions({ pairResult, identities, selectedHostIdx, setS
         <ul class="devices-pair-ext-steps">
           <li>Gateway URL: <${CopyValue} text=${origin} title="Copy gateway URL" /></li>
         </ul>
-        <p class="devices-pair-ext-note">The extension redeems the code itself and stores its credential. Don't have it yet? <a href=${CHROME_WEB_STORE_URL} target="_blank" rel="noreferrer noopener">Install it from the Chrome Web Store</a>.</p>
+        <p class="devices-pair-ext-note">The extension redeems the code itself and stores its credential. For installation instructions, open Sources and choose Add source.</p>
       </div>
     `;
   }

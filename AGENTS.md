@@ -45,6 +45,7 @@ packages/agent-integration/ shared off-host integration runtime for OpenClaw and
 extension/             Chrome MV3 browser-capture extension — pairs as a `browser` device with a `write:web` token and pushes visited pages to the gateway-hosted `web` source; experimental Tell Omnesis notes and Find search require gateway `OMNESIS_EXPERIMENTAL=1` and use separately issued create-only and read credentials with independent capability discovery; store listing and privacy declarations under `extension/store/`, packaging in `extension/scripts/` (see docs/releasing.md)
 scripts/release/       publish pipeline — stage packages, transform src-pointing manifests to dist at publish time (see docs/releasing.md)
 ios/                   native iPhone app — pairs with the gateway, hosts Apple Health
+macos/                 native macOS app — read macos/AGENTS.md; portable managed lifecycle lives in packages/cli/src/desktop/, architecture in docs/desktop.md
 website/               static site Cloudflare publishes to omnesis.dev — landing page, public docs (website/docs/), privacy policy, installer mirror
 docs/                  internal design docs, process docs (e.g. issue-labels.md)
 ```

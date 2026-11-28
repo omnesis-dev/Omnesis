@@ -4,7 +4,11 @@
 import { close, closeSync, constants, fstat, open } from "node:fs";
 import { opendir } from "node:fs/promises";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { listReadAccessDirectory, probeFileReadAccess } from "./read-access.js";
+import {
+  listReadAccessDirectory,
+  probeFileReadAccess,
+  probeDirectoryReadAccess,
+} from "./read-access.js";
 
 vi.mock("node:fs", async (original) => ({
   ...(await original<typeof import("node:fs")>()),
@@ -187,4 +191,19 @@ describe("fresh read access", () => {
     });
     expect(directory.close).toHaveBeenCalledOnce();
   });
+});
+
+it("root capability lists only one entry, closes before resolving, and reports revocation without names or errors", async () => {
+  const read = vi.fn(async () => ({ name: "invented-private-name" }));
+  const close = vi.fn(async () => {});
+  vi.mocked(opendir).mockResolvedValue({ read, close } as never);
+  const options = { signal: new AbortController().signal };
+  expect(await probeDirectoryReadAccess("/example/root", options)).toEqual({ status: "readable" });
+  expect(read).toHaveBeenCalledTimes(1);
+  expect(close).toHaveBeenCalledOnce();
+  vi.mocked(opendir).mockRejectedValueOnce(
+    Object.assign(new Error("invented-private-path"), { code: "EACCES" }),
+  );
+  expect(await probeDirectoryReadAccess("/example/root", options)).toEqual({ status: "denied" });
+  expect(await probeDirectoryReadAccess("/example/root", options)).toEqual({ status: "readable" });
 });

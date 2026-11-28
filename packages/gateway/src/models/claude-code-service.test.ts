@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -333,5 +333,41 @@ describe("ClaudeCodeService lanes", () => {
       .map((e) => (e.payload as { delta: string }).delta)
       .join("");
     expect(text).toBe("Echo: Hi");
+  });
+});
+
+describe("managed desktop subscription isolation", () => {
+  it("advertises unavailable and never executes or probes a global Claude login", async () => {
+    const root = mkdtempSync(join(tmpdir(), "omnesis-desktop-claude-boundary-"));
+    dirs.push(root);
+    const sentinel = join(root, "must-not-execute"),
+      command = join(root, "host-claude");
+    writeFileSync(command, `#!/bin/sh\nprintf invoked > '${sentinel}'\n`, { mode: 0o700 });
+    const instance = new ClaudeCodeService({
+      configDir: root,
+      command,
+      env: {
+        PATH: process.env.PATH,
+        HOME: root,
+        OMNESIS_DESKTOP_MANAGED: "1",
+        CLAUDE_CODE_OAUTH_TOKEN: "fixture-global-token",
+      },
+    });
+    expect(instance.snapshot()).toMatchObject({
+      installed: false,
+      loggedIn: false,
+      models: [],
+      reason: expect.stringContaining("Anthropic API key"),
+    });
+    expect(await instance.refresh()).toMatchObject({
+      status: "unreachable",
+      loggedIn: false,
+      models: [],
+    });
+    expect(() => instance.createBackend({ model: "sonnet" })).toThrow(
+      "independent filesystem and Keychain",
+    );
+    expect(existsSync(sentinel)).toBe(false);
+    expect(existsSync(join(root, "claude-code-workspace"))).toBe(false);
   });
 });

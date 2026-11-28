@@ -66,7 +66,7 @@ export function ConfirmModal({
       if (e.key === "Escape" && !cancelDisabled) onCancel?.();
       if (e.key !== "Tab") return;
       const focusable = [...(modalRef.current?.querySelectorAll(
-        "button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])",
+        "a[href]:not([hidden]):not([tabindex='-1']), button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])",
       ) ?? [])];
       if (focusable.length === 0) {
         e.preventDefault();

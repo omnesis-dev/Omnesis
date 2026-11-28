@@ -5,6 +5,16 @@
       "entry": [
         "scripts/*.{ts,mts,mjs}",
         "scripts/release/*.mjs",
+        "scripts/desktop/prepare-runtime.mjs",
+        "scripts/desktop/assemble-app.mjs",
+        "scripts/desktop/distribute.mjs",
+        "scripts/desktop/native-check.mjs",
+        "scripts/desktop/native-package.mjs",
+        "scripts/desktop/release-build.mjs",
+        "scripts/desktop/package-fixture-extract.mjs",
+        "scripts/desktop/codex-backend-test-fixture.mjs",
+        "scripts/desktop/prepare-node-test-fixture.mjs",
+        "scripts/desktop/smoke-runtime.mjs",
         "scripts/site/*.mjs",
         "scripts/install-e2e/cli-trace.cjs",
         "scripts/tailnet-helper/*.mjs",
@@ -12,7 +22,12 @@
         "scripts/blog/*.{mjs,ts}",
         "bench/*.ts",
         "evals/universes/*/_build/*.mjs",
-        "evals/universes/*/agent-demos/_build/*.mjs"
+        "evals/universes/*/agent-demos/_build/*.mjs",
+        "macos/Tests/Support/scripted-agent.mjs",
+        "macos/Tests/Support/api-context-fixture.mjs",
+        "scripts/desktop/codex-backend-test-program.mjs",
+        "scripts/desktop/private-key-test-program.mjs",
+        "scripts/desktop/test-account-container.mjs"
       ]
     },
     "packages/agent": {
@@ -23,6 +38,7 @@
         "src/subpath/*.ts",
         "src/**/*.test.ts",
         "src/doctor/security-worker-entry.ts",
+        "src/managed-runtime-bootstrap.ts",
         "src/doctor/register-tsx.mjs",
         "scripts/*.{ts,mjs}"
       ]
@@ -57,10 +73,14 @@
         "src/search/probe-*.ts",
         "src/near-dupes/index.ts",
         "portal/index.html",
+        "portal/native-widget.html",
         "portal/js/app.js",
         "portal/js/agent-presentation.js",
         "portal/vendor/*.js",
-        "scripts/*.mjs"
+        "scripts/*.mjs",
+        "src/restore/process-worker.ts",
+        "src/restore/secret-entry.ts",
+        "src/restore/worker.ts"
       ],
       "project": ["src/**/*.ts", "portal/js/**/*.js", "portal/vendor/**/*.js"],
       "ignoreDependencies": ["snowball-stemmers"]
@@ -144,7 +164,11 @@
       ]
     },
     "packages/cli": {
-      "entry": ["src/**/*.test.ts"]
+      "entry": [
+        "src/**/*.test.ts",
+        "src/desktop/data-operation.ts",
+        "src/desktop/snapshot-retention-host.ts"
+      ]
     },
     "packages/cli-shared": {
       "entry": ["src/**/*.test.ts"]
@@ -189,6 +213,7 @@
     ".claude/**",
     "integrations/**",
     "extension/scripts/test-manifest.d.mts",
+    "scripts/desktop/fixture-openssl.d.mts",
     "scripts/lib/check-process.d.mts"
   ],
   "rules": {

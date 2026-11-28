@@ -81,6 +81,7 @@ export function buildImmichProvider(
 ): ProviderDefinition<ImmichContext> {
   return defineProvider<ImmichContext>({
     provider: { id: IMMICH_PROVIDER_ID, name: "Immich" },
+    permissionRequirements: [],
     authType: "api-key",
     credentials: immichCredentialsSpec,
 

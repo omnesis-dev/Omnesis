@@ -25,6 +25,7 @@ export default defineSource<SyncCursor>({
   name: "OpenClaw",
   description: "Conversations with the OpenClaw agent harness",
   provider: { id: "openclaw", name: "OpenClaw" },
+  permissionRequirements: [],
   authType: "local",
   unitName: "conversations",
   icon: {

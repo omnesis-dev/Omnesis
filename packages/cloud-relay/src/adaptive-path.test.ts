@@ -498,3 +498,21 @@ test("canonical throttling and service outages retain a TLS block until exact-de
   expect(reverify).toHaveBeenCalledTimes(5);
   expect(probe).toHaveBeenCalledTimes(2);
 });
+
+test.each(["EACCES", "EPERM"])(
+  "losing optional LAN access with %s keeps canonical transport usable",
+  async (code) => {
+    const probe = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValue(coded(code));
+    const { value, listener } = watched(probe);
+    await value.check();
+    expect(value.isLocal()).toBe(true);
+    await value.check();
+    expect(value.isLocal()).toBe(false);
+    expect(listener.mock.calls).toEqual([["local"], ["lost"]]);
+    value.assertUsable();
+    const unavailable = manager(vi.fn().mockRejectedValue(coded(code)));
+    await unavailable.check();
+    expect(unavailable.isLocal()).toBe(false);
+    unavailable.assertUsable();
+  },
+);

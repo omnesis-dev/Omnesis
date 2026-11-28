@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import * as files from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -50,6 +50,79 @@ test("Windows bootstrap refuses unsafe private key input before using its public
     expect(read).toHaveBeenCalledWith(tls.keyFile, 65_536);
   } finally {
     Object.defineProperty(process, "platform", descriptor);
+  }
+});
+
+test("managed Windows bootstrap refuses the unsupported private pipe before reading or replacing credentials", async () => {
+  directory = await realpath(directory);
+  const key = join(directory, "retained.key"),
+    certificateFile = join(directory, "not-created.pem");
+  const previous = "invented retained private material";
+  await writeFile(key, previous, { mode: 0o600 });
+  const read = vi.spyOn(core, "readWindowsPrivateFile"),
+    openssl = vi.spyOn(core, "runOpenSslWithPrivateInput");
+  await onWindowsBoundary(async () => {
+    await expect(
+      ensureAcmeBootstrap({
+        publicOrigin: "https://gateway.example.test",
+        certificateFile,
+        privateKeyFile: key,
+        generatePrivateKey: true,
+        secretFileOptions: {
+          configDir: directory,
+          service: "fictional-managed-acme",
+          backend: "file",
+        },
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("supported private pipe adapter");
+  });
+  expect(read).not.toHaveBeenCalled();
+  expect(openssl).not.toHaveBeenCalled();
+  expect(await readFile(key, "utf8")).toBe(previous);
+  await expect(stat(certificateFile)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+test("uncertain certificate publication retains its staged evidence and renewal lock", async () => {
+  directory = await realpath(directory);
+  const tls = tlsFiles(directory, "gateway.example.test"),
+    certificateFile = join(directory, "public.crt"),
+    failure = markedFileError("EPRIVATE", "own"),
+    acquire = core.acquireGatewayLock;
+  let retained: Awaited<ReturnType<typeof acquire>> | undefined;
+  const release = vi.fn();
+  vi.spyOn(core, "acquireGatewayLock").mockImplementation(async (...args) => {
+    retained = await acquire(...args);
+    const actualRelease = retained.release.bind(retained);
+    release.mockImplementation(actualRelease);
+    retained.release = release;
+    return retained;
+  });
+  // The real issuer finishes; uncertainty is injected only at the publication boundary.
+  vi.mocked(files.link).mockRejectedValueOnce(failure);
+  try {
+    await expect(
+      ensureAcmeBootstrap({
+        publicOrigin: "https://gateway.example.test",
+        certificateFile,
+        privateKeyFile: tls.keyFile,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toBe(failure);
+    expect(release).not.toHaveBeenCalled();
+    const staged = (await readdir(directory)).filter(
+      (name) => name.startsWith("public.crt.") && name.endsWith(".tmp"),
+    );
+    expect(staged).toHaveLength(1);
+    expect(
+      new X509Certificate(await readFile(join(directory, staged[0]!))).checkHost(
+        "gateway.example.test",
+      ),
+    ).toBe("gateway.example.test");
+    await expect(stat(certificateFile)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    // This invented publication receipt owns no child. Join the actual fixture lock explicitly.
+    retained?.release();
   }
 });
 

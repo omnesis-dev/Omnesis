@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import * as files from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateKeyPairSync } from "node:crypto";
@@ -26,6 +27,10 @@ import { signInvite } from "./invites.js";
 import { GatewayAccountLink } from "./gateway-account-link.js";
 import { GatewayUnregistered, readOrCreateGatewayOwnerKey } from "./gateway-key-client.js";
 import * as privateCredentials from "./google-credentials.js";
+import { readGatewayTlsPrivateKey } from "./gateway-private-key.js";
+import { PublicRouteProbe } from "./public-route-probe.js";
+
+vi.mock("node:fs/promises", { spy: true });
 
 let directory: string, manager: GatewayCloudRelayManagement | undefined;
 /** Requests no test answered; any one fails the test, even when the gateway swallows the error. */
@@ -664,6 +669,57 @@ test("hourly refresh keeps a fresh certificate and retries a failed endpoint wit
   expect(JSON.stringify(await manager.status())).not.toContain("private-endpoint-details");
   expect((await manager.status()).certificate.lastError).toBeUndefined();
 });
+test("manager registration forwards the configuration scope to the real encrypted TLS key reader", async () => {
+  const configDir = await realpath(directory);
+  await core.ensureInstallRootKey({ backend: "file", configDir });
+  await core.primeSecretFileKeyCache({ backend: "file", configDir });
+  const pem = generateKeyPairSync("ec", { namedCurve: "prime256v1" })
+    .privateKey.export({ type: "pkcs8", format: "pem" })
+    .toString();
+  const register = vi.fn<NonNullable<CloudRelayManagerOptions["register"]>>(async (options) => {
+    // The unchanged production reader refuses an encrypted key if this scope is missing.
+    expect(
+      (await readGatewayTlsPrivateKey(options.privateKeyFile, options.configDir)) === pem,
+    ).toBe(true);
+    return {
+      token: "fictional-registration-session",
+      accountId: "a".repeat(64),
+      expiresAt: 4000000000,
+    };
+  });
+  const f = fixture({
+    configDir,
+    register,
+    controller: async (env) => {
+      const path = env.OMNESIS_ACME_KEY_FILE;
+      if (!path) throw new Error("The fixture public TLS key path was not selected");
+      await core.writeSecretTextFile(path, pem, { configDir });
+      expect(core.isEncryptedSecretFile(await readFile(path, "utf8"))).toBe(true);
+      return {
+        renew: async () => true,
+        close: async () => {},
+        cleanupFailure: () => undefined,
+        fingerprintSha256: () => "b".repeat(64),
+        spkiFingerprintSha256: () => "c".repeat(64),
+      };
+    },
+  });
+  vi.stubEnv("OMNESIS_SECRET_STORE", "file");
+  try {
+    manager = await GatewayCloudRelayManagement.open(f.options);
+    await manager.configure(input);
+    await manager.enable();
+    await idle();
+    expect((await manager.status()).enrollment.state).toBe("enrolled");
+    expect(register).toHaveBeenCalledOnce();
+  } finally {
+    await manager?.close();
+    manager = undefined;
+    core.clearSecretFileKeyCacheForTests();
+    vi.unstubAllEnvs();
+  }
+});
+
 test("a missing certificate controller fails managed setup without starting a tunnel", async () => {
   const f = fixture({ controller: vi.fn(async () => undefined) });
   manager = await GatewayCloudRelayManagement.open(f.options);
@@ -896,8 +952,14 @@ test("a recheck that finishes after the relay was turned off changes nothing", a
   await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(2));
   // While it is still being looked at, the page is told nothing is wrong.
   expect((await manager.status()).publicMcp.lastError).toBeUndefined();
-  await manager.disable();
+  let disabled = false;
+  const stopping = manager.disable().then(() => {
+    disabled = true;
+  });
+  await vi.waitFor(() => expect(probe.mock.calls[1]?.[1].aborted).toBe(true));
+  expect(disabled).toBe(false);
   finish(true);
+  await stopping;
   await new Promise((resolve) => setTimeout(resolve, 20));
   expect((await manager.status()).publicMcp.ready).toBe(false);
   expect(probe).toHaveBeenCalledTimes(2);
@@ -2244,6 +2306,7 @@ test(
     expect(f.register).toHaveBeenCalledTimes(registrations + 1);
     expect(f.register).toHaveBeenLastCalledWith(
       expect.objectContaining({
+        configDir: f.options.configDir,
         gatewayId: f.connected.gatewayId,
         publicOrigin: f.connected.publicOrigin,
         sessionFile: join(f.relayDirectory, "session.json"),
@@ -3571,4 +3634,314 @@ test("a marker that can't be written leaves the registration standing, and a mar
   // Closing reports the same unfinished private operation.
   await expect(manager.close()).rejects.toBeDefined();
   manager = undefined;
+});
+
+async function issuedRouteCertificate() {
+  const { execFileSync } = await import("node:child_process");
+  const issuer = tlsFiles(await mkdtemp(join(directory, "route-issuer-")));
+  const leaf = tlsFiles(await mkdtemp(join(directory, "route-leaf-")), "gateway.example.test");
+  const request = join(directory, "route.csr"),
+    output = join(directory, "cloud-relay/public.pem");
+  execFileSync(
+    "openssl",
+    ["x509", "-x509toreq", "-in", leaf.certFile, "-signkey", leaf.keyFile, "-out", request],
+    { stdio: "ignore" },
+  );
+  execFileSync(
+    "openssl",
+    [
+      "x509",
+      "-req",
+      "-in",
+      request,
+      "-CA",
+      issuer.certFile,
+      "-CAkey",
+      issuer.keyFile,
+      "-set_serial",
+      "1",
+      "-days",
+      "1",
+      "-out",
+      output,
+    ],
+    { stdio: "ignore" },
+  );
+}
+
+test("actual periodic public route probes expose fresh loss/recovery and invalidate changed certificate evidence", async () => {
+  const probe = vi.fn(async () => true),
+    f = fixture({
+      probe,
+      env: { OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test", OMNESIS_DESKTOP_MANAGED: "1" },
+    });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await manager.configure(input);
+  await issuedRouteCertificate();
+  vi.useFakeTimers();
+  try {
+    await manager.enable();
+    await idle();
+    const first = await manager.status();
+    expect(first.certificate.state).toBe("expiring");
+    expect(first.publicMcp).toMatchObject({
+      ready: true,
+      checkedAt: expect.any(Number),
+      validUntil: expect.any(Number),
+    });
+    probe.mockResolvedValue(false);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.waitFor(async () => expect((await manager!.status()).publicMcp.ready).toBe(false));
+    expect((await manager.status()).publicMcp.checkedAt).toBeUndefined();
+    probe.mockResolvedValue(true);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.waitFor(async () => expect((await manager!.status()).publicMcp.ready).toBe(true));
+    const startTunnel = f.options.startTunnel;
+    if (!startTunnel) throw new Error("Fixture tunnel factory unavailable");
+    const tunnel = vi.mocked(startTunnel).mock.results[0]?.value;
+    if (!tunnel) throw new Error("Fixture tunnel unavailable");
+    vi.spyOn(tunnel, "status").mockReturnValue({
+      state: "online",
+      lastConnectedAt: new Date(Date.now()).toISOString(),
+    });
+    expect((await manager.status()).publicMcp.checkedAt).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.waitFor(async () =>
+      expect((await manager!.status()).publicMcp.checkedAt).toBeTypeOf("number"),
+    );
+    const checked = (await manager.status()).publicMcp.checkedAt!;
+    await issuedRouteCertificate();
+    expect((await manager.status()).publicMcp.checkedAt).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.waitFor(async () =>
+      expect((await manager!.status()).publicMcp.checkedAt!).toBeGreaterThan(checked),
+    );
+    const calls = probe.mock.calls.length;
+    await manager.disable();
+    expect((await manager.status()).publicMcp.checkedAt).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(probe).toHaveBeenCalledTimes(calls);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("disabling joins a noncooperative periodic route probe and cannot overlap a new generation", async () => {
+  const probe = vi.fn(async (_origin: string, _signal: AbortSignal) => true),
+    f = fixture({
+      probe,
+      env: { OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test", OMNESIS_DESKTOP_MANAGED: "1" },
+    });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await manager.configure(input);
+  await issuedRouteCertificate();
+  let release = (value: boolean) => {},
+    settled = false;
+  vi.useFakeTimers();
+  try {
+    await manager.enable();
+    await idle();
+    probe.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          release = resolve;
+        }),
+    );
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(2));
+    const stopped = manager.disable().then(() => {
+      settled = true;
+    });
+    await vi.waitFor(() => expect(probe.mock.calls[1]?.[1].aborted).toBe(true));
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(probe).toHaveBeenCalledTimes(2);
+    release(true);
+    await stopped;
+    expect((await manager.status()).publicMcp.checkedAt).toBeUndefined();
+  } finally {
+    release(false);
+    vi.useRealTimers();
+  }
+});
+
+test("a periodic probe's owned cleanup failure is joined during disable and permanently closes admission", async () => {
+  directory = await realpath(directory);
+  const probe = vi.fn(async (_origin: string, _signal: AbortSignal) => true),
+    f = fixture({
+      probe,
+      env: { OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test", OMNESIS_DESKTOP_MANAGED: "1" },
+    });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await manager.configure(input);
+  await issuedRouteCertificate();
+  // This boundary failure owns no real native operation; the fixture actors still join normally.
+  const failure = markedFileError("EPRIVATE", "own");
+  let rejectProbe = (_error: unknown) => {};
+  vi.useFakeTimers();
+  try {
+    await manager.enable();
+    await idle();
+    probe.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((_resolve, reject) => {
+          rejectProbe = reject;
+        }),
+    );
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(2));
+    // Observe the real join so rejection cannot race ahead of shutdown's physical wait.
+    const joinProbe = vi.spyOn(PublicRouteProbe.prototype, "join");
+    const disabling = manager.disable();
+    const rejected = expect(disabling).rejects.toBeDefined();
+    await vi.waitFor(() => expect(joinProbe).toHaveBeenCalledOnce());
+    rejectProbe(failure);
+    await rejected;
+    expect(manager.cleanupFailure()).toBe(failure);
+    await expect(manager.enable()).rejects.toBe(failure);
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(probe).toHaveBeenCalledTimes(2);
+    expect(f.stop).toHaveBeenCalled();
+    expect(f.close).toHaveBeenCalled();
+    await expect(manager.close()).rejects.toSatisfy(
+      (error: unknown) => core.ownedProcessCleanupReceipt(error)?.pending === false,
+    );
+    manager = undefined;
+  } finally {
+    rejectProbe(failure);
+    vi.useRealTimers();
+  }
+});
+
+test("an ordinary periodic probe rejection joins cleanly and allows a fresh generation after disable", async () => {
+  const probe = vi.fn(async (_origin: string, _signal: AbortSignal) => true),
+    f = fixture({
+      probe,
+      env: { OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test", OMNESIS_DESKTOP_MANAGED: "1" },
+    });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await manager.configure(input);
+  await issuedRouteCertificate();
+  let rejectProbe = (_error: unknown) => {};
+  const failure = new Error("Invented unavailable public route");
+  vi.useFakeTimers();
+  try {
+    await manager.enable();
+    await idle();
+    probe.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((_resolve, reject) => {
+          rejectProbe = reject;
+        }),
+    );
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(2));
+    const joinProbe = vi.spyOn(PublicRouteProbe.prototype, "join"),
+      disabling = manager.disable();
+    await vi.waitFor(() => expect(joinProbe).toHaveBeenCalledOnce());
+    rejectProbe(failure);
+    await disabling;
+    expect(manager.cleanupFailure()).toBeUndefined();
+    expect((await manager.status()).publicMcp.checkedAt).toBeUndefined();
+    await manager.enable();
+    await idle();
+    expect(probe).toHaveBeenCalledTimes(3);
+    expect((await manager.status()).publicMcp.ready).toBe(true);
+  } finally {
+    rejectProbe(failure);
+    vi.useRealTimers();
+  }
+});
+
+test("owned certificate-read uncertainty stops the periodic route check before any new probe", async () => {
+  directory = await realpath(directory);
+  const probe = vi.fn(async () => true),
+    f = fixture({
+      probe,
+      env: { OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test", OMNESIS_DESKTOP_MANAGED: "1" },
+    });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await manager.configure(input);
+  await issuedRouteCertificate();
+  const failure = markedFileError("EPRIVATE", "own"),
+    actualRead = (await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises"))
+      .readFile,
+    certificatePath = join(directory, "cloud-relay/public.pem"),
+    readFileMock = vi.mocked(files.readFile),
+    previousRead = readFileMock.getMockImplementation() ?? actualRead;
+  vi.useFakeTimers();
+  try {
+    await manager.enable();
+    await idle();
+    readFileMock.mockImplementation((...args) =>
+      String(args[0]) === certificatePath ? Promise.reject(failure) : actualRead(...args),
+    );
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.waitFor(() => expect(manager!.cleanupFailure()).toBe(failure));
+    expect(probe).toHaveBeenCalledOnce();
+    await expect(manager.enable()).rejects.toBe(failure);
+    await expect(manager.close()).rejects.toSatisfy(
+      (error: unknown) => core.ownedProcessCleanupReceipt(error)?.pending === false,
+    );
+    manager = undefined;
+    expect(f.stop).toHaveBeenCalled();
+    expect(f.close).toHaveBeenCalled();
+  } finally {
+    readFileMock.mockImplementation(previousRead);
+    vi.useRealTimers();
+  }
+});
+
+test("ordinary headless relay keeps existing probe cadence without the desktop periodic loop", async () => {
+  const probe = vi.fn(async () => true),
+    f = fixture({ probe });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await manager.configure(input);
+  vi.useFakeTimers();
+  try {
+    await manager.enable();
+    await idle();
+    expect(probe).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(probe).toHaveBeenCalledOnce();
+    expect((await manager.status()).publicMcp.ready).toBe(true);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("a queued negative retry after periodic success cannot lend fresh evidence to a legacy ready flag", async () => {
+  const probe = vi
+    .fn(async () => false)
+    .mockResolvedValueOnce(false)
+    .mockResolvedValueOnce(true)
+    .mockResolvedValueOnce(false);
+  const f = fixture({
+    probe,
+    probeRetryMs: 45_000,
+    env: { OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test", OMNESIS_DESKTOP_MANAGED: "1" },
+  });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await manager.configure(input);
+  await issuedRouteCertificate();
+  vi.useFakeTimers();
+  try {
+    await manager.enable();
+    await idle();
+    expect(probe).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.waitFor(async () =>
+      expect((await manager!.status()).publicMcp.checkedAt).toBeTypeOf("number"),
+    );
+    expect((await manager.status()).publicMcp.ready).toBe(true);
+    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(3));
+    await vi.waitFor(async () =>
+      expect((await manager!.status()).publicMcp.checkedAt).toBeUndefined(),
+    );
+    // Preserve the old boolean contract; only an actual positive probe can certify new readiness.
+    expect((await manager.status()).publicMcp.ready).toBe(true);
+  } finally {
+    vi.useRealTimers();
+  }
 });

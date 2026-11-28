@@ -15,8 +15,17 @@
  * id containing a separator or a traversal segment.
  */
 
-import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
+import {
+  atomicWriteFileSync,
+  decodeSecretTextFileValueSync,
+  isEncryptedSecretFile,
+  secretFileEncryptionRequired,
+  writeSecretTextFileSync,
+  type SecretFileOptions,
+} from "@omnesis/core";
+import { proseSerializedByteLimit } from "../../managed-prose-limits.js";
 import {
   isValidSweepId,
   MAX_STEERING_PROMPT_CHARS,
@@ -32,6 +41,7 @@ import type { SweepFileContent } from "./file-format.js";
  * over the prose cap, small enough that no single file can stall the loop.
  */
 const MAX_SWEEP_FILE_BYTES = MAX_STEERING_PROMPT_CHARS * 8;
+const MAX_SWEEP_SERIALIZED_FILE_BYTES = proseSerializedByteLimit(MAX_SWEEP_FILE_BYTES);
 
 /**
  * Cap on how many sweeps a directory may define. Each one is a scheduled agent
@@ -61,7 +71,10 @@ export class SweepFileStore {
   private readonly dir: string;
   private readonly cache = new Map<string, CacheEntry>();
 
-  constructor(configDir: string) {
+  constructor(
+    private readonly configDir: string,
+    private readonly secretOptions: SecretFileOptions = {},
+  ) {
     this.dir = join(configDir, "sweeps");
   }
 
@@ -137,7 +150,27 @@ export class SweepFileStore {
   write(id: string, content: SweepFileContent): void {
     const file = this.pathFor(id);
     mkdirSync(this.dir, { recursive: true, mode: 0o700 });
-    writeFileSync(file, serializeSweepFile(content), { encoding: "utf8", mode: 0o600 });
+    let previous: string | null;
+    try {
+      previous = readFileSync(file, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      previous = null;
+    }
+    const text = serializeSweepFile(content);
+    if (
+      secretFileEncryptionRequired(this.configDir) ||
+      (previous !== null && isEncryptedSecretFile(previous))
+    ) {
+      writeSecretTextFileSync(
+        file,
+        text,
+        { ...this.secretOptions, configDir: this.configDir },
+        previous,
+      );
+    } else {
+      atomicWriteFileSync(file, text, { mode: 0o600 });
+    }
     this.cache.delete(file);
   }
 
@@ -162,7 +195,7 @@ export class SweepFileStore {
       this.cache.delete(file);
       return { id, file, content: null, error: "file disappeared while being read" };
     }
-    if (stat.size > MAX_SWEEP_FILE_BYTES) {
+    if (stat.size > MAX_SWEEP_SERIALIZED_FILE_BYTES) {
       return {
         id,
         file,
@@ -175,7 +208,13 @@ export class SweepFileStore {
 
     let parsed: SweepFileEntry;
     try {
-      const result = parseSweepFile(readFileSync(file, "utf8"));
+      const text = decodeSecretTextFileValueSync(file, readFileSync(file, "utf8"), {
+        ...this.secretOptions,
+        configDir: this.configDir,
+      });
+      if (Buffer.byteLength(text) > MAX_SWEEP_FILE_BYTES)
+        throw new Error(`decoded sweep file exceeds ${MAX_SWEEP_FILE_BYTES} bytes`);
+      const result = parseSweepFile(text);
       parsed = result.ok
         ? { id, file, content: result.content, error: null }
         : { id, file, content: null, error: result.message };

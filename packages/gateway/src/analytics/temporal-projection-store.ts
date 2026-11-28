@@ -87,71 +87,78 @@ export interface AnalyticsTemporalProjectionQuery {
   limit?: number;
 }
 
+/** Compiled internal schema shared by live boot and offline restore construction. */
+export async function ensureAnalyticsTemporalProjectionSchema(
+  conn: DuckDBConnection,
+): Promise<void> {
+  await conn.run(`
+    CREATE TABLE IF NOT EXISTS ${TEMPORAL_PROJECTIONS_TABLE} (
+      id VARCHAR PRIMARY KEY,
+      source_id VARCHAR NOT NULL,
+      table_name VARCHAR NOT NULL,
+      record_key VARCHAR NOT NULL,
+      slot VARCHAR NOT NULL,
+      bound_document_external_id VARCHAR,
+      start_ms BIGINT NOT NULL,
+      end_exclusive_ms BIGINT NOT NULL,
+      start_canonical VARCHAR NOT NULL,
+      end_canonical VARCHAR NOT NULL,
+      precision VARCHAR NOT NULL,
+      all_day BOOLEAN NOT NULL,
+      time_zone VARCHAR,
+      label VARCHAR NOT NULL,
+      kind VARCHAR NOT NULL CHECK (${temporalVocabularyCheck("kind", TEMPORAL_KINDS)}),
+      modality VARCHAR NOT NULL CHECK (${temporalVocabularyCheck("modality", TEMPORAL_MODALITIES)}),
+      status VARCHAR NOT NULL CHECK (${temporalVocabularyCheck("status", TEMPORAL_STATUSES)}),
+      source_updated_at VARCHAR,
+      correlation_keys VARCHAR,
+      projected_at VARCHAR NOT NULL
+    )
+  `);
+  // Retire any row the current vocabulary can no longer describe. DuckDB
+  // cannot add a CHECK to a table that already exists, so this is what keeps
+  // an upgraded install consistent with the constraint above — and it costs
+  // nothing. Existing base rows remain; a projection refreshes only when that
+  // particular record is ingested again. There is no historical backfill.
+  await conn.run(
+    `DELETE FROM ${TEMPORAL_PROJECTIONS_TABLE}
+     WHERE NOT (${temporalVocabularyCheck("kind", TEMPORAL_KINDS)})
+        OR NOT (${temporalVocabularyCheck("modality", TEMPORAL_MODALITIES)})
+        OR NOT (${temporalVocabularyCheck("status", TEMPORAL_STATUSES)})`,
+  );
+  // No secondary index: DuckDB's explicit non-unique ART indexes can reach a
+  // stored state in which deleting through them fails fatally and
+  // invalidates the store (duckdb/duckdb#23645), and a source removal deletes
+  // every projection the source owns. Window and per-source filters are
+  // served by DuckDB's per-block min/max statistics. A store may still carry
+  // these indexes; dropping them also repairs one in that state.
+  await conn.run(`DROP INDEX IF EXISTS idx_temporal_projections_window`);
+  await conn.run(`DROP INDEX IF EXISTS idx_temporal_projections_source`);
+  await conn.run(`
+    CREATE TABLE IF NOT EXISTS ${TEMPORAL_PROJECTION_MOVES_TABLE} (
+      from_id VARCHAR PRIMARY KEY,
+      to_id VARCHAR NOT NULL,
+      generation BIGINT NOT NULL
+    )
+  `);
+  await conn.run(`
+    CREATE TABLE IF NOT EXISTS ${TEMPORAL_PROJECTION_SOURCES_TABLE} (
+      source_id VARCHAR NOT NULL,
+      table_name VARCHAR NOT NULL,
+      slots_json VARCHAR NOT NULL,
+      last_materialized_at VARCHAR,
+      PRIMARY KEY (source_id, table_name)
+    )
+  `);
+}
+
 export class AnalyticsTemporalProjectionStore {
   private movesRecorded = false;
   constructor(private readonly pool: AnalyticsConnectionPool) {}
 
   /** Internal projection storage is deliberately absent from the user catalog. */
   async ensureTables(conn: DuckDBConnection): Promise<void> {
-    await conn.run(`
-      CREATE TABLE IF NOT EXISTS ${TEMPORAL_PROJECTIONS_TABLE} (
-        id VARCHAR PRIMARY KEY,
-        source_id VARCHAR NOT NULL,
-        table_name VARCHAR NOT NULL,
-        record_key VARCHAR NOT NULL,
-        slot VARCHAR NOT NULL,
-        bound_document_external_id VARCHAR,
-        start_ms BIGINT NOT NULL,
-        end_exclusive_ms BIGINT NOT NULL,
-        start_canonical VARCHAR NOT NULL,
-        end_canonical VARCHAR NOT NULL,
-        precision VARCHAR NOT NULL,
-        all_day BOOLEAN NOT NULL,
-        time_zone VARCHAR,
-        label VARCHAR NOT NULL,
-        kind VARCHAR NOT NULL CHECK (${temporalVocabularyCheck("kind", TEMPORAL_KINDS)}),
-        modality VARCHAR NOT NULL CHECK (${temporalVocabularyCheck("modality", TEMPORAL_MODALITIES)}),
-        status VARCHAR NOT NULL CHECK (${temporalVocabularyCheck("status", TEMPORAL_STATUSES)}),
-        source_updated_at VARCHAR,
-        correlation_keys VARCHAR,
-        projected_at VARCHAR NOT NULL
-      )
-    `);
-    // Retire any row the current vocabulary can no longer describe. DuckDB
-    // cannot add a CHECK to a table that already exists, so this is what keeps
-    // an upgraded install consistent with the constraint above — and it costs
-    // nothing, because an analytics projection is re-derived from its source
-    // on the next sync exactly as a changed contract would force.
-    await conn.run(
-      `DELETE FROM ${TEMPORAL_PROJECTIONS_TABLE}
-       WHERE NOT (${temporalVocabularyCheck("kind", TEMPORAL_KINDS)})
-          OR NOT (${temporalVocabularyCheck("modality", TEMPORAL_MODALITIES)})
-          OR NOT (${temporalVocabularyCheck("status", TEMPORAL_STATUSES)})`,
-    );
-    // No secondary index: DuckDB's explicit non-unique ART indexes can reach a
-    // stored state in which deleting through them fails fatally and
-    // invalidates the store (duckdb/duckdb#23645), and a source removal deletes
-    // every projection the source owns. Window and per-source filters are
-    // served by DuckDB's per-block min/max statistics. A store may still carry
-    // these indexes; dropping them also repairs one in that state.
-    await conn.run(`DROP INDEX IF EXISTS idx_temporal_projections_window`);
-    await conn.run(`DROP INDEX IF EXISTS idx_temporal_projections_source`);
-    await conn.run(`
-      CREATE TABLE IF NOT EXISTS ${TEMPORAL_PROJECTION_MOVES_TABLE} (
-        from_id VARCHAR PRIMARY KEY,
-        to_id VARCHAR NOT NULL,
-        generation BIGINT NOT NULL
-      )
-    `);
-    await conn.run(`
-      CREATE TABLE IF NOT EXISTS ${TEMPORAL_PROJECTION_SOURCES_TABLE} (
-        source_id VARCHAR NOT NULL,
-        table_name VARCHAR NOT NULL,
-        slots_json VARCHAR NOT NULL,
-        last_materialized_at VARCHAR,
-        PRIMARY KEY (source_id, table_name)
-      )
-    `);
+    await ensureAnalyticsTemporalProjectionSchema(conn);
   }
 
   async retireChangedContract(

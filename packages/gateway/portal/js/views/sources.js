@@ -54,7 +54,6 @@ import {
 import { sourceIcon, sourceLabel, refreshSourceMeta, sourceIconResolves } from "../lib/format.js";
 import { navigate } from "../lib/router.js";
 import { AddSourceModal } from "./add-source.js";
-import { ExtensionPromoCard, shouldShowExtensionPromo } from "../components/extension-promo.js";
 import { IosPromoCard } from "../components/ios-promo.js";
 import { AndroidPromoCard } from "../components/android-promo.js";
 import { shouldShowMobilePromos } from "../components/mobile-promo.js";
@@ -1036,9 +1035,8 @@ export function SourcesView({ demo = false } = {}) {
       ${indexStats && html`<${KeywordMigrationBar} lexical=${indexStats.lexicalIndex} />`}
 
       ${!loading && demo === false
-        && (shouldShowExtensionPromo({ sources }) || shouldShowMobilePromos({ sources }) || agentPromoVisible)
+        && (shouldShowMobilePromos({ sources }) || agentPromoVisible)
         && html`<div class="sources-promo-row">
-          ${shouldShowExtensionPromo({ sources }) && html`<${ExtensionPromoCard} />`}
           ${shouldShowMobilePromos({ sources }) && html`<${IosPromoCard} /><${AndroidPromoCard} />`}
           ${agentPromoVisible && html`<${AgentPromoCard} />`}
         </div>`}

@@ -681,7 +681,7 @@ final class AgentSSETests: XCTestCase {
         }
     }
 
-    private func makeStubClient() -> AgentClient {
+    func makeStubClient() -> AgentClient {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [StubSSEProtocol.self]
         let session = URLSession(configuration: config)
@@ -698,6 +698,7 @@ final class AgentSSETests: XCTestCase {
 /// end-to-end without a live gateway.
 final class StubSSEProtocol: URLProtocol {
     nonisolated(unsafe) static var body = Data()
+    nonisolated(unsafe) static var status = 200
     nonisolated(unsafe) static var lastEventIdHeader: String?
     private static let lock = NSLock()
 
@@ -705,6 +706,7 @@ final class StubSSEProtocol: URLProtocol {
         lock.lock()
         lastEventIdHeader = nil
         body = Data()
+        status = 200
         lock.unlock()
     }
 
@@ -724,10 +726,11 @@ final class StubSSEProtocol: URLProtocol {
         Self.lock.lock()
         Self.lastEventIdHeader = request.value(forHTTPHeaderField: "Last-Event-ID")
         let payload = Self.body
+        let status = Self.status
         Self.lock.unlock()
         let response = HTTPURLResponse(
             url: request.url!,
-            statusCode: 200,
+            statusCode: status,
             httpVersion: "HTTP/1.1",
             headerFields: ["Content-Type": "text/event-stream"]
         )!

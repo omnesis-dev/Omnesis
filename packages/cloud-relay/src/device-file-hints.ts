@@ -3,6 +3,8 @@
 
 import { z } from "zod";
 import { readPrivateJson, savePrivateJson } from "./google-credentials.js";
+import { withPairedDeviceFileLock } from "./paired-device-lock.js";
+import type { SecretFileOptions } from "@omnesis/core";
 import type { DirectCandidate } from "./direct-path.js";
 
 /**
@@ -14,11 +16,14 @@ export async function saveDirectCandidates(
   path: string,
   device: { deviceId: string; token: string },
   candidates: DirectCandidate[],
+  options?: SecretFileOptions,
 ): Promise<void> {
-  const saved = z
-    .object({ deviceId: z.string(), token: z.string() })
-    .passthrough()
-    .parse(await readPrivateJson(path));
-  if (saved.deviceId !== device.deviceId || saved.token !== device.token) return;
-  await savePrivateJson(path, { ...saved, directCandidates: candidates });
+  await withPairedDeviceFileLock(path, async () => {
+    const saved = z
+      .object({ deviceId: z.string(), token: z.string() })
+      .passthrough()
+      .parse(await readPrivateJson(path, options));
+    if (saved.deviceId !== device.deviceId || saved.token !== device.token) return;
+    await savePrivateJson(path, { ...saved, directCandidates: candidates }, options);
+  });
 }

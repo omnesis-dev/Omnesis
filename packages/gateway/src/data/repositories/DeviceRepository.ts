@@ -114,6 +114,12 @@ export function versionFrom(caps: DeviceCapability): string | null {
   return raw ? raw : null;
 }
 
+// A successful opt-in survives older clients' capability refreshes and repair.
+// This reads the row being updated, atomically; it adds no writer lookup.
+const CAPABILITIES_WITH_REQUIREMENTS = `json_patch(?, CASE WHEN
+  CASE WHEN json_valid(capabilities) THEN json_extract(capabilities, '$.requiresEncryptedStorage') ELSE 0 END = 1
+  THEN '{"requiresEncryptedStorage":true}' ELSE '{}' END)`;
+
 function serializeCapabilities(caps: DeviceCapability): string {
   return devicesCapabilitiesCodec.serialize(storedCapabilities(caps) as Record<string, unknown>);
 }
@@ -459,7 +465,7 @@ export function replaceDeviceForRepair(
     }
     db.prepare(
       `UPDATE devices
-          SET name = ?, kind = ?, capabilities = ?, paired_at = ?, last_seen_at = NULL,
+          SET name = ?, kind = ?, capabilities = ${CAPABILITIES_WITH_REQUIREMENTS}, paired_at = ?, last_seen_at = NULL,
               revoked_at = NULL, install_id = COALESCE(?, install_id),
               apns_device_token = NULL, apns_environment = NULL,
               apns_bundle_id = NULL, apns_token_updated_at = NULL,
@@ -583,7 +589,7 @@ export function updateDeviceCapabilities(
     // CASE expressions read the row's values before this UPDATE assigns them.
     db.prepare(
       `UPDATE devices
-        SET capabilities = ?, last_seen_at = ?, version = ?, version_seen_at = ?,
+        SET capabilities = ${CAPABILITIES_WITH_REQUIREMENTS}, last_seen_at = ?, version = ?, version_seen_at = ?,
             protocol_version = COALESCE(?, protocol_version),
             desired_version = CASE WHEN ${UNSUPPORTED_BUILD_CHANGED} THEN NULL ELSE desired_version END,
             update_detail = CASE WHEN ${UNSUPPORTED_BUILD_CHANGED} THEN NULL ELSE update_detail END,
@@ -1074,7 +1080,7 @@ export function setRelayPushConsent(
           `UPDATE devices
                 SET relay_consent_app_id = ?,
                     relay_consented_at = ?,
-                    capabilities = ?,
+                    capabilities = ${CAPABILITIES_WITH_REQUIREMENTS},
                     push_transport = CASE WHEN push_transport = 'relay' THEN NULL ELSE push_transport END,
                     relay_url = NULL,
                     relay_credential = NULL

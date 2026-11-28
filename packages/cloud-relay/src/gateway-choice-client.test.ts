@@ -1,8 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { readFile } from "node:fs/promises";
 import { afterEach, expect, test, vi } from "vitest";
-import { selectGoogleGateway } from "./gateway-choice-client.js";
+import {
+  selectGoogleGateway,
+  selectAccountGateway,
+  snapshotExpectedAccountGateway,
+} from "./gateway-choice-client.js";
+import { certificateFingerprint } from "./gateway-binding.js";
+import { tlsSpkiFingerprint } from "./pinned-key.js";
 import type { GatewayChoice } from "./gateway-directory.js";
 
 const id = (value: number) => `00000000-0000-4000-8000-${String(value).padStart(12, "0")}`;
@@ -132,4 +139,98 @@ test("cancellation stops selection even if its callback ignores the abort and de
   const { fetch: _fetch, ...rest } = defaults;
   expect(await selectGoogleGateway(rest)).toEqual(binding());
   expect(defaults.select).not.toHaveBeenCalled();
+});
+
+test("account directory returns validated empty metadata without trying to enroll", async () => {
+  const { listAccountGateways } = await import("./gateway-choice-client.js");
+  const config = options();
+  config.fetch.mockResolvedValue(Response.json({ gateways: [] }));
+  expect(await listAccountGateways(config)).toEqual([]);
+  expect(String(config.fetch.mock.calls[0]![0])).toBe(
+    "https://relay.example.test/_relay/v3/gateways",
+  );
+  expect(config.select).not.toHaveBeenCalled();
+});
+
+test("account directory keeps offline homes, validates every page and fails on outage", async () => {
+  const { listAccountGateways } = await import("./gateway-choice-client.js");
+  const config = options();
+  config.fetch
+    .mockResolvedValueOnce(Response.json({ gateways: [choice(1)], nextCursor: id(1) }))
+    .mockResolvedValueOnce(Response.json({ gateways: [choice(2)] }));
+  const homes = await listAccountGateways(config);
+  expect(homes).toEqual([choice(1), choice(2)]);
+  expect(Object.isFrozen(homes)).toBe(true);
+  expect(homes[1]!.online).toBe(false);
+  expect(config.select).not.toHaveBeenCalled();
+  for (const response of [
+    new Response("", { status: 503 }),
+    Response.json({ gateways: "unavailable" }),
+  ]) {
+    const failed = options();
+    failed.fetch.mockResolvedValue(response);
+    await expect(listAccountGateways(failed)).rejects.toThrow();
+  }
+});
+
+const identityVectors = JSON.parse(
+  await readFile(new URL("../test/identity-vectors.json", import.meta.url), "utf8"),
+);
+
+test("approved SPKI matches the actual resolved certificate, while a legacy leaf pin remains exact", async () => {
+  const vector = identityVectors.spkiVectors[1];
+  for (const legacy of [false, true]) {
+    for (const changedLeaf of [false, true]) {
+      const config = options();
+      const certificate = changedLeaf ? vector.renewedCertificate : vector.certificate;
+      config.fetch
+        .mockResolvedValueOnce(Response.json({ gateways: [choice()] }))
+        .mockResolvedValueOnce(
+          Response.json({
+            binding: { ...binding(), certificate },
+            accountId: "a".repeat(64),
+            identityToken: "fictional-account-proof",
+            expiresAt: Math.floor(Date.now() / 1000) + 60,
+          }),
+        );
+      const expectedGateway = {
+        gatewayUrl: choice().publicOrigin,
+        gatewayFingerprint: certificateFingerprint(vector.certificate),
+        ...(legacy ? {} : { tlsSpkiFingerprint: tlsSpkiFingerprint(vector.certificate) }),
+      };
+      const pending = selectAccountGateway({
+        ...config,
+        accountId: "a".repeat(64),
+        expiresAt: Math.floor(Date.now() / 1000) + 120,
+        expectedGateway,
+      });
+      if (legacy && changedLeaf) await expect(pending).rejects.toThrow("identity changed");
+      else expect((await pending).binding.certificate).toBe(certificate);
+      expect(config.select).not.toHaveBeenCalled();
+    }
+  }
+});
+
+test("present malformed SPKI cannot downgrade to an otherwise matching certificate pin", () => {
+  const expected = {
+    gatewayUrl: choice().publicOrigin,
+    gatewayFingerprint: certificateFingerprint(identityVectors.gateway.certificate),
+    tlsSpkiFingerprint: "invalid",
+  };
+  expect(() => snapshotExpectedAccountGateway(expected)).toThrow();
+  expect(() =>
+    snapshotExpectedAccountGateway({
+      ...expected,
+      tlsSpkiFingerprint: null,
+    } as unknown as typeof expected),
+  ).toThrow();
+  expect(() =>
+    snapshotExpectedAccountGateway({ ...expected, tlsSpkiFingerprint: undefined }),
+  ).toThrow();
+  const legacy = snapshotExpectedAccountGateway({
+    gatewayUrl: expected.gatewayUrl,
+    gatewayFingerprint: expected.gatewayFingerprint,
+  });
+  expect(Object.isFrozen(legacy)).toBe(true);
+  expect(legacy).not.toHaveProperty("tlsSpkiFingerprint");
 });

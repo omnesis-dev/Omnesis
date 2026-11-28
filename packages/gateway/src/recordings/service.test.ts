@@ -27,6 +27,7 @@ import {
   type RecordingChunkInput,
 } from "./service.js";
 import { getRecordingChunk, getRecordingVoiceProfile, readRecordingChunkAudio } from "./storage.js";
+import { createVoiceSeparatorSource, type VoiceSeparatorSource } from "./voices/loader.js";
 import { ReplayVoiceSeparator } from "./voices/replay-voice-separator.js";
 import type { VoiceSeparator } from "./voices/voices.js";
 import type { CalendarEventCandidate } from "./suggestions.js";
@@ -55,10 +56,16 @@ let failingIngest: Set<string>;
 let calls: { mimeType: string; opts?: TranscribeOptions }[];
 let docs: Map<string, DocumentInput>;
 let held: Promise<void> | null;
+let beforeIngest: (() => Promise<void>) | undefined;
+let beforeAssignVoices: (() => Promise<void>) | undefined;
+let beforeCloseConversations: (() => Promise<void>) | undefined;
 let separator: VoiceSeparator | null;
 let release: () => void;
 /** The operator's `inference.recordings.keepAudioDays`. */
 let keepDays: number;
+let review: boolean | undefined;
+let voiceSelections: number;
+let voiceSource: VoiceSeparatorSource | undefined;
 /** The operator's `inference.recordings.selfVoice`. */
 let selfVoice: "off" | "match";
 /** The operator's `inference.recordings.conversationGapSeconds`, in ms; 0 never splits. */
@@ -130,24 +137,39 @@ beforeEach(() => {
   docs = new Map();
   failingIngest = new Set();
   held = null;
+  beforeIngest = undefined;
+  beforeAssignVoices = undefined;
+  beforeCloseConversations = undefined;
   separator = null;
   keepDays = 0;
+  review = false;
+  voiceSelections = 0;
+  voiceSource = undefined;
   selfVoice = "off";
+  voiceWrite = null;
   gapMs = 0;
   calendar = () => [];
-  voiceWrite = null;
-  const writeGate = directWriteGate(db);
+  const gate = directWriteGate(db);
+  const assignVoices = gate.assignRecordingVoices;
+  gate.assignRecordingVoices = async (id, chunks, selfSpeakers) => {
+    if (beforeAssignVoices) await beforeAssignVoices();
+    await assignVoices(id, chunks, selfSpeakers);
+  };
+  const closeConversations = gate.closeRecordingConversations;
+  gate.closeRecordingConversations = async (id, spans, closedAt) => {
+    if (beforeCloseConversations) await beforeCloseConversations();
+    return closeConversations(id, spans, closedAt);
+  };
+  const setVoiceProfile = gate.setRecordingVoiceProfile;
+  gate.setRecordingVoiceProfile = async (profile) => {
+    if (voiceWrite) {
+      voiceWrite.reached = true;
+      await voiceWrite.until;
+    }
+    return setVoiceProfile(profile);
+  };
   service = new RecordingTranscriptionService({
-    writeGate: {
-      ...writeGate,
-      setRecordingVoiceProfile: async (profile) => {
-        if (voiceWrite) {
-          voiceWrite.reached = true;
-          await voiceWrite.until;
-        }
-        return writeGate.setRecordingVoiceProfile(profile);
-      },
-    },
+    writeGate: gate,
     readDb: db,
     transcribe: async (_audio, mimeType, opts) => {
       calls.push({ mimeType, opts });
@@ -160,6 +182,7 @@ beforeEach(() => {
     },
     readiness: async () => readiness,
     ingest: async (input) => {
+      if (beforeIngest) await beforeIngest();
       for (const doc of input) {
         if (failingIngest.has(doc.externalId)) throw new Error("disk full");
         docs.set(doc.externalId, doc);
@@ -169,8 +192,17 @@ beforeEach(() => {
       docs.delete(externalId);
     },
     buildDocument: buildRecordingDocument,
-    voices: () => separator,
+    voices: () => {
+      voiceSelections += 1;
+      return voiceSource?.current() ?? separator;
+    },
+    voicesReady: () => voiceSource?.settled() ?? Promise.resolve("off"),
+    voicesRevision: () => voiceSource?.revision() ?? 0,
     keepAudioDays: () => keepDays,
+    reviewRequired: () => {
+      if (review === undefined) throw new Error("Unavailable review metadata");
+      return review;
+    },
     selfVoice: () => selfVoice,
     conversationGapMs: () => gapMs,
     calendarEvents: async (from, to) => calendar(from, to),
@@ -181,6 +213,7 @@ beforeEach(() => {
 afterEach(async () => {
   service.dispose();
   await service.idle();
+  await voiceSource?.dispose();
   db.close();
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {
     if (existsSync(dbPath + suffix)) unlinkSync(dbPath + suffix);
@@ -609,6 +642,9 @@ describe("RecordingTranscriptionService kept audio", () => {
     await service.idle();
     expect(service.chunkAudio(id, 0)).not.toBeNull();
     keepDays = 0;
+    review = false;
+    voiceSelections = 0;
+    voiceSource = undefined;
     await pass();
     expect(service.chunkAudio(id, 0)).toBeNull();
   });
@@ -896,6 +932,252 @@ describe("RecordingTranscriptionService speakers", () => {
       .get(id)!.n;
     expect(vectors).toBe(0);
   });
+});
+
+test("restored review holds all recording work and preserves pending/completed history and audio", async () => {
+  review = true;
+  const id = await start(undefined, undefined, "ambient");
+  await service.addChunk(chunk(id, 0));
+  db.prepare(
+    "INSERT INTO recording_chunks(session_id,seq,started_at,duration_ms,audio,status,text,voice_vectors,next_attempt_at,received_at,settled_at) VALUES(?,1,?,1000,?,'transcribed','Invented saved transcript',?,?,?,?)",
+  ).run(
+    id,
+    START,
+    Buffer.from("invented audio"),
+    Buffer.from("invented vectors"),
+    START,
+    START,
+    START,
+  );
+  db.prepare(
+    "INSERT INTO recording_speakers(session_id,speaker,name) VALUES(?,1,'Invented speaker')",
+  ).run(id);
+  db.prepare(
+    "INSERT INTO recording_marks(session_id,note_id,marked_at) VALUES(?,'invented-note',?)",
+  ).run(id, START);
+  db.prepare(
+    "INSERT INTO recording_suggestion_dismissals(session_id,key,dismissed_at) VALUES(?,'invented-choice',?)",
+  ).run(id, START);
+  const completed = await start(undefined, undefined, "ambient");
+  db.prepare("UPDATE recording_sessions SET finished_at=?,chunk_count=1,revision=2 WHERE id=?").run(
+    START,
+    completed,
+  );
+  db.prepare(
+    "INSERT INTO recording_chunks(session_id,seq,started_at,duration_ms,audio,status,text,voice_vectors,next_attempt_at,received_at,settled_at) VALUES(?,0,?,1000,?,'transcribed','Invented completed transcript',?,?,?,?)",
+  ).run(
+    completed,
+    START,
+    Buffer.from("invented completed audio"),
+    Buffer.from("invented completed vectors"),
+    START,
+    START,
+    START,
+  );
+  db.prepare(
+    "INSERT INTO recording_participants(session_id,key,name,added_at) VALUES(?,'name:invented observer','Invented observer',?)",
+  ).run(id, START);
+  db.prepare(
+    "INSERT INTO recording_conversations(session_id,n,first_seq,last_seq,started_at,ended_at,title,content_hash,closed_at) VALUES(?,1,0,1,?,?,'Invented reviewed title','saved-content-hash',?)",
+  ).run(id, START, at(120_000), START);
+  db.prepare(
+    "INSERT INTO recording_conversations(session_id,n,first_seq,last_seq,started_at,ended_at,closed_at) VALUES(?,1,0,0,?,?,?)",
+  ).run(completed, START, at(1000), START);
+  gapMs = 90_000;
+  const tables = [
+    "recording_sessions",
+    "recording_chunks",
+    "recording_marks",
+    "recording_speakers",
+    "recording_participants",
+    "recording_conversations",
+    "recording_suggestion_dismissals",
+  ];
+  const before = tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all());
+  advance(20 * 24 * 60 * 60 * 1000);
+  await pass();
+  expect(tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all())).toEqual(before);
+  expect(calls).toEqual([]);
+  expect(voiceSelections).toBe(0);
+  expect(docs.size).toBe(0);
+  expect(service.status(id)?.reviewRequired).toBe(true);
+  expect(service.recent(1)[0]?.reviewRequired).toBe(true);
+  review = undefined;
+  await pass();
+  expect(tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all())).toEqual(before);
+});
+
+test("review raised during transcription prevents settlement, projection and audio deletion", async () => {
+  const id = await start();
+  hold();
+  transcripts.push({ text: "Invented pending transcript" });
+  await service.addChunk(chunk(id, 0));
+  while (calls.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));
+  review = true;
+  release();
+  await service.idle();
+  expect(getRecordingChunk(db, id, 0)?.status).toBe("pending");
+  expect(readRecordingChunkAudio(db, id, 0)).not.toBeNull();
+  expect(docs.size).toBe(0);
+});
+
+async function savedVoiceHistory(): Promise<string> {
+  const id = await start();
+  db.prepare("UPDATE recording_sessions SET finished_at=?,chunk_count=1,revision=2 WHERE id=?").run(
+    START,
+    id,
+  );
+  db.prepare(
+    "INSERT INTO recording_chunks(session_id,seq,started_at,duration_ms,status,text,voices,voice_vectors,next_attempt_at,received_at) VALUES(?,0,?,1000,'transcribed','Invented voice history',?,?,?,?)",
+  ).run(
+    id,
+    START,
+    JSON.stringify([{ startMs: 0, endMs: 1000 }]),
+    Buffer.from(new Float32Array([1, 0]).buffer),
+    START,
+    START,
+  );
+  return id;
+}
+
+test("real loader readiness holds projection and vectors until reviewed local preparation completes", async () => {
+  review = true;
+  let releaseModels!: () => void;
+  const models = new Promise<void>((resolve) => {
+    releaseModels = resolve;
+  });
+  const available = vi.fn(async () => {
+    await models;
+    return true;
+  });
+  const group = vi.fn(async () => [0]);
+  const create = vi.fn(() => ({
+    name: "invented",
+    model: "invented-scripted-model",
+    separate: async () => ({ windows: [], vectors: [] }),
+    group,
+    dispose: async () => {},
+  }));
+  voiceSource = createVoiceSeparatorSource({
+    modelsDir: dbPath + ".models",
+    policy: () => ({ mode: "local", reviewRequired: review !== false }),
+    available,
+    download: async () => {},
+    create,
+  });
+  const id = await savedVoiceHistory();
+  await pass();
+  expect(available).not.toHaveBeenCalled();
+  review = false;
+  const running = pass();
+  try {
+    await vi.waitFor(() => expect(available).toHaveBeenCalledOnce());
+    expect(
+      db.prepare("SELECT voice_vectors FROM recording_chunks WHERE session_id=?").pluck().get(id),
+    ).not.toBeNull();
+    expect(service.status(id)?.projected).toBe(false);
+    expect(docs.has(id)).toBe(false);
+    expect(create).not.toHaveBeenCalled();
+  } finally {
+    releaseModels();
+    await running;
+  }
+  expect(group).toHaveBeenCalledOnce();
+  expect(service.status(id)?.projected).toBe(true);
+  expect(docs.has(id)).toBe(true);
+});
+
+test("unavailable local preparation preserves ungrouped history without same-pass retry or false completion", async () => {
+  review = true;
+  voiceSource = createVoiceSeparatorSource({
+    modelsDir: dbPath + ".models",
+    policy: () => ({ mode: "local", reviewRequired: review !== false }),
+    available: async () => false,
+    download: async () => {
+      throw new Error("Unexpected download");
+    },
+  });
+  const id = await savedVoiceHistory();
+  review = false;
+  await pass();
+  expect(service.status(id)?.projected).toBe(false);
+  expect(docs.has(id)).toBe(false);
+  expect(
+    db.prepare("SELECT voice_vectors FROM recording_chunks WHERE session_id=?").pluck().get(id),
+  ).not.toBeNull();
+});
+
+test("mode generation change while grouping cannot publish or discard stale voice vectors", async () => {
+  review = true;
+  let mode: "local" | "off" = "local";
+  let releaseGroup!: (value: number[]) => void;
+  const labels = new Promise<number[]>((resolve) => {
+    releaseGroup = resolve;
+  });
+  const group = vi.fn(() => labels);
+  voiceSource = createVoiceSeparatorSource({
+    modelsDir: dbPath + ".models",
+    policy: () => ({ mode, reviewRequired: review !== false }),
+    available: async () => true,
+    download: async () => {},
+    create: () => ({
+      name: "invented",
+      model: "invented-scripted-model",
+      separate: async () => ({ windows: [], vectors: [] }),
+      group,
+      dispose: async () => {},
+    }),
+  });
+  const id = await savedVoiceHistory();
+  review = false;
+  const running = pass();
+  try {
+    await vi.waitFor(() => expect(group).toHaveBeenCalledOnce());
+    mode = "off";
+    voiceSource.refresh();
+  } finally {
+    releaseGroup([0]);
+    await running;
+  }
+  expect(service.status(id)?.projected).toBe(false);
+  expect(docs.has(id)).toBe(false);
+  expect(
+    db.prepare("SELECT voice_vectors FROM recording_chunks WHERE session_id=?").pluck().get(id),
+  ).not.toBeNull();
+});
+
+test("choice change at preparation completion is fenced before reading a separator or publishing history", async () => {
+  review = true;
+  let mode: "local" | "off" = "local";
+  const group = vi.fn(async () => [0]);
+  voiceSource = createVoiceSeparatorSource({
+    modelsDir: dbPath + ".models",
+    policy: () => ({ mode, reviewRequired: review !== false }),
+    available: async () => true,
+    download: async () => {},
+    create: () => ({
+      name: "invented",
+      model: "invented-scripted-model",
+      separate: async () => ({ windows: [], vectors: [] }),
+      group,
+      dispose: async () => {},
+    }),
+  });
+  const settled = voiceSource.settled.bind(voiceSource);
+  voiceSource.settled = async () => {
+    const state = await settled();
+    mode = "off";
+    voiceSource!.refresh();
+    return state;
+  };
+  const id = await savedVoiceHistory();
+  review = false;
+  await pass();
+  expect(group).not.toHaveBeenCalled();
+  expect(service.status(id)?.projected).toBe(false);
+  expect(
+    db.prepare("SELECT voice_vectors FROM recording_chunks WHERE session_id=?").pluck().get(id),
+  ).not.toBeNull();
 });
 
 describe("RecordingTranscriptionService conversations of an all-day session", () => {
@@ -1319,6 +1601,356 @@ describe("RecordingTranscriptionService participants without a turn", () => {
   });
 });
 
+/** Settled restored chunks with two genuine closed ranges; no transcriber/model runs. */
+async function savedSplitVoiceHistory(): Promise<string> {
+  const id = await start(undefined, undefined, "ambient");
+  keepDays = 365;
+  gapMs = 90_000;
+  db.prepare("UPDATE recording_sessions SET finished_at=?,chunk_count=3,revision=3 WHERE id=?").run(
+    at(180_000),
+    id,
+  );
+  for (const seq of [0, 2]) {
+    db.prepare(
+      "INSERT INTO recording_chunks(session_id,seq,started_at,duration_ms,audio,status,text,voices,voice_vectors,next_attempt_at,received_at,settled_at) VALUES(?,?,?,60000,?,'transcribed','Invented restored conversation',?,?,?,?,?)",
+    ).run(
+      id,
+      seq,
+      at(seq * 60_000),
+      Buffer.from("invented retained audio"),
+      JSON.stringify([{ startMs: 0, endMs: 1000 }]),
+      Buffer.from(new Float32Array(seq === 0 ? [1, 0] : [0, 1]).buffer),
+      START,
+      START,
+      START,
+    );
+  }
+  db.prepare(
+    "INSERT INTO recording_chunks(session_id,seq,started_at,duration_ms,silent,status,next_attempt_at,received_at,settled_at) VALUES(?,1,?,60000,1,'silent',?,?,?)",
+  ).run(id, at(60_000), START, START, START);
+  await directWriteGate(db).closeRecordingConversations(
+    id,
+    [
+      { n: 1, firstSeq: 0, lastSeq: 1, startedAt: START, endedAt: at(120_000) },
+      { n: 2, firstSeq: 2, lastSeq: 2, startedAt: at(120_000), endedAt: at(180_000) },
+    ],
+    START,
+  );
+  return id;
+}
+
+function savedVectors(id: string): unknown[] {
+  return db
+    .prepare("SELECT seq, voice_vectors FROM recording_chunks WHERE session_id=? ORDER BY seq")
+    .all(id);
+}
+
+function savedConversationHashes(id: string): unknown[] {
+  return db
+    .prepare("SELECT n, content_hash FROM recording_conversations WHERE session_id=? ORDER BY n")
+    .all(id);
+}
+
+test("restored split ranges stay dirty with their vectors while local preparation is unavailable", async () => {
+  review = true;
+  const create = vi.fn(() => {
+    throw new Error("Unexpected separator construction");
+  });
+  voiceSource = createVoiceSeparatorSource({
+    modelsDir: dbPath + ".models",
+    policy: () => ({ mode: "local", reviewRequired: review !== false }),
+    available: async () => false,
+    download: async () => {
+      throw new Error("Unexpected model download");
+    },
+    create,
+  });
+  const id = await savedSplitVoiceHistory();
+  const vectors = savedVectors(id);
+  const hashes = savedConversationHashes(id);
+  review = false;
+  await pass();
+  expect(savedVectors(id)).toEqual(vectors);
+  expect(savedConversationHashes(id)).toEqual(hashes);
+  expect(docs.size).toBe(0);
+  expect(service.status(id)?.projected).toBe(false);
+  expect(create).not.toHaveBeenCalled();
+});
+
+test.each(["review", "mode"] as const)(
+  "split grouping stops without vector consumption when %s changes while labels are held",
+  async (change) => {
+    review = true;
+    let mode: "local" | "off" = "local";
+    let releaseGroup!: (value: number[]) => void;
+    const labels = new Promise<number[]>((resolve) => {
+      releaseGroup = resolve;
+    });
+    const group = vi.fn(() => labels);
+    voiceSource = createVoiceSeparatorSource({
+      modelsDir: dbPath + ".models",
+      policy: () => ({ mode, reviewRequired: review !== false }),
+      available: async () => true,
+      download: async () => {},
+      create: () => ({
+        name: "invented",
+        model: "invented-scripted-model",
+        separate: async () => ({ windows: [], vectors: [] }),
+        group,
+        dispose: async () => {},
+      }),
+    });
+    const id = await savedSplitVoiceHistory();
+    const vectors = savedVectors(id);
+    review = false;
+    const running = pass();
+    try {
+      await vi.waitFor(() => expect(group).toHaveBeenCalledOnce());
+      if (change === "review") review = true;
+      else {
+        mode = "off";
+        voiceSource.refresh();
+      }
+    } finally {
+      releaseGroup([0]);
+      await running;
+    }
+    expect(savedVectors(id)).toEqual(vectors);
+    expect(docs.size).toBe(0);
+    expect(service.status(id)?.projected).toBe(false);
+    expect(savedConversationHashes(id)).toEqual([
+      { n: 1, content_hash: null },
+      { n: 2, content_hash: null },
+    ]);
+  },
+);
+
+test.each(["review", "mode"] as const)(
+  "%s raised while an admitted range assignment finishes prevents the next range and projection",
+  async (change) => {
+    review = true;
+    let mode: "local" | "off" = "off";
+    voiceSource = createVoiceSeparatorSource({
+      modelsDir: dbPath + ".models",
+      policy: () => ({ mode, reviewRequired: review !== false }),
+      available: async () => false,
+      download: async () => {
+        throw new Error("Unexpected model download");
+      },
+    });
+    const id = await savedSplitVoiceHistory();
+    let releaseAssignment!: () => void;
+    const assignment = new Promise<void>((resolve) => {
+      releaseAssignment = resolve;
+    });
+    beforeAssignVoices = vi.fn(() => assignment);
+    review = false;
+    const running = pass();
+    try {
+      await vi.waitFor(() => expect(beforeAssignVoices).toHaveBeenCalledOnce());
+      if (change === "review") review = true;
+      else {
+        mode = "local";
+        voiceSource.refresh();
+      }
+    } finally {
+      releaseAssignment();
+      await running;
+    }
+    expect(getRecordingChunk(db, id, 0)?.voices).not.toBeNull();
+    expect(
+      db
+        .prepare("SELECT voice_vectors FROM recording_chunks WHERE session_id=? AND seq=0")
+        .pluck()
+        .get(id),
+    ).toBeNull();
+    expect(
+      db
+        .prepare("SELECT voice_vectors FROM recording_chunks WHERE session_id=? AND seq=2")
+        .pluck()
+        .get(id),
+    ).not.toBeNull();
+    expect(beforeAssignVoices).toHaveBeenCalledOnce();
+    expect(docs.size).toBe(0);
+    expect(service.status(id)?.projected).toBe(false);
+  },
+);
+
+test("review raised during the first admitted conversation ingest leaves hashes dirty and resumes after acknowledgement", async () => {
+  review = true;
+  const id = await savedSplitVoiceHistory();
+  let releaseIngest!: () => void;
+  const ingest = new Promise<void>((resolve) => {
+    releaseIngest = resolve;
+  });
+  beforeIngest = vi.fn(() => ingest);
+  review = false;
+  const running = pass();
+  try {
+    await vi.waitFor(() => expect(beforeIngest).toHaveBeenCalledOnce());
+    review = true;
+  } finally {
+    releaseIngest();
+    await running;
+  }
+  expect([...docs.keys()]).toEqual([id]); // The admitted first write may finish.
+  expect(beforeIngest).toHaveBeenCalledOnce();
+  expect(savedConversationHashes(id)).toEqual([
+    { n: 1, content_hash: null },
+    { n: 2, content_hash: null },
+  ]);
+  expect(service.status(id)?.projected).toBe(false);
+  review = false;
+  beforeIngest = undefined;
+  await pass();
+  expect([...docs.keys()]).toEqual([id, `${id}:2`]);
+  expect(service.status(id)?.projected).toBe(true);
+});
+
+test.each([false, true])(
+  "explicit delete still removes an admitted late document when review rises (split=%s)",
+  async (split) => {
+    review = true;
+    const id = split ? await savedSplitVoiceHistory() : await savedVoiceHistory();
+    let releaseIngest!: () => void;
+    const ingest = new Promise<void>((resolve) => {
+      releaseIngest = resolve;
+    });
+    beforeIngest = vi.fn(() => ingest);
+    review = false;
+    const running = pass();
+    try {
+      await vi.waitFor(() => expect(beforeIngest).toHaveBeenCalledOnce());
+      expect(await service.delete(id)).toBe(true);
+      review = true;
+    } finally {
+      releaseIngest();
+      await running;
+    }
+    expect(docs.size).toBe(0);
+    expect(service.status(id)).toBeNull();
+    expect(savedConversationHashes(id)).toEqual([]);
+  },
+);
+
+test("review raised while split history awaits real loader readiness prevents grouping and projection", async () => {
+  review = true;
+  let releaseModels!: () => void;
+  const models = new Promise<void>((resolve) => {
+    releaseModels = resolve;
+  });
+  const available = vi.fn(async () => {
+    await models;
+    return true;
+  });
+  const group = vi.fn(async () => [0]);
+  const create = vi.fn(() => ({
+    name: "invented",
+    model: "invented-scripted-model",
+    separate: async () => ({ windows: [], vectors: [] }),
+    group,
+    dispose: async () => {},
+  }));
+  voiceSource = createVoiceSeparatorSource({
+    modelsDir: dbPath + ".models",
+    policy: () => ({ mode: "local", reviewRequired: review !== false }),
+    available,
+    download: async () => {},
+    create,
+  });
+  const id = await savedSplitVoiceHistory();
+  const vectors = savedVectors(id);
+  review = false;
+  const running = pass();
+  try {
+    await vi.waitFor(() => expect(available).toHaveBeenCalledOnce());
+    expect(savedVectors(id)).toEqual(vectors);
+    expect(docs.size).toBe(0);
+    review = true;
+  } finally {
+    releaseModels();
+    await running;
+  }
+  expect(create).not.toHaveBeenCalled();
+  expect(group).not.toHaveBeenCalled();
+  expect(savedVectors(id)).toEqual(vectors);
+  expect(docs.size).toBe(0);
+  expect(service.status(id)?.projected).toBe(false);
+});
+
+async function closableAmbientHistory(finished: boolean): Promise<string> {
+  const id = await start(undefined, undefined, "ambient");
+  keepDays = 365;
+  gapMs = 90_000;
+  for (const seq of [0, 1, 2, 3]) {
+    const silent = seq === 1 || seq === 2;
+    db.prepare(
+      "INSERT INTO recording_chunks(session_id,seq,started_at,duration_ms,silent,audio,status,text,voices,voice_vectors,next_attempt_at,received_at,settled_at) VALUES(?,?,?,60000,?,?,?,?,?,?,?,?,?)",
+    ).run(
+      id,
+      seq,
+      at(seq * 60_000),
+      silent ? 1 : 0,
+      silent ? null : Buffer.from("invented retained audio"),
+      silent ? "silent" : "transcribed",
+      silent ? null : "Invented closable speech",
+      silent ? null : JSON.stringify([{ startMs: 0, endMs: 1000 }]),
+      silent ? null : Buffer.from(new Float32Array([1, 0]).buffer),
+      START,
+      START,
+      START,
+    );
+  }
+  if (finished) {
+    db.prepare(
+      "UPDATE recording_sessions SET finished_at=?,ended_at=?,chunk_count=4,revision=4 WHERE id=?",
+    ).run(at(240_000), at(240_000), id);
+  }
+  return id;
+}
+
+test.each([false, true])(
+  "review after an admitted conversation close prevents later closure/grouping/projection (finished=%s)",
+  async (finished) => {
+    review = true;
+    const first = await closableAmbientHistory(finished);
+    const second = await closableAmbientHistory(finished);
+    const vectors = [savedVectors(first), savedVectors(second)];
+    let releaseClose!: () => void;
+    const closing = new Promise<void>((resolve) => {
+      releaseClose = resolve;
+    });
+    beforeCloseConversations = vi.fn(() => closing);
+    review = false;
+    const running = pass();
+    try {
+      await vi.waitFor(() => expect(beforeCloseConversations).toHaveBeenCalledOnce());
+      review = true;
+    } finally {
+      releaseClose();
+      await running;
+    }
+    expect(beforeCloseConversations).toHaveBeenCalledOnce();
+    const counts = [first, second].map((id) =>
+      Number(
+        db
+          .prepare("SELECT count(*) FROM recording_conversations WHERE session_id=?")
+          .pluck()
+          .get(id),
+      ),
+    );
+    expect(counts.filter((count) => count > 0)).toHaveLength(1); // One admitted close may finish; no next submission.
+    expect(counts.filter((count) => count === 0)).toHaveLength(1);
+    expect([savedVectors(first), savedVectors(second)]).toEqual(vectors);
+    expect(docs.size).toBe(0);
+    expect(voiceSelections).toBe(0);
+    expect([service.status(first)?.projected, service.status(second)?.projected]).toEqual([
+      false,
+      false,
+    ]);
+  },
+);
+
 describe("RecordingTranscriptionService recognising the owner's voice", () => {
   type Line = { startMs: number; endMs: number; text: string; voice: string };
   const encode = (lines: Line[]) => new TextEncoder().encode(JSON.stringify({ segments: lines }));
@@ -1677,5 +2309,123 @@ describe("RecordingTranscriptionService recognising the owner's voice", () => {
     clips.read(3);
     expect(await last).toMatchObject({ kind: "enrolled" });
     expect(getRecordingVoiceProfile(db)).toMatchObject({ speechMs: 24_000 });
+  });
+
+  test("restore review pauses enrolment and automatic off cleanup without revoking explicit deletion", async () => {
+    await service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    const profile = getRecordingVoiceProfile(db);
+    const separate = vi.spyOn(separator!, "separate");
+    review = true;
+    expect(await service.enrollSelfVoice(clip("owner", 32), "audio/webm")).toEqual({
+      kind: "unavailable",
+    });
+    expect(separate).not.toHaveBeenCalled();
+    selfVoice = "off";
+    await pass();
+    expect(getRecordingVoiceProfile(db)).toEqual(profile);
+    expect(await service.deleteSelfVoice()).toBe(true);
+    expect(getRecordingVoiceProfile(db)).toBeNull();
+  });
+
+  test("an automatic off sweep queued behind an admitted enrolment rechecks pending restore review", async () => {
+    await service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    let releaseWrite!: () => void;
+    voiceWrite = {
+      until: new Promise<void>((resolve) => (releaseWrite = resolve)),
+      reached: false,
+    };
+    const admitted = service.enrollSelfVoice(clip("owner", 32), "audio/webm");
+    let sweeping: Promise<void> | undefined;
+    try {
+      await vi.waitFor(() => expect(voiceWrite!.reached).toBe(true));
+      selfVoice = "off";
+      // kick enters the pass synchronously, queuing its sweep behind the held writer.
+      sweeping = pass();
+      review = true;
+      releaseWrite();
+      expect(await admitted).toMatchObject({ kind: "enrolled" });
+      await sweeping;
+      expect(getRecordingVoiceProfile(db)).toMatchObject({ speechMs: 32_000 });
+    } finally {
+      releaseWrite();
+      await admitted;
+      await sweeping;
+    }
+  });
+
+  test("review raised while a clip is read prevents grouping and profile publication", async () => {
+    const clips = deferredSeparator();
+    const group = vi.spyOn(separator!, "group");
+    const enrolment = service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    try {
+      await clips.started(1);
+      review = true;
+      clips.read(0);
+      expect(await enrolment).toEqual({ kind: "unavailable" });
+      expect(group).not.toHaveBeenCalled();
+      expect(getRecordingVoiceProfile(db)).toBeNull();
+    } finally {
+      clips.read(0);
+      await enrolment;
+    }
+  });
+
+  test("a queued enrolment rechecks restore review but preserves a profile write already admitted", async () => {
+    let releaseWrite!: () => void;
+    voiceWrite = {
+      until: new Promise<void>((resolve) => (releaseWrite = resolve)),
+      reached: false,
+    };
+    const group = vi.spyOn(separator!, "group");
+    const admitted = service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    let queued: ReturnType<typeof service.enrollSelfVoice> | undefined;
+    try {
+      await vi.waitFor(() => expect(voiceWrite!.reached).toBe(true));
+      queued = service.enrollSelfVoice(clip("owner", 32), "audio/webm");
+      await vi.waitFor(() => expect(group).toHaveBeenCalledTimes(2));
+      review = true;
+      releaseWrite();
+      expect(await admitted).toMatchObject({ kind: "enrolled" });
+      expect(await queued).toEqual({ kind: "unavailable" });
+      expect(getRecordingVoiceProfile(db)).toMatchObject({ speechMs: 24_000 });
+    } finally {
+      releaseWrite();
+      await admitted;
+      await queued;
+    }
+  });
+
+  test("an old clip cannot publish after the restore-review voice generation changes back", async () => {
+    voiceSource = createVoiceSeparatorSource({
+      modelsDir: join(tmpdir(), "invented-unused-voice-models"),
+      policy: () => ({ mode: "replay", reviewRequired: review !== false }),
+    });
+    expect(await voiceSource.settled()).toBe("ready");
+    const original = voiceSource.current()!;
+    const replay = new ReplayVoiceSeparator();
+    let releaseClip!: () => void;
+    const heldClip = new Promise<void>((resolve) => (releaseClip = resolve));
+    const read = vi.spyOn(original, "separate").mockImplementation(async (audio) => {
+      await heldClip;
+      return replay.separate(audio);
+    });
+    const group = vi.spyOn(original, "group");
+    const enrolment = service.enrollSelfVoice(clip("owner", 24), "audio/webm");
+    try {
+      await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
+      review = true;
+      voiceSource.refresh();
+      review = false;
+      voiceSource.refresh();
+      expect(await voiceSource.settled()).toBe("ready");
+      releaseClip();
+      expect(await enrolment).toEqual({ kind: "unavailable" });
+      expect(group).not.toHaveBeenCalled();
+      expect(getRecordingVoiceProfile(db)).toBeNull();
+    } finally {
+      releaseClip();
+      await enrolment;
+      await replay.dispose();
+    }
   });
 });

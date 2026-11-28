@@ -7,9 +7,10 @@ import { mkdtemp, readFile, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:https";
-import { beforeEach, afterEach, expect, test, vi } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { closeServer, listen, tlsFiles } from "../test/support.js";
 import { AdaptiveGatewayPath } from "./adaptive-path.js";
+import { NearbyDialOrder, readNearbyHints } from "./nearby-hints.js";
 import { probeGatewayDevice } from "./adaptive-probe.js";
 import { certificateFingerprint } from "./gateway-binding.js";
 import { GatewayTlsIdentityRefused, tlsSpkiFingerprint } from "./pinned-key.js";
@@ -276,6 +277,34 @@ test("a home address held by another machine is skipped before any byte is sent,
   }
 });
 
+test("pinned requests expose only the recognized storage refusal code", async () => {
+  const f = await fixture();
+  try {
+    for (const code of ["STORAGE_PROTECTION_REQUIRED", "fictional-private-detail"]) {
+      f.reply(503, { code, error: "fictional-private-detail" });
+      await expect(
+        f.json(f.binding, "/health", undefined, AbortSignal.timeout(5000), undefined, {
+          token: "device-token",
+          tlsSpkiFingerprint: f.pin,
+        }),
+      ).rejects.toMatchObject({
+        status: 503,
+        code: code === "STORAGE_PROTECTION_REQUIRED" ? code : undefined,
+        message: "Gateway pairing request refused",
+      });
+    }
+    f.reply(503, "x".repeat(65_537));
+    await expect(
+      f.json(f.binding, "/health", undefined, AbortSignal.timeout(5000), undefined, {
+        token: "device-token",
+        tlsSpkiFingerprint: f.pin,
+      }),
+    ).rejects.toThrow("too large");
+  } finally {
+    await f.close();
+  }
+});
+
 test("canonical authentication and malformed responses remain terminal while temporary service failures retain hints", async () => {
   const f = await fixture();
   try {
@@ -519,3 +548,130 @@ test("a running SPKI-paired route recovers expired same-key TLS only after exact
 });
 
 afterEach(() => vi.unstubAllEnvs());
+
+test("nearby DHCP hint authenticates the saved gateway before metadata or credentials reach any peer", async () => {
+  const f = await fixture();
+  try {
+    const raw = [...f.saved, ...f.fresh];
+    const dial = new NearbyDialOrder().next(f.saved, raw);
+    const learned = await discoverDirectCandidates(
+      f.binding,
+      "device-token",
+      AbortSignal.timeout(5000),
+      f.json,
+      f.saved,
+      f.pin,
+      dial,
+    );
+    expect(learned).toEqual(f.fresh);
+    expect(vi.mocked(connectOrigin).mock.calls.map((call) => call[6])).toEqual([
+      f.saved[0]!.port,
+      f.fresh[0]!.port,
+    ]);
+    expect(f.rejectedBytes()).toBe(0);
+    expect(f.requests).toEqual([
+      {
+        path: "/devices/direct-candidates",
+        token: "Bearer device-token",
+        host: new URL(f.binding.publicOrigin).host,
+        sni: "gateway.example.test",
+        body: "",
+      },
+    ]);
+    expect(f.saved).toHaveLength(1);
+  } finally {
+    await f.close();
+  }
+});
+
+test("nearby dials cannot replace the saved fallback or an authenticated metadata response", async () => {
+  const f = await fixture();
+  try {
+    const dial = new NearbyDialOrder().next(f.saved, f.fresh);
+    for (const status of [200, 503]) {
+      f.reply(status, { version: 1, candidates: f.saved });
+      expect(
+        await discoverDirectCandidates(
+          f.binding,
+          "device-token",
+          AbortSignal.timeout(5000),
+          f.json,
+          f.saved,
+          f.pin,
+          dial,
+        ),
+      ).toEqual(f.saved);
+    }
+    expect(f.rejectedBytes()).toBe(0);
+    expect(f.requests).toHaveLength(2);
+    expect(f.requests.every((request) => request.token === "Bearer device-token")).toBe(true);
+  } finally {
+    await f.close();
+  }
+});
+
+test("a reachable nearby gateway refusing this role stays an authorization refusal", async () => {
+  const f = await fixture();
+  try {
+    f.reply(401, {});
+    await expect(
+      discoverDirectCandidates(
+        f.binding,
+        "device-token",
+        AbortSignal.timeout(5000),
+        f.json,
+        f.saved,
+        f.pin,
+        new NearbyDialOrder().next(f.saved, f.fresh),
+      ),
+    ).rejects.toBeInstanceOf(GatewayRequestRefused);
+    expect(f.requests).toHaveLength(1);
+    expect(f.rejectedBytes()).toBe(0);
+  } finally {
+    await f.close();
+  }
+});
+
+test("optional native expiry joins first and leaves the existing outer budget for authenticated metadata", async () => {
+  const f = await fixture();
+  try {
+    const outer = AbortSignal.timeout(5000),
+      expiry = new AbortController();
+    let joined!: () => void;
+    const physical = new Promise<void>((resolve) => {
+      joined = resolve;
+    });
+    let inner: AbortSignal | undefined;
+    const provider = {
+      snapshot: async (signal: AbortSignal) => {
+        inner = signal;
+        await physical;
+        throw signal.reason;
+      },
+      close: async () => {},
+    };
+    const pending = readNearbyHints(provider, outer, () => expiry.signal).then((hints) =>
+      discoverDirectCandidates(
+        f.binding,
+        "device-token",
+        outer,
+        f.json,
+        f.saved,
+        f.pin,
+        new NearbyDialOrder().next(f.saved, hints),
+      ),
+    );
+    expiry.abort();
+    await Promise.resolve();
+    expect(inner!.aborted).toBe(true);
+    expect(f.requests).toHaveLength(0);
+    joined();
+    expect(await pending).toEqual(f.fresh);
+    expect(outer.aborted).toBe(false);
+    expect(f.requests).toHaveLength(1);
+    expect(f.requests[0]!.path).toBe("/devices/direct-candidates");
+    expect(f.rejectedBytes()).toBe(0);
+  } finally {
+    await f.close();
+  }
+});

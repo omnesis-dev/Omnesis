@@ -59,6 +59,7 @@ export function verifyNotionWorkspace(
 
 export default defineProvider<NotionContext>({
   provider: { id: "notion", name: "Notion" },
+  permissionRequirements: [],
   authType: "oauth",
   credentials: notionCredentialsSpec,
 

@@ -128,7 +128,7 @@
             <li><a href="search">Search</a></li>
             <li><a href="agent">The agent</a></li>
             <li><a href="connect">Agents &amp; MCP</a></li>
-            <li><a href="apps">Mobile apps</a></li>
+            <li><a href="apps">Apps</a></li>
             <li><a href="notifications">Notifications</a></li>
             <li><a href="operating">Operating</a></li>
             <li><a href="security">Security</a></li>
@@ -261,9 +261,18 @@
           user-supplied parameters. Push-only and gateway-hosted sources declare <code>local</code>.
           The portal, CLI, and apps read all of it through the registry — shared code never branches
           on a source name. If a consumer needs something source-specific, the descriptor grows a
-          field; the name never leaks downstream. An externally fed source can declare
-          <code>setupGuide: "browser-extension"</code> to show the browser extension install and
-          pairing guide in the portal instead of collector setup.
+          field; the name never leaks downstream. An externally fed source can declare an opaque
+          <code>setupGuide</code> marker and optional provider-owned
+          <code>setupGuideContent</code> to show installation instructions instead of collector
+          setup. Version 1 content contains a title, plain-text paragraphs, HTTPS install or help
+          links, an optional note, and optional navigation to the existing device-pairing screen. It
+          never contains scopes, credentials or API commands. Shared clients render the metadata
+          without branching on a source name. Keep an existing legacy marker unchanged for older
+          clients; the browser provider retains <code>browser-extension</code>. Clients that do not
+          support the content version refuse its actions; the Mac app offers web setup when an older
+          gateway supplies only a marker. Content needs a valid marker; a declared but unsupported
+          guide never falls back to collector setup. Guide string limits use UTF-8 bytes across
+          clients.
         </p>
         <p>
           Give every source an <code>icon</code>: an SF Symbol name, a brand <code>color</code> and
@@ -492,6 +501,38 @@ export default defineSource({
           suitable for eager, same-thread SQLite readers only. A source that holds a transaction or
           iterator across an <code>await</code>, or reads that same file on another thread, must
           coordinate its readers and probes instead of using the helper unguarded.
+        </p>
+        <p>
+          Sources can declare <code>permissionRequirements</code> with a stable identifier, a
+          precise purpose and scope, and fixed remediation actions. An omitted declaration means
+          unknown; an explicit empty array means no local permission is required. This does not
+          prove that OAuth credentials or device pairing are ready. Keep requirements in the
+          provider, rather than branching on source names in a client. A
+          <code>probePermissionAccess({ accountId, params, configDir, signal })</code> hook checks a
+          candidate before setup using bounded metadata operations only: never create a provider,
+          read records, refresh credentials, or save state. Configured sources use their existing
+          <code>probePermissionAccess({ signal })</code> hook when its declared capability differs
+          from full enumeration, otherwise the existing <code>probeReadAccess</code> hook. Folder
+          providers can prove fresh access to their required roots by opening and listing one entry
+          with <code>probeRootReadAccess</code>; this does not verify descendant coverage. Keep the
+          full-tree doctor check and reader gap safeguards separate. Reports describe access for
+          that source and computer, never a global Full Disk Access grant. Opening Settings or
+          restarting is not evidence of access. Fixed actions cannot carry shell commands or
+          arbitrary URLs.
+        </p>
+        <p>
+          Managed desktop collection rechecks blocking requirements before reading and before
+          publishing a page. An explicit denial keeps existing cursors and indexed information, and
+          withholds the page and its deletion assertions. A bounded or indeterminate health check
+          remains unknown; it is never permission granted. A configured reader can continue under
+          its existing incomplete-enumeration and snapshot safeguards. Readers must still report
+          incomplete enumeration themselves; neither an unavailable probe nor a successful probe
+          makes a later failed read authoritative. When a reader catches an actual EPERM/EACCES
+          while retaining a safe partial result, report <code>permissionDenied: true</code> on that
+          page. Managed collection then withholds publication and reports scoped access loss; do not
+          use this flag for corrupt input, scan limits or other indeterminate gaps. Known loss stays
+          unresolved during a retry until the member completes a successful sync. Headless
+          collection retains its existing scheduling behavior.
         </p>
         <p>
           A source maintaining an encrypted local cache or archive also implements

@@ -21,6 +21,7 @@ import {
 } from "@omnesis/core";
 import {
   missingHostedWriteScopes,
+  SCOPE_ADMIN,
   SourceId,
   type DeviceId,
   type DeviceRecord,
@@ -142,6 +143,9 @@ import {
 import { PairingService } from "./http/services/PairingService.js";
 import { DeviceService } from "./http/services/DeviceService.js";
 import { PushRegistrationService } from "./http/services/PushRegistrationService.js";
+import { storageProtectionMiddleware } from "./http/middleware/storage-protection.js";
+import { hasPendingRecordingChunks } from "./recordings/restore-review.js";
+import { mountRecordingReviewRoutes } from "./http/routes/admin/recording-review.js";
 import { mountStatusRoutes, mountDbSizeRoute } from "./http/routes/status.js";
 import { mountPortalRoutes } from "./http/routes/portal.js";
 import { mountPortalHandoffRoutes } from "./http/routes/portal-handoff.js";
@@ -153,6 +157,8 @@ import { mountCloudPairingRoutes } from "./http/routes/cloud-pairing.js";
 import { mountStepUp } from "./http/step-up.js";
 import { mountBackupRoutes } from "./http/routes/backup.js";
 import { mountExportRoutes } from "./http/routes/export.js";
+import { mountArtifactRoutes } from "./http/routes/artifacts.js";
+import { ArtifactDownloadService } from "./http/services/ArtifactDownloadService.js";
 import { mountModelCredentialsRoutes } from "./http/routes/model-credentials.js";
 import {
   mountDocumentCoreRoutes,
@@ -263,6 +269,8 @@ export function createServer(
   db: Db,
   dbPath?: string,
   opts?: {
+    /** Actual boot-time encrypted-store admission evidence, never a requested config flag. */
+    storageProtection?: import("./storage-protection.js").GatewayStorageProtection;
     /** Transport lifecycle admission, shared by HTTP and WebSocket upgrades. */
     requestAdmission?: MiddlewareHandler<AppEnv>;
     /**
@@ -525,6 +533,10 @@ export function createServer(
     ) => void;
     /** Tells the voices of recorded conversations apart; null while that is off or not ready. */
     voiceSeparator?: () => import("./recordings/voices/voices.js").VoiceSeparator | null;
+    voiceSeparatorReady?: () => Promise<
+      import("./recordings/voices/loader.js").VoiceSeparatorReadiness
+    >;
+    voiceSeparatorRevision?: () => number;
     /** Replay-only settable briefs decision clock (backtest mirror). */
     briefsClock?: import("./brain/virtual-clock.js").MutableClock;
     /** The interest ledger, for the Debug → Cognition tab. Omitted ⇒ the tab's routes 404. */
@@ -622,6 +634,8 @@ export function createServer(
      * `/admin/export*` routes.
      */
     exportService?: import("./http/services/ExportService.js").ExportService;
+    /** Read only; readable exports must never create or replace an encryption key. */
+    readExportRootKey?: () => Promise<string | null>;
     /**
      * The push transport. When provided, the APNs status/test routes mount
      * and document/analytics writes publish on the event bus for the watch
@@ -1332,6 +1346,11 @@ export function createServer(
 
   app.use(
     "*",
+    storageProtectionMiddleware(deviceService, () => opts?.storageProtection),
+  );
+
+  app.use(
+    "*",
     devicePathObservation(
       opts?.wsServer ? (id, path) => opts.wsServer!.noteConnectionPath(id, path) : undefined,
     ),
@@ -1537,6 +1556,7 @@ export function createServer(
   sourceService.resumePendingRemovals();
 
   const pairingService = new PairingService({
+    isStorageProtected: () => opts?.storageProtection?.atRest === "encrypted",
     db,
     writeGate: w,
     statusCache,
@@ -1650,8 +1670,12 @@ export function createServer(
   });
   mountCaptureRoutes(app, captureRouting);
 
+  if (opts?.configStore)
+    mountRecordingReviewRoutes(app, opts.configStore, () => hasPendingRecordingChunks(db));
+
   // Status block 1: /health, /config, /admin/config*, /status
   mountStatusRoutes(app, {
+    storageProtection: opts?.storageProtection,
     tailscaleEmbed: !!opts?.tailscaleEmbed,
     getLabStatus: () => labService.flags(),
     db,
@@ -1816,6 +1840,34 @@ export function createServer(
   // Portable data export. Same wiring contract as backup.
   if (opts?.exportService) {
     mountExportRoutes(app, { exportService: opts.exportService });
+  }
+
+  const artifactDownloads =
+    opts?.backupService || opts?.exportService
+      ? new ArtifactDownloadService({
+          backupRoot: opts.backupService?.getArtifactRoot(),
+          exportRoot: opts.exportService?.getArtifactRoot(),
+          readExportRootKey: opts.readExportRootKey,
+        })
+      : undefined;
+  if (artifactDownloads) {
+    mountArtifactRoutes(app, {
+      service: artifactDownloads,
+      stillAuthorized: (c) => {
+        const auth = c.get("auth");
+        if (auth.authMethod === "bearer" && auth.tokenId && auth.deviceId)
+          return isTokenActive(db, auth.tokenId, auth.deviceId);
+        if (auth.authMethod === "portal-session") {
+          const sessionId = getSessionCookie(c.req.header("Cookie"), cookieName);
+          const session = sessionId ? lookupSession(db, sessionId).info : null;
+          return Boolean(
+            session?.scopes.includes(SCOPE_ADMIN) &&
+            isTokenActive(db, session.tokenId, session.credentialDeviceId),
+          );
+        }
+        return false;
+      },
+    });
   }
 
   // Model-provider credentials (gateway-host). Mounted before the
@@ -2339,8 +2391,16 @@ export function createServer(
         ]),
       buildDocument: buildRecordingDocument,
       ...(opts.voiceSeparator ? { voices: opts.voiceSeparator } : {}),
+      ...(opts.voiceSeparatorReady ? { voicesReady: opts.voiceSeparatorReady } : {}),
+      ...(opts.voiceSeparatorRevision ? { voicesRevision: opts.voiceSeparatorRevision } : {}),
       // Read on every pass, so a changed retention applies without a restart.
       keepAudioDays: () => opts.configStore?.get().inference?.recordings?.keepAudioDays ?? 0,
+      ...(opts.configStore
+        ? {
+            reviewRequired: () =>
+              opts.configStore!.get().inference?.recordings?.restoreReviewRequired === true,
+          }
+        : {}),
       // Read on every pass too: turning it off deletes the enrolled voice.
       selfVoice: () => opts.configStore?.get().inference?.recordings?.selfVoice ?? "off",
       conversationGapMs: () =>
@@ -2519,6 +2579,7 @@ export function createServer(
         const results = await Promise.allSettled([
           Promise.resolve().then(() => brainAdmin.close()),
           Promise.resolve().then(() => analyticsRoutes.close()),
+          Promise.resolve().then(() => artifactDownloads?.close()),
           ...(opts?.onDoctorCleanupOwner
             ? []
             : [Promise.resolve().then(() => doctorService.close())]),

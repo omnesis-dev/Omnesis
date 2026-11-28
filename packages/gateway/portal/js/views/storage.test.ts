@@ -8,6 +8,9 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 const api = vi.hoisted(() => ({ getStorage: vi.fn(), setStoragePolicy: vi.fn(), startStorageTrim: vi.fn(), setStorageRetention: vi.fn(), refreshStorage: vi.fn(), startStorageCleanup: vi.fn(), cancelStorageCleanup: vi.fn() }));
 vi.mock("../api.js", () => api);
+const recordingReview = vi.hoisted(() => ({ mayRequestRecordingReview: vi.fn(), getRecordingRestoreReview: vi.fn(), resumeRecordingRestoreReview: vi.fn() }));
+vi.mock("../lib/recording-restore-review-api.js", () => recordingReview);
+
 
 // @ts-expect-error — portal modules are plain JS.
 import { StorageView } from "./storage.js";
@@ -19,6 +22,8 @@ const snapshot = {
 };
 beforeEach(() => {
   vi.resetAllMocks();
+  recordingReview.mayRequestRecordingReview.mockReturnValue(true);
+  recordingReview.getRecordingRestoreReview.mockResolvedValue({ reviewRequired: false, hasPendingChunks: false, keepAudioDays: 0, transcriberAssignment: null, speakers: "off", version: "a".repeat(64) });
   const parsed = parseHTML("<html><body><main></main></body></html>");
   vi.stubGlobal("document", parsed.document); vi.stubGlobal("window", parsed.window);
   host = parsed.document.querySelector("main") as unknown as HTMLElement;
@@ -589,4 +594,14 @@ test("invalid physical values never turn into a zero total or invalid pie geomet
   await mount();
   expect(host.querySelector(".storage-donut text")?.textContent).toBe("Not measured");
   expect(host.querySelector(".storage-donut")?.outerHTML).not.toContain("NaN");
+});
+
+
+test("Storage offers restored-work review independently of Lab and keeps capture undiscoverable", async () => {
+  recordingReview.getRecordingRestoreReview.mockResolvedValue({ reviewRequired: true, hasPendingChunks: true, keepAudioDays: 0, transcriberAssignment: null, speakers: "local", version: "a".repeat(64) });
+  await mount();
+  expect(host.querySelector("[data-recording-restore-review]")?.textContent).toContain("Restored recordings are paused");
+  expect(host.textContent).toContain("Choose transcription model");
+  expect(host.textContent).not.toMatch(/turn on recordings|record a conversation/i);
+  expect(recordingReview.resumeRecordingRestoreReview).not.toHaveBeenCalled();
 });

@@ -142,7 +142,7 @@
             <li><a href="search">Search</a></li>
             <li><a href="agent">The agent</a></li>
             <li><a href="connect">Agents &amp; MCP</a></li>
-            <li><a href="apps">Mobile apps</a></li>
+            <li><a href="apps">Apps</a></li>
             <li><a href="notifications">Notifications</a></li>
             <li><a href="operating">Operating</a></li>
             <li><a href="security">Security</a></li>
@@ -386,6 +386,11 @@
         </p>
 
         <h2 id="remote-access">Remote access</h2>
+        <p>
+          A relay or remote-access connection still needs a running, awake gateway. If its host is a
+          Mac, follow the <a href="install#mac-server">Mac server sleep settings</a>; Wake for
+          network access alone does not keep the library available.
+        </p>
         <p>
           Each client keeps one gateway address, the one it was paired or configured with, and
           always dials it. No client switches between a LAN address and a Tailscale name by itself,
@@ -910,11 +915,41 @@ omnesis.example.com {
           to a public authority.
         </p>
 
+        <h2 id="mac-nearby">A Mac joined to your library</h2>
+        <p>
+          The Mac app can join a gateway installed from source on Linux or a gateway hosted by
+          another Mac. Connect the gateway to your Omnesis account, choose that library in the app,
+          and approve the Mac's separate library and collection access when requested. Other
+          collectors can keep using the same gateway.
+        </p>
+        <p>
+          On the same network, the app uses Bonjour to find addresses for the library you already
+          connected. The server must still prove its saved identity before it receives a device
+          credential. A nearby advertisement cannot connect another library or approve a device.
+        </p>
+        <p>
+          If nearby discovery needs attention, open the Mac app's
+          <strong>Settings → General → Nearby connection</strong>. Allow Omnesis under
+          <strong>System Settings → Privacy &amp; Security → Local Network</strong>, then choose
+          <strong>Check again</strong>. Opening Settings alone does not verify access. A working
+          secure remote connection remains available when local discovery is denied or no nearby
+          address is found.
+        </p>
+
         <h2 id="collector">Collector on another machine</h2>
         <p>
           The installer runs a collector on the gateway machine, and it sets itself up: on first
           start it pairs using the <a href="./#devices-and-tokens">bootstrap admin token</a> and
           saves its own token to <code>~/.config/omnesis/collector-token</code>.
+        </p>
+        <p>
+          A gateway installed from source on Linux and the Mac app can use the same library. The Mac
+          app finds existing libraries through your Omnesis account; the gateway must be linked to
+          that account, use encrypted storage, and support the app's connection protocol. An
+          unlinked gateway is not offered by the app's account picker just because it is on the same
+          network. A Linux collector can also pair with a library hosted by the Mac app using the
+          ordinary collector setup below. Each collector connects directly to the gateway, rather
+          than through another collector.
         </p>
         <p>
           A collector on a second machine, such as a Mac that has your Apple Notes while the gateway
@@ -1098,7 +1133,7 @@ omnesis.example.com {
           <code>android/local.push.properties</code> file that the build reads. The package id you
           choose there becomes the app's identity, so your build can be installed beside an official
           one; rebuild after changing it. Build steps are on
-          <a href="apps#getting-the-apps">Mobile apps</a>, and the Firebase values on
+          <a href="apps#getting-the-apps">Apps</a>, and the Firebase values on
           <a href="notifications#setup">Notifications → Direct setup</a>.
         </p>
         <p>
@@ -1155,10 +1190,10 @@ omnesis.example.com {
             href="https://chromewebstore.google.com/detail/omnesis-browser-capture/akojepkcdbncipjdonhnnfmjacknplmn"
             >Chrome Web Store</a
           >
-          (Chrome 130 or newer). In the portal, the Sources page links to the listing until the Web
-          Pages source exists. Choosing <strong>Web Pages</strong> in <strong>Add a source</strong>
-          also opens the extension installation and pairing guide. Then mint a code under
-          <strong>Settings → Devices → Pair device → Browser extension</strong>, or from the CLI:
+          (Chrome 130 or newer). In the portal, open <strong>Sources → Add source</strong> and
+          choose <strong>Web Pages</strong> for the extension installation and pairing guide. Then
+          mint a code under <strong>Settings → Devices → Pair device → Browser extension</strong>,
+          or from the CLI:
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>

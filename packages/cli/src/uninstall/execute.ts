@@ -26,6 +26,7 @@ import {
   inspectWindowsPrivatePathSync,
   OMNESIS_INSTALL_ROOT_KEY,
   OMNESIS_SECRET_SERVICE,
+  resolveSecretStoreService,
   type SecureMarkerKind,
 } from "@omnesis/core";
 import { uninstallLegacyRunnerService } from "../commands/service.js";
@@ -331,11 +332,15 @@ async function purgeKeyring(
       }
     }
   }
-  if (action.rootKey) {
+  const options = ctx.secretStoreOptions(
+    action.configDirs[0] ?? join(ctx.home, ".config", "omnesis"),
+  );
+  const service = options.service ?? resolveSecretStoreService(ctx.env.OMNESIS_SECRET_SERVICE);
+  // A plan is not proof that a custom namespace belongs only to this installation.
+  // Retain its root and unrelated credentials even if a stale action requests their deletion.
+  if (action.rootKey && service === OMNESIS_SECRET_SERVICE) {
     try {
-      const store = createSecretStore(
-        ctx.secretStoreOptions(action.configDirs[0] ?? join(ctx.home, ".config", "omnesis")),
-      );
+      const store = createSecretStore(options);
       if ((await store.status()).available) await store.delete(OMNESIS_INSTALL_ROOT_KEY);
     } catch (err) {
       notes.push(`could not delete the install root key: ${errorText(err)}`);
@@ -344,11 +349,9 @@ async function purgeKeyring(
     // under the same service name: the docs' manual sweep, done here.
     if (ctx.platform === "darwin") {
       for (let attempt = 0; attempt < 64; attempt += 1) {
-        const res = await ctx.run(
-          "security",
-          ["delete-generic-password", "-s", OMNESIS_SECRET_SERVICE],
-          { timeoutMs: 15_000 },
-        );
+        const res = await ctx.run("security", ["delete-generic-password", "-s", service], {
+          timeoutMs: 15_000,
+        });
         if (res.code === 0) continue;
         // 44: nothing (left) under the service name — the sweep is done.
         if (res.code !== 44 && res.code !== 127) {
@@ -358,24 +361,20 @@ async function purgeKeyring(
         }
         break;
       }
-      const left = await ctx.run(
-        "security",
-        ["find-generic-password", "-s", OMNESIS_SECRET_SERVICE],
-        {
-          timeoutMs: 15_000,
-        },
-      );
+      const left = await ctx.run("security", ["find-generic-password", "-s", service], {
+        timeoutMs: 15_000,
+      });
       if (left.code === 0 && notes.length === 0) {
-        notes.push("the login keychain still holds dev.omnesis entries; unlock it and re-run");
+        notes.push(`the login keychain still holds ${service} entries; unlock it and re-run`);
       }
     } else if (ctx.platform === "linux") {
-      const cleared = await ctx.run("secret-tool", ["clear", "service", OMNESIS_SECRET_SERVICE], {
+      const cleared = await ctx.run("secret-tool", ["clear", "service", service], {
         timeoutMs: 15_000,
       });
       if (cleared.code !== 127) {
         const left = await ctx.run(
           "secret-tool",
-          ["lookup", "service", OMNESIS_SECRET_SERVICE, "account", OMNESIS_INSTALL_ROOT_KEY],
+          ["lookup", "service", service, "account", OMNESIS_INSTALL_ROOT_KEY],
           { timeoutMs: 15_000 },
         );
         if (left.code === 0 && left.stdout.trim() !== "") {

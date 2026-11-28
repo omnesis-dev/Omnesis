@@ -499,6 +499,8 @@ export type DeviceTlsTrustMode =
  * what a device can do (which sources it can host, etc.).
  */
 export interface DeviceCapability {
+  /** Sticky opt-in: this device may use corpus APIs only with verified encrypted live storage. */
+  requiresEncryptedStorage?: true;
   /** Supported source sync wire revisions; absent on legacy collectors. */
   sourceContract?: { min: number; max: number };
   /** Source types this device can host. */
@@ -527,6 +529,8 @@ export interface DeviceCapability {
   syncLease?: boolean;
   /** Accepts correlated collector-local health-check commands. */
   deviceDoctor?: true;
+  /** Answers bounded source.permission capability probes without reading records. */
+  sourcePermissions?: true;
   /** First-party external-agent integration delivery contract. */
   agentIntegration?: {
     harness: "openclaw" | "hermes";

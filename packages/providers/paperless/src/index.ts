@@ -34,6 +34,7 @@ export type { PaperlessDocument, PaperlessLookups } from "./types.js";
 
 export default defineProvider<PaperlessContext>({
   provider: { id: "paperless", name: "Paperless-ngx" },
+  permissionRequirements: [],
   authType: "api-key",
   credentials: paperlessCredentialsSpec,
 

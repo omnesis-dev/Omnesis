@@ -5,6 +5,7 @@ import { existsSync } from "node:fs";
 import { createLogger } from "@omnesis/core";
 import {
   defineStructuredSource,
+  expandHostPath,
   probeFileReadAccess,
   config as configSchema,
   type SyncProgress,
@@ -64,6 +65,24 @@ function coverageFor(schemaOk: boolean): { coverage: HistoryCoverage; detail: st
 }
 
 export default defineStructuredSource({
+  permissionRequirements: [
+    {
+      id: "local-activity-store",
+      kind: "protected-files",
+      summary: "Allow access to the selected activity store",
+      scope: "Selected local activity store",
+      blocking: true,
+      actions: [
+        { kind: "open-system-settings", category: "privacy-security" },
+        { kind: "retry-access" },
+        { kind: "restart-collector" },
+      ],
+    },
+  ],
+  probePermissionAccess: ({ params, signal }) =>
+    probeFileReadAccess(params.dbPath ? expandHostPath(params.dbPath) : KNOWLEDGE_DB_PATH, {
+      signal,
+    }),
   id: "screen-time",
   name: "Screen Time",
   description: "App usage tracking from macOS Screen Time",

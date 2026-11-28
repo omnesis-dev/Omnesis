@@ -38,6 +38,7 @@ export default defineStructuredSource<SyncCursor>({
   name: "Web Pages",
   description: "Web pages captured by the Omnesis browser extension",
   provider: { id: "web", name: "Web" },
+  permissionRequirements: [],
   authType: "local",
   unitName: "web pages",
   // Headline count = the document (page) total, not the small `page_visits`
@@ -53,6 +54,21 @@ export default defineStructuredSource<SyncCursor>({
   // `SourceDescriptor.gatewayHosted`.
   gatewayHosted: true,
   setupGuide: "browser-extension",
+  setupGuideContent: {
+    version: 1,
+    title: "Install the browser extension",
+    paragraphs: [
+      "Install Omnesis Browser Capture in Chrome or a compatible browser, then pair it with this library from the extension’s settings. Pages appear in your library after the extension connects.",
+    ],
+    links: [
+      {
+        label: "Install browser extension",
+        url: "https://chromewebstore.google.com/detail/omnesis-browser-capture/akojepkcdbncipjdonhnnfmjacknplmn",
+      },
+    ],
+    note: "The extension uses its own scoped device credential. It does not receive this app’s administrative access.",
+    pairing: { deviceKind: "browser", label: "Already installed? Pair it" },
+  },
   singleInstance: true,
   execution: "external",
   // The web-page entity is the graph hub: a referential URL bag with no

@@ -187,6 +187,7 @@ export {
   atomicWriteFile,
   atomicWriteFileSync,
   fsyncDirSync,
+  fsyncDir,
   fsyncFileSync,
 } from "./atomic-write.js";
 export {
@@ -394,20 +395,25 @@ export {
 
 export {
   clearSecretFileKeyCacheForTests,
+  invalidateSecretFileKeyCache,
   primeSecretFileKeyCache,
   secretFileScope,
   secretFileEncryptionRequired,
   markSecretFileEncryptionRequired,
   markSecretFileEncryptionRequiredSync,
   isEncryptedSecretFile,
+  rewrapSecretFileValue,
+  rewrapSecretFileValueAsync,
   readSecretTextFile,
   decodeSecretTextFileValue,
+  decodeSecretTextFileValueSync,
   readSecretTextFileSync,
   readSecretJsonFile,
   readSecretJsonFileSync,
   SecretFileRootKeyUnavailableError,
   isSecretFileRootKeyUnavailableError,
   writeSecretTextFile,
+  serializeSecretFileValue,
   writeSecretTextFileSync,
   writeSecretJsonFile,
   writeSecretJsonFileSync,
@@ -418,9 +424,13 @@ export {
   type SecretFileMigrationResult,
 } from "./secret-file.js";
 
+export { openSecretFileValueAsync, sealSecretFileValueAsync } from "./secret-file-values.js";
+
 export {
   ENCRYPTED_ARTIFACT_SUFFIX,
   encryptArtifactFileInPlace,
+  produceEncryptedArtifact,
+  type ProduceEncryptedArtifactOptions,
   decryptArtifactFileToFile,
   isEncryptedArtifactBuffer,
   isEncryptedArtifactFile,
@@ -430,6 +440,13 @@ export {
   type EncryptArtifactFileOptions,
   type EncryptArtifactFileResult,
 } from "./encrypted-artifact.js";
+export {
+  readEncryptedArtifactStream,
+  decryptEncryptedArtifactStream,
+  type ArtifactStreamReadOptions,
+  type EncryptedArtifactStream,
+  type AuthenticatedArtifactRead,
+} from "./artifact-stream-reader.js";
 
 export {
   STORAGE_KEY_NAMES,
@@ -442,6 +459,7 @@ export {
   readStorageKey,
   readStorageKeySync,
   rotateStorageKey,
+  rewrapStorageKeyValue,
   storageEncryptionRequired,
   storageKeyHex,
   storageKeyNamesForHost,
@@ -467,6 +485,7 @@ export {
   readMarkerKeyringState,
   renderSecureMarker,
   secureMarkerPath,
+  secureMarkerStateKeyName,
   setMarkerKeyringState,
   verifySecureMarker,
   writeSecureMarker,
@@ -475,9 +494,11 @@ export {
 export type { SecureMarkerKind, SecureMarkerOptions, SecureMarkerStatus } from "./secure-marker.js";
 export {
   createRecoveryEnvelope,
+  createRecoveryEnvelopeAsync,
   generateRecoveryCode,
   normalizeRecoveryCode,
   openRecoveryEnvelope,
+  openRecoveryEnvelopeAsync,
   parseRecoveryEnvelope,
   recoveryEnvelopePath,
   RecoveryCodeInvalidError,
@@ -642,7 +663,10 @@ export {
   SecretStoreUnavailableError,
   PassphraseMismatchError,
   createSecretStore,
+  confirmMacosKeychainEntriesAbsent,
   parseSecretStoreBackend,
+  defaultSecretCommandRunner,
+  resolveSecretStoreService,
   inspectInstallRootKey,
   ensureInstallRootKey,
   readInstallRootKey,
@@ -1362,6 +1386,8 @@ export {
   CODEX_POOL_WORKSPACE_DIR,
   CODEX_WORKSPACE_DIR,
   codexPaths,
+  codexKeyringAccount,
+  CODEX_KEYRING_SERVICE,
   CODEX_RUNTIME_STORE_DIR,
 } from "./codex-paths.js";
 
@@ -1370,7 +1396,11 @@ export {
 // are deliberately not on the root barrel.
 
 // ── Structured sync remediation ─────────────────────────────────────────
-export { fullDiskAccessRemediation, syncRemediationSchema } from "./sync-remediation.js";
+export {
+  fullDiskAccessRemediation,
+  syncRemediationSchema,
+  permissionActionSchema,
+} from "./sync-remediation.js";
 export {
   boundSyncIssues,
   syncIssueIdentity,
@@ -1418,6 +1448,18 @@ export { SPEECH_TO_SPEECH_MODEL, speechToSpeechAssignment } from "./models/speec
 export { CLI_COMMAND_ENV, operatorCommand } from "./operator-command.js";
 export { nodeCommandInvocation, type NodeCommandInvocation } from "./node-command.js";
 export { resolveNpmInvocation, type ResolveNpmInvocationOptions } from "./node-command.js";
+export {
+  managedDesktopDataOperationInvocation,
+  managedDesktopDataConsumerInvocation,
+  managedDesktopCatalogDiscoveryInvocation,
+  managedDesktopSnapshotGcInvocation,
+  assertManagedDesktopSnapshotGcAuthority,
+  assertManagedDesktopDataAuthority,
+  managedRuntimeSubprocessStdio,
+  type ManagedDesktopDataScope,
+  type ManagedDesktopDataContext,
+  type ManagedDesktopDataPurpose,
+} from "./node-command.js";
 export { killWindowsProcessTree, terminateChildProcess } from "./child-termination.js";
 export { installParentShutdownHandler, requestChildShutdown } from "./parent-shutdown.js";
 export { spawnOwnedChildProcess, type OwnedChildProcess } from "./owned-child-process.js";
@@ -1447,6 +1489,7 @@ export {
   execWindowsJob,
 } from "./windows-job-exec.js";
 export { ownedProcessCleanupReceipt } from "./owned-process-cleanup.js";
+export { runOpenSslWithPrivateInput } from "./openssl-private-input.js";
 export {
   OwnedProcessShutdownFence,
   type OwnedProcessCleanup,
@@ -1482,3 +1525,35 @@ export {
   type TailscaleJoinPolicy,
   type TailscaleJoinRequest,
 } from "./tailscale-embed-wire.js";
+
+export { restoreInstallRootKeyIfAbsent } from "./root-key-recovery.js";
+
+export * from "./source-permissions.js";
+
+export {
+  managedDesktopBackgroundRequired,
+  managedDesktopBackgroundStartInvocation,
+  assertManagedDesktopBackgroundOwner,
+  verifyManagedDesktopBackgroundOwner,
+  verifyManagedDesktopBackgroundRetirement,
+  type ManagedDesktopBackgroundOwner,
+  type ManagedDesktopBackgroundActivation,
+} from "./managed-background.js";
+
+export {
+  managedDesktopBackgroundBindingInvocation,
+  managedDesktopBackgroundRebindInvocation,
+  parseManagedDesktopBackgroundBinding,
+  type ManagedDesktopBackgroundBinding,
+  type ManagedDesktopBackgroundScope,
+} from "./managed-background-rebind.js";
+
+export { managedDesktopKeyRecoveryInvocation } from "./node-command.js";
+export type { ManagedDesktopKeyRecoveryContext } from "./node-command.js";
+
+export {
+  ManagedDesktopNearbyCleanupError,
+  managedDesktopNearbyInvocation,
+  managedDesktopNearbySnapshotSchema,
+  type ManagedDesktopNearbySnapshot,
+} from "./managed-background-nearby.js";

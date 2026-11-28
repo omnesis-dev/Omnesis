@@ -16,12 +16,17 @@ import { dirname } from "node:path";
 import { Readable } from "node:stream";
 import {
   atomicWriteFile,
-  atomicWriteFileSync,
   readWindowsPrivateFile,
   readWindowsRegularFilePrefix,
   writeWindowsPrivateFileAtomicStream,
+  type SecretFileOptions,
 } from "@omnesis/core";
 import { z } from "zod";
+import {
+  gatewayCredentialOptions,
+  persistGatewayKeySession,
+  readOrCreateScopedGatewayKey,
+} from "./gateway-secret-storage.js";
 import { isJoinedPrivateFileError } from "./private-file-errors.js";
 import {
   GATEWAY_REMOVED,
@@ -42,6 +47,7 @@ import { gatewayRecoveryDraft, readGatewayRecoveryReceipt } from "./gateway-reco
 export interface GatewayKeySessionOptions {
   /** Actual gateway configuration root for an encrypted, path-scoped TLS key. */
   configDir?: string;
+  secretFileOptions?: SecretFileOptions;
   relayUrl: string;
   sessionFile: string;
   gatewayId: string;
@@ -111,7 +117,9 @@ async function hasRecoveryArtifact(path: string): Promise<boolean> {
 export async function readOrCreateGatewayOwnerKey(
   path: string,
   allowCreate = true,
+  options: SecretFileOptions | undefined = gatewayCredentialOptions(),
 ): Promise<KeyObject> {
+  if (options) return readOrCreateScopedGatewayKey(path, allowCreate, options, "ed25519");
   let material: string;
   try {
     material = await readPrivateKeyText(path);
@@ -162,13 +170,19 @@ export async function readOrCreateGatewayOwnerKey(
 }
 
 async function readOwnerIdentity(
-  options: Pick<GatewayKeySessionOptions, "sessionFile" | "ownerKeyFile" | "recoveryReceiptFile">,
+  options: Pick<
+    GatewayKeySessionOptions,
+    "sessionFile" | "ownerKeyFile" | "recoveryReceiptFile" | "configDir" | "secretFileOptions"
+  >,
 ): Promise<{ owner: KeyObject; enrolled: boolean }> {
   let allowCreate = !(await hasRecoveryArtifact(
     options.recoveryReceiptFile ?? `${options.sessionFile}.recovery.json`,
   ));
   try {
-    const stored = await readPrivateJson(options.sessionFile);
+    const stored = await readPrivateJson(
+      options.sessionFile,
+      options.secretFileOptions ?? gatewayCredentialOptions(options.configDir),
+    );
     allowCreate &&= !(
       typeof stored === "object" &&
       stored !== null &&
@@ -181,13 +195,17 @@ async function readOwnerIdentity(
   const owner = await readOrCreateGatewayOwnerKey(
     options.ownerKeyFile ?? `${options.sessionFile}.owner-key`,
     allowCreate,
+    options.secretFileOptions ?? gatewayCredentialOptions(options.configDir),
   );
   return { owner, enrolled: !allowCreate };
 }
 
 /** Public DNS enrollment details can be prepared offline; private owner material never leaves its file. */
 export async function prepareGatewayOwner(
-  options: Pick<GatewayKeySessionOptions, "sessionFile" | "gatewayId" | "ownerKeyFile"> & {
+  options: Pick<
+    GatewayKeySessionOptions,
+    "sessionFile" | "gatewayId" | "ownerKeyFile" | "configDir" | "secretFileOptions"
+  > & {
     publicOrigin?: string;
   },
 ): Promise<{
@@ -222,12 +240,19 @@ export async function prepareGatewayOwner(
 export async function prepareGatewayRecoveryRequest(
   options: Pick<
     GatewayKeySessionOptions,
-    "sessionFile" | "ownerKeyFile" | "gatewayId" | "publicOrigin" | "relayUrl"
+    | "sessionFile"
+    | "ownerKeyFile"
+    | "gatewayId"
+    | "publicOrigin"
+    | "relayUrl"
+    | "configDir"
+    | "secretFileOptions"
   >,
 ) {
   const owner = await readOrCreateGatewayOwnerKey(
     options.ownerKeyFile ?? `${options.sessionFile}.owner-key`,
     false,
+    options.secretFileOptions ?? gatewayCredentialOptions(options.configDir),
   );
   return gatewayRecoveryDraft(options, {
     gatewayId: options.gatewayId,
@@ -337,10 +362,11 @@ async function exchange(
   await mkdir(dirname(options.sessionFile), { recursive: true, mode: 0o700 });
   options.signal?.throwIfAborted();
   // A cancelled generation cannot publish after a replacement routing session.
-  atomicWriteFileSync(
+  await persistGatewayKeySession(
     options.sessionFile,
-    JSON.stringify({ ...session, authentication: "gateway-key-v2" }) + "\n",
-    { mode: 0o600 },
+    { ...session, authentication: "gateway-key-v2" },
+    options.secretFileOptions ?? gatewayCredentialOptions(options.configDir),
+    options.signal,
   );
   return { session, registration: material.registration };
 }

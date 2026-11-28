@@ -740,7 +740,23 @@ test.describe("Portal", () => {
     await pairing.getByText("Browser extension", { exact: true }).click();
     await expect(pairing.getByRole("radio", { name: "Browser extension" })).toBeChecked();
     await pairing.getByRole("button", { name: "Generate pairing code" }).click();
-    await expect(pairing.locator(".devices-pair-result")).toContainText("Chrome Web Store");
+    const browserResult = pairing.locator(".devices-pair-result");
+    await expect(browserResult.locator(".devices-pair-code")).toHaveCount(1);
+    await expect(browserResult.locator(".devices-pair-code")).not.toBeEmpty();
+    await expect(browserResult.locator(".devices-pair-ext-note")).toContainText(
+      "For installation instructions, open Sources and choose Add source.",
+    );
+    // This isolated gateway is self-signed: discovery guidance must not hide its TLS refusal.
+    const certificateWarning = browserResult.getByRole("alert");
+    await expect(certificateWarning).toHaveCount(1);
+    await expect(certificateWarning).toContainText("self-signed certificate");
+    await expect(certificateWarning).toContainText("omnesis tls provision");
+    await expect(
+      certificateWarning.getByRole("link", { name: "Set up a certificate the extension can use" }),
+    ).toHaveAttribute("href", "https://omnesis.dev/docs/setup#browser-extension");
+    const gatewayAddresses = browserResult.locator(".devices-pair-ext-steps > li");
+    await expect(gatewayAddresses).toHaveCount(1);
+    await expect(gatewayAddresses.locator("code")).toHaveText(new URL(page.url()).origin);
     await pairing.getByText("Integration", { exact: true }).click();
     await expect(pairing.locator(".devices-pair-result")).toHaveCount(0);
     await expect(pairing.getByLabel("Name", { exact: true })).toBeVisible();

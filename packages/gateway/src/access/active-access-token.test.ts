@@ -24,6 +24,8 @@ const READS_THAT_DECIDE_NOTHING: Record<string, string> = {
   "data/migration-152-access-grants.ts": "creates the table",
   "data/migration-183-credential-approved-audience.ts":
     "copies the audience and scope a credential's tokens were minted with onto the credential",
+  "restore/authority-policy.ts":
+    "declares the offline policy to preserve target token rows; it executes no query and grants no access",
 };
 
 function sourceFiles(dir: string): string[] {

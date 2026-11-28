@@ -1,19 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
-import { promisify } from "node:util";
 
-import { buildCodexEnv, ensureCodexHome } from "@omnesis/agent";
+import {
+  buildCodexEnv,
+  ensureCodexHome,
+  managedCodexArgs,
+  managedCodexAuth,
+  assertNoManagedCodexAuthFile,
+} from "@omnesis/agent";
 import {
   createLogger,
   nodeCommandInvocation,
   terminateChildProcess,
   spawnWindowsJob,
-  execWindowsJob,
   type CodexBackendStatus,
   type CodexLoginFlow,
   type CodexRuntimeStatus,
@@ -21,11 +23,13 @@ import {
 import {
   reassertCodexGenerationAuth,
   type CodexGenerationSupervisor,
+  type CodexRuntimeGeneration,
 } from "./codex-generation-supervisor.js";
 
 import { CodexGenerationCleanupError, codexCleanupFailure } from "./codex-runtime-cleanup.js";
+import { clearCodexAuthentication } from "./codex-auth-removal.js";
+import type { CodexRuntimeCommandInfo } from "@omnesis/agent";
 
-const execFileAsync = promisify(execFile);
 const log = createLogger("gateway:models:codex:lifecycle");
 const DEFAULT_LOGIN_TTL_MS = 15 * 60_000;
 
@@ -42,6 +46,9 @@ interface ActiveLogin {
 
 interface CodexRuntimeLifecycleOptions {
   codexHome: string;
+  poolHome?: string;
+  legacyHome?: string;
+  createGeneration?(commandInfo: CodexRuntimeCommandInfo): CodexRuntimeGeneration;
   cliArgsPrefix: readonly string[];
   env: NodeJS.ProcessEnv;
   refreshTimeoutMs: number;
@@ -214,7 +221,7 @@ export class CodexRuntimeLifecycle {
           "Codex process cleanup was not confirmed. Review the process state before retrying.",
         );
       if (this.disposed) throw new Error("Codex runtime service disposed.");
-      await ensureCodexHome(this.opts.codexHome);
+      await ensureCodexHome(this.opts.codexHome, this.opts.env);
       this.assertCleanupConfirmed();
       if (this.cleanupFailure !== undefined)
         throw new CodexRuntimeLifecycleConflictError(
@@ -223,6 +230,8 @@ export class CodexRuntimeLifecycle {
       if (this.disposed) throw new Error("Codex runtime service disposed.");
       const childEnv = buildCodexEnv(this.opts.env, this.opts.codexHome);
       await this.opts.supervisor.current.runtime.probeRuntime(this.opts.refreshTimeoutMs);
+      if (managedCodexAuth(this.opts.env))
+        await this.opts.supervisor.current.runtime.verifyManagedCredentialPolicy();
       this.assertCleanupConfirmed();
       if (this.cleanupFailure !== undefined)
         throw new CodexRuntimeLifecycleConflictError(
@@ -243,11 +252,18 @@ export class CodexRuntimeLifecycle {
         status: "pending",
         expiresAt: new Date(Date.now() + this.opts.loginTtlMs).toISOString(),
       };
-      const invocation = nodeCommandInvocation(commandInfo.command, [
-        ...this.opts.cliArgsPrefix,
-        "login",
-        "--device-auth",
+      await assertNoManagedCodexAuthFile(this.opts.env, [
+        this.opts.codexHome,
+        ...(this.opts.legacyHome ? [this.opts.legacyHome] : []),
       ]);
+      const invocation = nodeCommandInvocation(
+        commandInfo.command,
+        managedCodexArgs(
+          this.opts.env,
+          [...this.opts.cliArgsPrefix, "login", "--device-auth"],
+          this.opts.codexHome,
+        ),
+      );
       const job =
         process.platform === "win32"
           ? spawnWindowsJob(invocation.command, invocation.args, { env: childEnv })
@@ -358,6 +374,22 @@ export class CodexRuntimeLifecycle {
           }
           failStart(reject, conciseError(err));
         });
+        const completeLogin = (): void => {
+          if (this.activeLogin?.flow.id !== id || this.activeLogin.flow.status !== "pending")
+            return;
+          this.activeLogin.flow = {
+            ...this.activeLogin.flow,
+            status: "complete",
+            reason: undefined,
+          };
+          this.opts.invalidateRefresh();
+          reassertCodexGenerationAuth(this.opts.supervisor.current);
+          if (!this.disposed)
+            void this.opts.refresh().catch((err) => {
+              log.warn(`Codex status refresh after login failed: ${conciseError(err)}`);
+            });
+          if (!startSettled) settleStart(resolve);
+        };
         const exited = (code: number | null, signal: NodeJS.Signals | null): void => {
           if (this.activeLogin?.flow.id !== id) return;
           this.activeLogin.running = false;
@@ -370,19 +402,18 @@ export class CodexRuntimeLifecycle {
             return;
           }
           if (code === 0) {
-            this.activeLogin.flow = {
-              ...this.activeLogin.flow,
-              status: "complete",
-              reason: undefined,
-            };
-            this.opts.invalidateRefresh();
-            reassertCodexGenerationAuth(this.opts.supervisor.current);
-            if (!this.disposed) {
-              void this.opts.refresh().catch((err) => {
-                log.warn(`Codex status refresh after login failed: ${conciseError(err)}`);
-              });
-            }
-            if (!startSettled) settleStart(resolve);
+            if (managedCodexAuth(this.opts.env)) {
+              void assertNoManagedCodexAuthFile(this.opts.env, [this.opts.codexHome]).then(
+                completeLogin,
+                () => {
+                  if (this.activeLogin?.flow.id !== id) return;
+                  const reason =
+                    "ChatGPT sign-in could not be confirmed safe in Keychain. Sign out in Omnesis and retry.";
+                  this.activeLogin.flow = { ...this.activeLogin.flow, status: "failed", reason };
+                  if (!startSettled) failStart(reject, reason);
+                },
+              );
+            } else completeLogin();
             return;
           }
           const reason = signal
@@ -451,65 +482,64 @@ export class CodexRuntimeLifecycle {
     const finish = this.retainAcceptedWork();
     try {
       await this.opts.ensureSelectedRuntime();
-      this.assertCleanupConfirmed();
-      if (this.disposed) throw new Error("Codex runtime service disposed.");
-      if (this.activeLogin) {
-        clearTimeout(this.activeLogin.timer);
-        if (this.activeLogin.running || this.activeLogin.termination) {
-          await this.stopLogin(this.activeLogin, "SIGTERM");
-          await Promise.race([
-            this.activeLogin.closed,
-            new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
-          ]);
-          if (this.activeLogin.running) {
-            await this.stopLogin(this.activeLogin, "SIGKILL");
-            await this.activeLogin.closed;
-          }
-        }
-        this.activeLogin = null;
-      }
-      const childEnv = buildCodexEnv(this.opts.env, this.opts.codexHome);
-      try {
-        const commandInfo = await this.opts.supervisor.current.runtime.resolveCommandInfo();
+      const perform = async (): Promise<{ ok: true; status: CodexBackendStatus }> => {
+        await this.opts.ensureSelectedRuntime();
         this.assertCleanupConfirmed();
         if (this.disposed) throw new Error("Codex runtime service disposed.");
-        const invocation = nodeCommandInvocation(commandInfo.command, [
-          ...this.opts.cliArgsPrefix,
-          "logout",
-        ]);
-        await (process.platform === "win32" ? execWindowsJob : execFileAsync)(
-          invocation.command,
-          invocation.args,
-          {
-            env: childEnv,
-            timeout: this.opts.refreshTimeoutMs,
-            windowsHide: true,
-          },
-        );
-      } catch (err) {
-        if (err && typeof err === "object" && "cleanupFailure" in err) {
-          this.holdCleanup(err);
-          throw err;
+        if (this.activeLogin) {
+          clearTimeout(this.activeLogin.timer);
+          if (this.activeLogin.running || this.activeLogin.termination) {
+            await this.stopLogin(this.activeLogin, "SIGTERM");
+            await Promise.race([
+              this.activeLogin.closed,
+              new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
+            ]);
+            if (this.activeLogin.running) {
+              await this.stopLogin(this.activeLogin, "SIGKILL");
+              await this.activeLogin.closed;
+            }
+          }
+          this.activeLogin = null;
         }
-        if (this.disposed) throw err;
-        log.warn(`Codex logout command failed; removing local auth file: ${conciseError(err)}`);
-      }
-      this.assertCleanupConfirmed();
-      await rm(join(this.opts.codexHome, "auth.json"), { force: true });
-      this.opts.invalidateRefresh();
-      reassertCodexGenerationAuth(this.opts.supervisor.current);
-      const status: CodexBackendStatus = {
-        type: "codex",
-        configured: false,
-        status: "unreachable",
-        loggedIn: false,
-        runtime: await this.opts.describeRuntime(),
-        models: [],
-        reason: "Codex login removed.",
-        refreshedAt: new Date().toISOString(),
+        await clearCodexAuthentication({
+          env: this.opts.env,
+          home: this.opts.codexHome,
+          legacyHome: this.opts.legacyHome,
+          poolHome: this.opts.poolHome,
+          cliArgsPrefix: this.opts.cliArgsPrefix,
+          timeoutMs: this.opts.refreshTimeoutMs,
+          command: () => this.opts.supervisor.current.runtime.resolveCommandInfo(),
+          assertActive: () => {
+            this.assertCleanupConfirmed();
+            if (this.disposed) throw new Error("Codex runtime service disposed.");
+          },
+          assertCleanup: () => this.assertCleanupConfirmed(),
+          holdCleanup: (error) => this.holdCleanup(error),
+        });
+        this.opts.invalidateRefresh();
+        reassertCodexGenerationAuth(this.opts.supervisor.current);
+        const status: CodexBackendStatus = {
+          type: "codex",
+          configured: false,
+          status: "unreachable",
+          loggedIn: false,
+          runtime: await this.opts.describeRuntime(),
+          models: [],
+          reason: "Codex login removed.",
+          refreshedAt: new Date().toISOString(),
+        };
+        this.opts.setStatus(status);
+        return { ok: true, status };
       };
-      this.opts.setStatus(status);
-      return { ok: true, status };
+      if (!managedCodexAuth(this.opts.env)) return await perform();
+      return await this.opts.supervisor.exclusive(async (generation, replace) => {
+        if (!this.opts.createGeneration)
+          throw new Error("The managed ChatGPT sign-out cannot drain its workers safely.");
+        const command = await generation.runtime.resolveCommandInfo();
+        await this.opts.supervisor.retire(generation);
+        replace(this.opts.createGeneration(command));
+        return perform();
+      });
     } finally {
       if (this.claim === "logout") this.claim = null;
       finish();

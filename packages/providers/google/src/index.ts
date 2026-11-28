@@ -74,6 +74,7 @@ function authFor(ctx: GoogleContext, purpose: GoogleBrokerPurpose) {
 
 export default defineProvider<GoogleContext>({
   provider: { id: "google", name: "Google" },
+  permissionRequirements: [],
   authType: "oauth",
   credentials: googleCredentialsSpec,
   broker: googleBrokerSpec,

@@ -55,6 +55,10 @@ import {
   type HttpBackendConfig,
   type CatalogEntry,
 } from "@omnesis/core";
+import {
+  DESKTOP_CLAUDE_CODE_UNAVAILABLE,
+  isManagedDesktopRuntime,
+} from "../models/managed-desktop-policy.js";
 import { PCM_SAMPLE_RATE } from "../transcribe/audio-decode.js";
 import { encodeMultipart, encodeWav, parseTranscriptText } from "../transcribe/http-transcriber.js";
 import {
@@ -313,6 +317,7 @@ function asNativeOcrRuntime(value: string): OcrNativeRuntime | undefined {
 }
 
 export class InferenceRegistry {
+  private readonly desktopManaged = isManagedDesktopRuntime();
   readonly health: InferenceHealth;
   private healthSelections = new Map<
     CapabilityRole,
@@ -1786,6 +1791,8 @@ export class InferenceRegistry {
   private resolveClaudeCode(role: CapabilityRole, model: string): ResolvedClaudeCode {
     const allowRemoteInference = this.allowRemoteInference;
     const base = { role, kind: "claude-code" as const, model, allowRemoteInference };
+    if (this.desktopManaged)
+      return { ...base, available: false, reason: DESKTOP_CLAUDE_CODE_UNAVAILABLE };
     if (!CLAUDE_CODE_SUPPORTED_ROLES.includes(role)) {
       return {
         ...base,

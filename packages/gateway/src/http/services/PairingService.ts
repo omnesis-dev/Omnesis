@@ -72,6 +72,7 @@ export type PairingServiceResult =
   | { outcome: "conflict"; error: string; code?: AgentPairingConflictCode };
 
 export interface PairingServiceDeps {
+  isStorageProtected?: () => boolean;
   db: Db;
   writeGate: WriteGate;
   statusCache: Pick<StatusCache, "bump">;
@@ -155,6 +156,15 @@ export class PairingService {
   async redeem(input: PairingServiceInput): Promise<PairingServiceResult> {
     const { db, writeGate: w } = this.deps;
     const preview = peekPairing(db, input.pairingCode);
+    if (
+      input.capabilities?.requiresEncryptedStorage === true &&
+      this.deps.isStorageProtected?.() !== true
+    )
+      throw new HttpError(
+        503,
+        "STORAGE_PROTECTION_REQUIRED",
+        "Protect this library's storage before connecting this device.",
+      );
     // A code that is gone or expired can still be the SAME request coming
     // back with its idempotency key after a lost response; the writer answers
     // that from the redemption receipt. Anything else is simply invalid.
@@ -199,6 +209,15 @@ export class PairingService {
     approved: boolean;
     capabilities: DeviceCapability;
   }): Promise<PairingServiceResult> {
+    if (
+      input.capabilities.requiresEncryptedStorage === true &&
+      this.deps.isStorageProtected?.() !== true
+    )
+      throw new HttpError(
+        503,
+        "STORAGE_PROTECTION_REQUIRED",
+        "Protect this library's storage before connecting this device.",
+      );
     const { writeGate: w } = this.deps;
     const pending = await w.createPairing({
       kind: "collector",

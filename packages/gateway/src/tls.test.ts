@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { execFileSync } from "node:child_process";
-import { X509Certificate, createHash } from "node:crypto";
+import { X509Certificate, createHash, createPrivateKey } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -226,6 +226,25 @@ describe("self-signed nudge signal", () => {
 });
 
 describe("generateSelfSigned off the event loop", () => {
+  test.skipIf(process.platform === "win32")(
+    "managed certificate generation signs an in-memory key without the plaintext-key launcher",
+    async () => {
+      vi.stubEnv("OMNESIS_DESKTOP_MANAGED", "1");
+      const before = processLauncher();
+      const run = vi.fn(async () => {
+        throw new Error("Plaintext key staging was called");
+      });
+      setProcessLauncher({ run });
+      try {
+        const generated = await generateSelfSigned();
+        const certificate = new X509Certificate(generated.cert);
+        expect(certificate.checkPrivateKey(createPrivateKey(generated.key))).toBe(true);
+        expect(run).not.toHaveBeenCalled();
+      } finally {
+        setProcessLauncher(before);
+      }
+    },
+  );
   test("gateway shutdown cancels first-install certificate generation without persisting partial material", async () => {
     const before = processLauncher();
     const controller = new AbortController();

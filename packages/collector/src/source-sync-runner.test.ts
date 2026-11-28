@@ -1,8 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { sourcePermissionScopeDigest, LogLevel, setLogLevel } from "@omnesis/core";
+import { probeTreeReadAccess, probeRootReadAccess } from "@omnesis/source-sdk";
+
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
-import { LogLevel, setLogLevel } from "@omnesis/core";
 import { SyncError, SourceId, type DocumentInput, type ProviderId } from "@omnesis/types";
+import { DoctorReadAccess } from "./doctor-read-access.js";
 import { SourceSyncRunner, isGatewayValidationError } from "./source-sync-runner.js";
 import { SourceRegistry } from "./source-registry.js";
 import { SyncScheduler } from "./sync-scheduler.js";
@@ -3555,5 +3561,273 @@ describe("isGatewayValidationError", () => {
     expect(isGatewayValidationError(refused(400, "not json"))).toBe(false);
     expect(isGatewayValidationError(new Error("fetch failed"))).toBe(false);
     expect(isGatewayValidationError("Gateway error 400: {}")).toBe(false);
+  });
+});
+
+describe("managed collection permission loss", () => {
+  const requirements = [
+    {
+      id: "local-store",
+      kind: "protected-files" as const,
+      summary: "Allow the selected store",
+      scope: "Selected store",
+      blocking: true,
+      actions: [{ kind: "retry-access" as const }],
+    },
+  ];
+  test("denied access blocks reads/cursor/snapshots, healthy sibling continues, and regrant is checked freshly", async () => {
+    const gateway = new RecordingGateway();
+    let readable = false;
+    const sync = vi.fn(async () => ({
+      documents: [makeDoc("retained", "fixture:blocked")],
+      deletedExternalIds: [],
+      cursor: { bookmark: 9 },
+      hasMore: false,
+      presentExternalIds: ["retained"],
+    }));
+    const blocked = makeDocumentSource("fixture:blocked", sync);
+    blocked.permissionRequirements = requirements;
+    blocked.permissionScopeDigest = sourcePermissionScopeDigest("fixture", "blocked", {});
+    blocked.instance.probeReadAccess = vi.fn(async () => ({
+      status: readable ? ("readable" as const) : ("denied" as const),
+    }));
+    const healthy = makeDocumentSource("fixture:healthy", async () => ({
+      documents: [makeDoc("healthy-item", "fixture:healthy")],
+      deletedExternalIds: [],
+      cursor: { bookmark: 1 },
+      hasMore: false,
+    }));
+    const { registry, events } = makeRegistry();
+    registry.registerProvider(makeProvider(blocked));
+    registry.registerProvider(makeProvider(healthy));
+    const probes = new DoctorReadAccess();
+    const runner = new SourceSyncRunner(
+      gateway as unknown as GatewayClient,
+      registry,
+      60_000,
+      undefined,
+      undefined,
+      probes,
+    );
+    try {
+      await runner.runOne(blocked);
+      expect(sync).not.toHaveBeenCalled();
+      expect(gateway.calls).toEqual([]);
+      expect(registry.getStatus(blocked.id)?.state).toBe("error");
+      expect(registry.getStatus(blocked.id)?.remediation?.access).toMatchObject({
+        status: "denied",
+        scopeDigest: blocked.permissionScopeDigest,
+        target: "unverified",
+      });
+      expect(gateway.beginCalls).toBe(0);
+      const emitted = events.length;
+      await runner.runOne(blocked);
+      expect(events).toHaveLength(emitted);
+      expect(gateway.beginCalls).toBe(0);
+      expect(registry.getStatus(blocked.id)?.lastSyncAt).toBeUndefined();
+      await runner.runOne(healthy);
+      expect(gateway.calls.some((c) => c.kind === "upsertWithCursor")).toBe(true);
+      gateway.calls = [];
+      readable = true;
+      await runner.runOne(blocked);
+      expect(sync).toHaveBeenCalledTimes(1);
+      expect(gateway.calls.some((c) => c.kind === "upsertWithCursor")).toBe(true);
+    } finally {
+      await probes.close();
+    }
+  });
+  test("a grant lost during read cannot publish an empty snapshot or advance a good cursor", async () => {
+    const gateway = new RecordingGateway();
+    let readable = true;
+    const source = makeDocumentSource("fixture:loss", async () => {
+      readable = false;
+      return {
+        documents: [],
+        deletedExternalIds: ["retained-item"],
+        presentExternalIds: [],
+        cursor: { bookmark: 99 },
+        hasMore: false,
+      };
+    });
+    source.permissionRequirements = requirements;
+    source.instance.probeReadAccess = async () => ({ status: readable ? "readable" : "denied" });
+    const { registry } = makeRegistry();
+    registry.registerProvider(makeProvider(source));
+    const probes = new DoctorReadAccess();
+    try {
+      await new SourceSyncRunner(
+        gateway as unknown as GatewayClient,
+        registry,
+        60_000,
+        undefined,
+        undefined,
+        probes,
+      ).runOne(source);
+      expect(gateway.calls).toEqual([]);
+      expect(registry.getStatus(source.id)?.state).toBe("error");
+    } finally {
+      await probes.close();
+    }
+  });
+  test("scoped required-root access lets a large configured reader run while full-tree coverage remains unknown", async () => {
+    const root = await mkdtemp(join(tmpdir(), "omnesis-run-access-limit-"));
+    const probes = new DoctorReadAccess(undefined, undefined, "permissions");
+    try {
+      await Promise.all(
+        Array.from({ length: 300 }, (_, i) =>
+          writeFile(join(root, `${i}.md`), "Invented local fixture"),
+        ),
+      );
+      const sync = vi.fn(async () => ({
+        documents: [makeDoc("invented-item", "fixture:large")],
+        deletedExternalIds: [],
+        cursor: { bookmark: 1 },
+        hasMore: false,
+      }));
+      const source = makeDocumentSource("fixture:large", sync);
+      source.permissionRequirements = requirements;
+      source.instance.probePermissionAccess = ({ signal }) =>
+        probeRootReadAccess({ signal, roots: [{ path: root }] });
+      expect(
+        await source.instance.probePermissionAccess({ signal: new AbortController().signal }),
+      ).toEqual({ status: "readable" });
+      source.instance.probeReadAccess = ({ signal }) =>
+        probeTreeReadAccess({ signal, roots: [{ path: root }], fileExtensions: [".md"] });
+      const { registry } = makeRegistry();
+      registry.registerProvider(makeProvider(source));
+      const gateway = new RecordingGateway();
+      await new SourceSyncRunner(
+        gateway as unknown as GatewayClient,
+        registry,
+        60_000,
+        undefined,
+        undefined,
+        probes,
+      ).runOne(source);
+      expect(sync).toHaveBeenCalledOnce();
+      expect(registry.getStatus(source.id)?.state).toBe("idle");
+      const write = gateway.calls.find((call) => call.kind === "upsertWithCursor");
+      expect(write).toBeDefined();
+      if (write?.kind === "upsertWithCursor") expect(write.presentExternalIds).toBeUndefined();
+      expect(registry.getStatus(source.id)?.remediation?.access).toBeUndefined();
+      expect(
+        (await source.instance.probeReadAccess({ signal: new AbortController().signal })).status,
+      ).toBe("unavailable");
+    } finally {
+      await probes.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+  test("a readable required root does not authorize a denied descendant read or an empty snapshot", async () => {
+    const root = await mkdtemp(join(tmpdir(), "omnesis-root-denied-"));
+    const probes = new DoctorReadAccess(undefined, undefined, "permissions");
+    try {
+      const source = makeDocumentSource(
+        "fixture:nested",
+        vi.fn(async () => {
+          throw new SyncError("permission", "Invented nested-file read refused");
+        }),
+      );
+      source.permissionRequirements = requirements;
+      source.instance.probePermissionAccess = ({ signal }) =>
+        probeRootReadAccess({ signal, roots: [{ path: root }] });
+      const { registry } = makeRegistry();
+      registry.registerProvider(makeProvider(source));
+      const gateway = new RecordingGateway();
+      await new SourceSyncRunner(
+        gateway as unknown as GatewayClient,
+        registry,
+        60000,
+        undefined,
+        undefined,
+        probes,
+      ).runOne(source);
+      expect(source.instance.sync).toHaveBeenCalledOnce();
+      expect(registry.getStatus(source.id)?.state).toBe("error");
+      expect(registry.getStatus(source.id)?.remediation?.summary).toBe(
+        "Review this source's collection access",
+      );
+      expect(gateway.calls.some((call) => call.kind === "upsertWithCursor")).toBe(false);
+      expect(registry.getStatus(source.id)?.lastSyncAt).toBeUndefined();
+    } finally {
+      await probes.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+  test("observed nested permission loss refuses a page and stays unresolved during retry until actual completion", async () => {
+    let denied = true;
+    let release: () => void = () => {};
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const probes = new DoctorReadAccess(undefined, undefined, "permissions");
+    const source = makeDocumentSource(
+      "fixture:page-denial",
+      vi.fn(async () => {
+        if (!denied) await barrier;
+        return {
+          documents: [],
+          deletedExternalIds: ["invented-previous"],
+          presentExternalIds: [],
+          cursor: { bookmark: 1 },
+          hasMore: false,
+          ...(denied ? { permissionDenied: true as const } : {}),
+        };
+      }),
+    );
+    source.permissionRequirements = requirements;
+    source.permissionScopeDigest = sourcePermissionScopeDigest("fixture", "page-denial", {});
+    source.instance.probePermissionAccess = async () => ({ status: "readable" });
+    const { registry } = makeRegistry();
+    registry.registerProvider(makeProvider(source));
+    const gateway = new RecordingGateway();
+    const runner = new SourceSyncRunner(
+      gateway as unknown as GatewayClient,
+      registry,
+      60000,
+      undefined,
+      undefined,
+      probes,
+    );
+    try {
+      await runner.runOne(source);
+      expect(registry.getStatus(source.id)?.remediation?.access?.status).toBe("denied");
+      expect(gateway.calls.some((call) => call.kind === "upsertWithCursor")).toBe(false);
+      denied = false;
+      const retry = runner.runOne(source);
+      await vi.waitFor(() => expect(registry.getStatus(source.id)?.state).toBe("syncing"));
+      expect(registry.getStatus(source.id)?.remediation?.access?.status).toBe("denied");
+      expect(registry.getStatus(source.id)?.lastError).toBe(
+        "Collection access is blocked on this computer",
+      );
+      release();
+      await retry;
+      expect(registry.getStatus(source.id)?.state).toBe("idle");
+      expect(registry.getStatus(source.id)?.remediation).toBeUndefined();
+      expect(registry.getStatus(source.id)?.lastError).toBeUndefined();
+    } finally {
+      release();
+      await probes.close();
+    }
+  });
+  test("headless defaults do not add a capability gate", async () => {
+    const gateway = new RecordingGateway();
+    const sync = vi.fn(async () => ({
+      documents: [],
+      deletedExternalIds: [],
+      cursor: {},
+      hasMore: false,
+    }));
+    const source = makeDocumentSource("fixture:headless", sync);
+    source.permissionRequirements = requirements;
+    source.instance.probeReadAccess = vi.fn(async () => ({ status: "denied" as const }));
+    const { registry } = makeRegistry();
+    registry.registerProvider(makeProvider(source));
+    await new SourceSyncRunner(gateway as unknown as GatewayClient, registry, 60_000).runOne(
+      source,
+    );
+    expect(sync).toHaveBeenCalledOnce();
+    expect(registry.getStatus(source.id)?.state).toBe("idle");
+    expect(source.instance.probeReadAccess).not.toHaveBeenCalled();
   });
 });

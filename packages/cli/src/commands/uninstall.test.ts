@@ -29,6 +29,8 @@ import {
   acquireUpdateLock,
   ensurePrivateFileSync,
   inspectWindowsPrivatePaths,
+  OMNESIS_INSTALL_ROOT_KEY,
+  secureMarkerStateKeyName,
   type GatewayLockHolder,
 } from "@omnesis/core";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -38,6 +40,9 @@ import { buildServiceSpec, generateLaunchdPlist, generateSystemdUnit } from "../
 import { packageLauncher } from "../update/package-migration-plan.js";
 import { sourceRecoveryLauncher } from "../update/source-launcher.js";
 import { DOCKER_WRAPPER_MARKER } from "../uninstall/launcher.js";
+import { discoverInventory } from "../uninstall/inventory.js";
+import { planUninstall } from "../uninstall/plan.js";
+import { executeStep } from "../uninstall/execute.js";
 import { PROFILE_MARKER } from "../uninstall/profile.js";
 import {
   isDockerInstallImage,
@@ -841,6 +846,19 @@ describe("services", () => {
 });
 
 describe("macOS", () => {
+  test("a custom namespace is retained without a broad Keychain sweep", async () => {
+    vi.stubEnv("OMNESIS_SECRET_SERVICE", "dev.omnesis.desktop.example");
+    const m = new Machine("darwin").config().services().packageInstall();
+    m.on(["security", "find-generic-password"], { code: 44 });
+    m.on(["security", "delete-generic-password"], { code: 44 });
+    expect((await uninstall(m, { purge: true })).code).toBe(0);
+    const commands = [
+      ...m.ran("security", "find-generic-password"),
+      ...m.ran("security", "delete-generic-password"),
+    ];
+    expect(commands).toEqual([]);
+  });
+
   test("LaunchAgents are booted out and removed; the keychain is swept on --purge", async () => {
     const m = new Machine("darwin").config().services().packageInstall();
     m.profile(".bash_profile");
@@ -1385,6 +1403,86 @@ describe("what the review found", () => {
     expect(m.ran("secret-tool")).toHaveLength(0);
     expect(text()).toContain("The keyring's root key stays");
   });
+
+  test.each(["linux", "darwin"] as const)(
+    "%s custom namespace retains shared keys in both the actual plan and executor",
+    async (platform) => {
+      const m = new Machine(platform).config().services().sourceInstall();
+      const retained = m.write(m.path("retained-library", "omnesis.json"), "{}\n");
+      const service = "example.shared.namespace";
+      const entries = new Map([
+        [OMNESIS_INSTALL_ROOT_KEY, "invented-root"],
+        ["retained-credential", "invented-secret"],
+      ]);
+      const markers = ["storage-encryption", "secret-files"].map((kind) =>
+        secureMarkerStateKeyName(kind as "storage-encryption" | "secret-files", m.configDir),
+      );
+      for (const account of markers) entries.set(account, "required");
+      const calls: string[][] = [];
+      const keyring = async (command: string, args: string[]) => {
+        calls.push([command, ...args]);
+        if (args[0] === "-h") return { code: 0, stdout: "", stderr: "" };
+        if (command !== "security") throw new Error("Unexpected fixture credential command");
+        const account = args.includes("-a") ? args[args.indexOf("-a") + 1] : undefined;
+        const selected = account ?? entries.keys().next().value;
+        const present = selected !== undefined && entries.has(selected);
+        if (args[0] === "delete-generic-password" && selected) entries.delete(selected);
+        return { code: present ? 0 : 44, stdout: "", stderr: "" };
+      };
+      const ctx = m.context();
+      ctx.env.OMNESIS_SECRET_SERVICE = service;
+      ctx.secretStoreOptions = (configDir) => ({
+        configDir,
+        service,
+        backend: "macos-keychain",
+        platform: "darwin",
+        runCommand: keyring,
+      });
+      const ordinary = ctx.run;
+      ctx.run = (command, args, opts) =>
+        ["security", "secret-tool"].includes(command)
+          ? keyring(command, args)
+          : ordinary(command, args, opts);
+      const inventory = await discoverInventory(ctx, { configDir: m.configDir });
+      expect(inventory.otherConfigDirs).toEqual([]);
+      const plan = planUninstall(inventory, {
+        components: [],
+        purge: true,
+        discardLocalChanges: false,
+      });
+      const step = plan.steps.find((value) => value.action.type === "keyring")!;
+      expect(step.action).toMatchObject({ rootKey: false });
+      expect(step.title).toContain("this config directory");
+      // Execution independently refuses the broader authority of a stale/forged plan.
+      expect(
+        (
+          await executeStep(ctx, {
+            ...step,
+            action: { type: "keyring", configDirs: [m.configDir], rootKey: true },
+          })
+        ).status,
+      ).toBe("done");
+      const out = recorder();
+      expect(
+        await runUninstall(options({ configDir: m.configDir, purge: true }), ctx, out.io),
+      ).toBe(0);
+      expect(out.text()).toContain("exclusive ownership");
+      expect(existsSync(m.configDir)).toBe(false);
+      expect(readFileSync(retained, "utf8")).toBe("{}\n");
+      expect([...entries]).toEqual([
+        [OMNESIS_INSTALL_ROOT_KEY, "invented-root"],
+        ["retained-credential", "invented-secret"],
+      ]);
+      expect(
+        calls.some(
+          ([, operation, ...args]) =>
+            operation === "delete-generic-password" &&
+            (!args.includes("-a") || args.includes(OMNESIS_INSTALL_ROOT_KEY)),
+        ),
+      ).toBe(false);
+      expect(calls.some(([command]) => command === "secret-tool")).toBe(false);
+    },
+  );
 
   test("no key is touched when the data it opens cannot be purged", async () => {
     const m = new Machine("linux").config().services().sourceInstall();

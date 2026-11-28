@@ -34,6 +34,11 @@ vi.mock("./api.js", () => ({
   listSubscriptionApprovals,
   startHostFleetUpdate: vi.fn(),
 }));
+vi.mock("./lib/recording-restore-review-api.js", () => ({
+  mayRequestRecordingReview: () => true,
+  getRecordingRestoreReview: async () => ({ reviewRequired: true, hasPendingChunks: false, keepAudioDays: 0, transcriberAssignment: null, speakers: "off", version: "a".repeat(64) }),
+  resumeRecordingRestoreReview: vi.fn(),
+}));
 vi.mock("./lib/format.js", () => ({ loadSourceMeta: vi.fn(async () => {}) }));
 const joins = vi.hoisted(() => ({ tailscaleJoinRequests: vi.fn(async () => ({ requests: [] as unknown[] })) }));
 vi.mock("./lib/tailscale-api.js", async (importOriginal) => ({
@@ -140,6 +145,8 @@ describe("portal Settings actions", () => {
     expect(host.querySelector(".app-sidebar")?.textContent).toMatch(/tell omnesis/i);
     expect(host.querySelector(".app-sidebar")?.textContent).not.toContain("Watches");
     expect(host.querySelector(".app-sidebar")?.textContent).not.toContain("Recordings");
+    expect(host.querySelector("[data-recording-restore-notice]")?.textContent).toContain("Restored recordings are paused");
+    expect(host.querySelector("[data-recording-restore-notice] a")?.getAttribute("href")).toBe("/portal/settings/storage");
   });
 
   test("marks Audit while answers wait for review, with the count in words", () => {

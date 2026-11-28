@@ -27,12 +27,14 @@ import {
   experimentalEnabled,
   loadManifest,
   primeSecretFileKeyCache,
+  readInstallRootKey,
   resolveWorkerEntry,
   runningSourceCommit,
 } from "@omnesis/core";
 import { type OmnesisConfig } from "@omnesis/config";
 import { Ontology } from "@omnesis/watch";
 import { setActivityMarker } from "@omnesis/agent";
+import { captureGatewayStorageProtection } from "./storage-protection.js";
 import { cloudPairingIdentitySource } from "./http/services/CloudPairingConfiguration.js";
 import { dotEnvKeysAtBoot } from "./load-env.js";
 import {
@@ -51,7 +53,10 @@ import { ReleaseCheckService } from "./release-check/service.js";
 import { createReleaseCheckTask } from "./release-check/task.js";
 import { seedWebSourceMeta } from "./sources/web/source-meta.js";
 import { dictationFeatureStatus } from "./dictation/index.js";
-import { createVoiceSeparatorSource } from "./recordings/voices/loader.js";
+import {
+  bindVoiceSeparatorPolicy,
+  createVoiceSeparatorSource,
+} from "./recordings/voices/loader.js";
 import { documentsAwaitingTranscription } from "./voice-notes/index.js";
 import {
   bootBriefs,
@@ -154,6 +159,8 @@ import {
 import { OcrService } from "./ocr/index.js";
 import { ConfigBootError, ConfigStore, defaultConfigPath } from "./config-store.js";
 import { OperatorInstructionsStore } from "./instructions/store.js";
+import { protectManagedProse } from "./managed-prose.js";
+import { protectManagedHistory } from "./managed-history.js";
 import { reconcileConfig } from "./config-reconcile.js";
 import {
   openIndexDb,
@@ -417,6 +424,8 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   // The operator's standing instructions to the agent — optional, absent until
   // they write it. Read per prompt build (mtime-cached), so an edit in a terminal
   // editor or the portal reaches the next run with no restart.
+  await protectManagedProse(configDir);
+  await protectManagedHistory(configDir);
   const operatorInstructions = new OperatorInstructionsStore(configDir);
 
   const configStore = new ConfigStore({
@@ -467,6 +476,10 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     log.error(`Cannot start: ${err instanceof Error ? err.message : String(err)}`);
     throw err;
   });
+  const storageProtection = await captureGatewayStorageProtection(
+    configDir,
+    storageEncryption.enabled,
+  );
   const storagePosture = storageEncryptionPosture(storageEncryption.enabled);
   log[storagePosture.level](storagePosture.message);
 
@@ -923,6 +936,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   });
   const wsServer = new DeviceWsServer({
     db,
+    isStorageProtected: () => storageProtection.atRest === "encrypted",
     writeGate,
     authTimeoutMs: runtime.wsAuthTimeoutMs,
     heartbeatIntervalMs: runtime.wsHeartbeatIntervalMs,
@@ -1347,7 +1361,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     exportsDir,
     gatewayDbPath: DB_PATH,
     gatewayDbKeyHex: storageEncryption.mainDbKeyHex,
-    analyticsExport: (destDir) => analyticsDb.exportTablesToCsv(destDir),
+    analyticsExport: (destDir, encryption) => analyticsDb.exportTablesToCsv(destDir, encryption),
   });
 
   /**
@@ -2314,14 +2328,16 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     import("./sources/omnesis-notes/index.js").OmnesisNotesRuntime | undefined;
   let voiceNoteService: import("./voice-notes/index.js").VoiceNoteService | undefined;
   let recordingService: import("./recordings/index.js").RecordingTranscriptionService | undefined;
-  // Recorded conversations tell speakers apart only in experimental mode, when
-  // `inference.recordings.speakers` asks for it; read at boot.
+  // Preparation follows current reviewed choices; paused restoration never loads voice models.
   const voiceSeparatorSource = createVoiceSeparatorSource({
-    mode: experimentalEnabled()
-      ? (configStore.get().inference?.recordings?.speakers ?? "off")
-      : "off",
+    policy: () => ({
+      mode: configStore.get().inference?.recordings?.speakers ?? "off",
+      enabled: experimentalEnabled(),
+      reviewRequired: configStore.get().inference?.recordings?.restoreReviewRequired === true,
+    }),
     modelsDir: MODELS_DIR,
   });
+  const stopVoicePolicy = bindVoiceSeparatorPolicy(configStore, voiceSeparatorSource);
   let agentConversationsRuntime:
     import("./sources/agent-conversations/index.js").AgentConversationsRuntime | undefined;
   // Held for the delivery loop below (policy review and operator-watch
@@ -2861,6 +2877,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
   // The MCP address for agents on this computer, opened once the portal serves (below).
   let localMcp = new LocalMcpListener(null, { state: "starting" });
   const app = createServer(db, DB_PATH, {
+    storageProtection,
     localMcp: () => localMcp.state(),
     portalSignals,
     onDoctorCleanupOwner: (owner) => {
@@ -2907,6 +2924,8 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
       voiceNoteService = service;
     },
     voiceSeparator: () => voiceSeparatorSource.current(),
+    voiceSeparatorReady: () => voiceSeparatorSource.settled(),
+    voiceSeparatorRevision: () => voiceSeparatorSource.revision(),
     onRecordingService: (service) => {
       recordingService = service;
     },
@@ -2972,6 +2991,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     backupService,
     historyCleanup,
     exportService,
+    readExportRootKey: () => readInstallRootKey({ configDir }),
     wsServer,
     fleetUpdateService: fleetUpdate,
     hostFleetUpdateService: hostFleetUpdate,
@@ -4301,6 +4321,7 @@ export async function startGateway(boot: GatewayBootContext): Promise<void> {
     // is not awaited — it stays queued and is transcribed again after restart.
     voiceNoteService?.dispose();
     recordingService?.dispose();
+    stopVoicePolicy();
     await voiceSeparatorSource.dispose();
     // omnesis-notes: flush pending day-doc upserts (a capture that landed
     // within the debounce window must still project), then drop timers.

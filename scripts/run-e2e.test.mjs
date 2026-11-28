@@ -15,17 +15,20 @@ import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { parseCLI } from "vitest/node";
 import {
   WindowsProcessTree,
   killWindowsProcessTree,
 } from "../packages/core/src/windows-process-tree.ts";
 import {
+  accountContainerPhases,
   acquireE2EHostLock,
   buildE2EPhases,
   childGroupIsAlive,
   effectiveMemoryBudget,
   hasSafeExplicitWorkerArg,
   inspectE2ELanes,
+  isolatedE2EPhases,
   parseLauncherArgs,
   selectE2EWorkers,
   waitForChild,
@@ -847,4 +850,197 @@ describe("host-wide E2E lane lock", () => {
     expect(existsSync(lockDir)).toBe(false);
     expect(existsSync(join(dir, "omnesis-e2e-lane.lock.d"))).toBe(false);
   });
+});
+
+test("account onboarding runs in a container phase instead of silently skipping on the host", () => {
+  const file = "packages/collector/src/e2e/desktop-account.e2e.test.ts";
+  const phases = buildE2EPhases("/vitest.mjs", [file], []);
+  const selected = accountContainerPhases(phases, [file], {});
+  expect(selected).toHaveLength(1);
+  expect(selected[0].container).toBe(true);
+  expect(
+    accountContainerPhases(
+      buildE2EPhases("/vitest.mjs", ["desktop-account"], []),
+      ["desktop-account"],
+      {},
+    ),
+  ).toHaveLength(1);
+  expect(selected[0].args[0]).toMatch(/test-account-container\.mjs$/u);
+  expect(
+    accountContainerPhases(phases, [file], { OMNESIS_DESKTOP_ACCOUNT_CONTAINER_NONCE: "fixture" }),
+  ).toEqual(phases);
+  const ordinary = accountContainerPhases(
+    buildE2EPhases("/vitest.mjs", ["desktop-runtime"], []),
+    ["desktop-runtime"],
+    {},
+  );
+  expect(ordinary.some((phase) => phase.container)).toBe(false);
+  const full = accountContainerPhases(buildE2EPhases("/vitest.mjs", [], []), [], {});
+  expect(full.filter((phase) => phase.container)).toHaveLength(1);
+  expect(
+    full
+      .filter((phase) => !phase.container)
+      .every((phase) => phase.args.includes(`--exclude=${file}`)),
+  ).toBe(true);
+});
+
+describe("released collector isolated dispatch", () => {
+  const file = "packages/collector/src/e2e/released-collector-current-gateway.e2e.test.ts";
+  const account = "packages/collector/src/e2e/desktop-account.e2e.test.ts";
+  const runtime = "packages/collector/src/e2e/desktop-runtime.e2e.test.ts";
+  const select = (args, env = {}) =>
+    isolatedE2EPhases(buildE2EPhases("/vitest.mjs", args, ["--maxWorkers=2"]), args, env);
+
+  test("exact and abbreviated selection prepare the real image exactly once", () => {
+    for (const args of [[file], ["released-collector"], [file, file]]) {
+      const phases = select(args);
+      expect(phases).toHaveLength(1);
+      expect(phases[0]).toMatchObject({
+        label: "isolated released collector compatibility",
+        container: true,
+      });
+      expect(phases[0].args).toHaveLength(1);
+      expect(phases[0].args[0]).toMatch(/test-released-peer-container\.mjs$/u);
+    }
+  });
+
+  test("mixed bundles retain regular tests and the account container without host duplication", () => {
+    const phases = select([runtime, file, account]);
+    expect(phases.filter((phase) => phase.container)).toHaveLength(2);
+    const regular = phases.filter((phase) => !phase.container);
+    expect(regular).toHaveLength(1);
+    expect(regular[0].args).toContain(runtime);
+    expect(regular[0].args).not.toContain(file);
+    expect(regular[0].args).not.toContain(account);
+    expect(regular[0].args).toContain(`--exclude=${file}`);
+    expect(
+      phases.filter((phase) => phase.args[0].endsWith("test-account-container.mjs")),
+    ).toHaveLength(1);
+  });
+
+  test("full and aggregate reports isolate released peers, unrelated selection does not", () => {
+    for (const args of [[], ["--reporter=json"], ["--reporter=json", "--"]]) {
+      const phases = select(args);
+      expect(
+        phases.filter((phase) => phase.label === "isolated released collector compatibility"),
+      ).toHaveLength(1);
+      expect(
+        phases
+          .filter((phase) => !phase.container)
+          .every((phase) => phase.args.includes(`--exclude=${file}`)),
+      ).toBe(true);
+      for (const phase of phases.filter((phase) => !phase.container && phase.args.includes("--"))) {
+        expect(phase.args.indexOf(`--exclude=${file}`)).toBeLessThan(phase.args.indexOf("--"));
+      }
+    }
+    expect(
+      select([runtime]).some(
+        (phase) => phase.label === "isolated released collector compatibility",
+      ),
+    ).toBe(false);
+    expect(select(["--help"])).toEqual(buildE2EPhases("/vitest.mjs", ["--help"], []));
+  });
+
+  test("the inner admitted marker leaves the exact direct Vitest selection unwrapped", () => {
+    const args = [file];
+    const phases = buildE2EPhases("/vitest.mjs", args, []);
+    expect(
+      isolatedE2EPhases(phases, args, {
+        OMNESIS_E2E_RELEASED_PEER: "fixture",
+        OMNESIS_DESKTOP_ACCOUNT_CONTAINER_NONCE: "fixture",
+      }),
+    ).toEqual(phases);
+  });
+});
+
+describe("released gateway isolated dispatch", () => {
+  const collector = "packages/collector/src/e2e/released-collector-current-gateway.e2e.test.ts";
+  const gateway = "packages/collector/src/e2e/released-gateway-current-collector.e2e.test.ts";
+  const account = "packages/collector/src/e2e/desktop-account.e2e.test.ts";
+  const runtime = "packages/collector/src/e2e/desktop-runtime.e2e.test.ts";
+  const select = (args, env = {}) =>
+    isolatedE2EPhases(buildE2EPhases("/vitest.mjs", args, ["--maxWorkers=2"]), args, env);
+
+  test.each([[gateway], ["released-gateway"], [gateway, gateway]])(
+    "reverse selection prepares the gateway direction once: %j",
+    (...args) => {
+      const phases = select(args);
+      expect(phases).toHaveLength(1);
+      expect(phases[0]).toMatchObject({
+        label: "isolated released gateway compatibility",
+        container: true,
+      });
+      expect(phases[0].args).toEqual([
+        expect.stringMatching(/test-released-peer-container\.mjs$/u),
+        "--direction=released-gateway",
+      ]);
+    },
+  );
+
+  test.each([[collector, gateway], [gateway, collector, gateway], ["released-"]])(
+    "both directions run once without an empty host invocation: %j",
+    (...args) => {
+      const phases = select(args);
+      expect(phases.map(({ label }) => label)).toEqual([
+        "isolated released collector compatibility",
+        "isolated released gateway compatibility",
+      ]);
+      expect(phases.every(({ container }) => container)).toBe(true);
+      expect(phases[0].args).toHaveLength(1);
+      expect(phases[1].args.at(-1)).toBe("--direction=released-gateway");
+    },
+  );
+
+  test("mixed selection preserves regular and account work and excludes both peers on the host", () => {
+    const phases = select([runtime, collector, gateway, account]);
+    expect(phases.filter(({ container }) => container)).toHaveLength(3);
+    const regular = phases.filter(({ container }) => !container);
+    expect(regular).toHaveLength(1);
+    expect(regular[0].args).toContain(runtime);
+    for (const file of [collector, gateway]) {
+      expect(regular[0].args).not.toContain(file);
+      expect(regular[0].args).toContain(`--exclude=${file}`);
+    }
+    expect(regular[0].args).not.toContain(account);
+  });
+
+  test("full and aggregate runs preserve the reverse phase and option delimiter", () => {
+    for (const args of [[], ["--reporter=json"], ["--reporter=json", "--"]]) {
+      const phases = select(args);
+      expect(
+        phases.filter(({ label }) => label === "isolated released gateway compatibility"),
+      ).toHaveLength(1);
+      for (const phase of phases.filter(({ container }) => !container)) {
+        expect(phase.args).toContain(`--exclude=${gateway}`);
+        if (phase.args.includes("--"))
+          expect(phase.args.indexOf(`--exclude=${gateway}`)).toBeLessThan(phase.args.indexOf("--"));
+      }
+    }
+    expect(
+      select([runtime]).some(({ label }) => label === "isolated released gateway compatibility"),
+    ).toBe(false);
+  });
+
+  test("inner marker and information calls cannot recursively start either peer", () => {
+    for (const file of [collector, gateway]) {
+      const phases = buildE2EPhases("/vitest.mjs", [file], []);
+      const env = { OMNESIS_E2E_RELEASED_PEER: "fixture" };
+      expect(isolatedE2EPhases(phases, [file], env)).toEqual(
+        accountContainerPhases(phases, [file], env),
+      );
+    }
+    for (const args of [["--help"], ["--version"]])
+      expect(select(args)).toEqual(buildE2EPhases("/vitest.mjs", args, []));
+  });
+});
+
+test("account exclusion remains a parsed Vitest option before an aggregate report delimiter", () => {
+  const file = "packages/collector/src/e2e/desktop-account.e2e.test.ts";
+  const args = ["--reporter=json", "--"];
+  const phases = accountContainerPhases(buildE2EPhases("/vitest.mjs", args, []), args, {});
+  expect(phases.filter(({ container }) => container)).toHaveLength(1);
+  for (const phase of phases.filter(({ container }) => !container)) {
+    expect(phase.args.indexOf(`--exclude=${file}`)).toBeLessThan(phase.args.indexOf("--"));
+    expect(parseCLI(["vitest", "run", ...phase.args.slice(2)]).options.exclude).toContain(file);
+  }
 });

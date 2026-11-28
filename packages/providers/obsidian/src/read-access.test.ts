@@ -59,3 +59,20 @@ test("fresh access checks reopen the declared input without parsing, copying or 
   await rm(root, { recursive: true });
   expect(await instance.probeReadAccess!({ signal })).toEqual({ status: "unavailable" });
 });
+
+test("candidate permission preflight inspects only the selected temporary folder and remains scoped", async () => {
+  root = await mkdtemp(join(tmpdir(), "obsidian-permission-"));
+  const vault = root;
+  await writeFile(join(vault, "fixture.md"), "Invented metadata probe fixture");
+  const observation = await definition.probePermissionAccess!({
+    configDir: vault,
+    params: { vaultPath: vault },
+    signal: new AbortController().signal,
+  });
+  expect(observation.status).toBe("readable");
+  expect(definition.permissionRequirements?.[0]?.kind).toBe("selected-folder");
+  expect(definition.permissionRequirements?.[0]?.actions).not.toContainEqual({
+    kind: "open-system-settings",
+    category: "full-disk-access",
+  });
+});

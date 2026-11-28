@@ -2,7 +2,18 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { stat } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join } from "node:path";
+import {
+  constants,
+  closeSync,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readSync,
+  realpathSync,
+} from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { pathToFileURL } from "node:url";
+import type { StdioOptions } from "node:child_process";
 
 export interface ResolveNpmInvocationOptions {
   command?: string;
@@ -17,6 +28,8 @@ export async function resolveNpmInvocation(
   args: readonly string[],
   opts: ResolveNpmInvocationOptions = {},
 ): Promise<NodeCommandInvocation> {
+  const managed = managedNpmInvocation(opts.command ?? "npm", args);
+  if (managed) return managed;
   const platform = opts.platform ?? process.platform;
   const env = opts.env ?? process.env;
   const inheritedCli =
@@ -105,7 +118,548 @@ export function nodeCommandInvocation(
   platform: NodeJS.Platform = process.platform,
 ): NodeCommandInvocation {
   if (platform === "win32" && /\.(?:[cm]?js)$/iu.test(command)) {
-    return { command: process.execPath, args: [command, ...args] };
+    return managedNodeInvocation([command, ...args]);
   }
-  return { command, args: [...args] };
+  return managedRuntimeExecutableInvocation(command, args);
+}
+
+export interface ManagedRuntimeLauncher {
+  root: string;
+  launcher: string;
+  preload: string;
+  data?: ManagedDesktopDataContext;
+  /** A native preload hint; authority still requires the fixed signed-parent verifier. */
+  backgroundOwner?: unknown;
+  backgroundRetirement?: unknown;
+}
+export interface ManagedDesktopDataScope {
+  format: 1;
+  configDir: string;
+  instance: string;
+  secretService: string;
+  restoreActivation?: { operationId: string; attemptId: string; epoch: string | null };
+}
+/** Exact original-key recovery metadata. Native validates it again before fixed Keychain operations. */
+export interface ManagedDesktopKeyRecoveryContext {
+  version: 1;
+  scope: ManagedDesktopDataScope;
+  root: { device: string; inode: string };
+  update: { operationId: string; phase: string } | null;
+  restore: { operationId: string; phase: string; targetKeyDigest: string } | null;
+}
+
+export type ManagedDesktopDataPurpose =
+  "erase" | "restore" | "rollback" | "update-snapshot" | "update-rollback";
+export interface ManagedDesktopDataContext {
+  format: 1;
+  scope: ManagedDesktopDataScope;
+  lease: { device: string; inode: string };
+  exclusive?: { purpose: ManagedDesktopDataPurpose; operationId: string };
+  reclamation?: {
+    operationId: string;
+    currentEpoch: string;
+    oldEpoch: string;
+    mode: "redundant-snapshot" | "last-copy-old-epoch" | "incomplete-owned";
+    installId: string;
+    pid: number;
+    birth: string;
+    publication: { device: string; inode: string };
+    usage?: { device: string; inode: string };
+  };
+}
+const dataDescriptor = 7;
+const uuidPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u;
+
+/** Native-preload metadata is useful only with the actual inherited private lease inode. */
+export function assertManagedDesktopDataAuthority(
+  scope: Omit<ManagedDesktopDataScope, "format">,
+  purpose: ManagedDesktopDataPurpose,
+  operationId: string,
+): void {
+  const data = managed?.data;
+  if (
+    !data?.exclusive ||
+    data.exclusive.purpose !== purpose ||
+    data.exclusive.operationId !== operationId ||
+    data.scope.configDir !== scope.configDir ||
+    data.scope.instance !== scope.instance ||
+    data.scope.secretService !== scope.secretService
+  )
+    throw new Error("The managed data operation requires its native exclusive authority");
+  assertManagedDesktopDataDescriptor(data);
+}
+
+/** Pure metadata validation; the native adapter establishes and retains the kernel lock. */
+export function assertManagedDesktopDataDescriptor(data: ManagedDesktopDataContext): void {
+  const scope = data.scope;
+  if (
+    data.format !== 1 ||
+    scope.format !== 1 ||
+    !isAbsolute(scope.configDir) ||
+    resolve(scope.configDir) !== scope.configDir ||
+    !/^desktop-[a-f0-9]{16}$/u.test(scope.instance) ||
+    !/^dev\.omnesis\.desktop\.[a-f0-9]{64}$/u.test(scope.secretService) ||
+    !/^\d+$/u.test(data.lease.device) ||
+    !/^\d+$/u.test(data.lease.inode) ||
+    (data.exclusive &&
+      (!uuidPattern.test(data.exclusive.operationId) ||
+        !["erase", "restore", "rollback", "update-snapshot", "update-rollback"].includes(
+          data.exclusive.purpose,
+        )))
+  )
+    throw new Error("The managed data authority metadata is invalid");
+  const held = fstatSync(dataDescriptor, { bigint: true });
+  const path = join(
+    `${scope.configDir}.bootstrap`,
+    `.data-use-${scope.secretService.slice(-64)}.lock`,
+  );
+  const published = lstatSync(path, { bigint: true });
+  if (
+    !held.isFile() ||
+    held.nlink !== 1n ||
+    (held.mode & 0o077n) !== 0n ||
+    (process.getuid && held.uid !== BigInt(process.getuid())) ||
+    published.isSymbolicLink() ||
+    held.dev !== published.dev ||
+    held.ino !== published.ino ||
+    held.dev.toString() !== data.lease.device ||
+    held.ino.toString() !== data.lease.inode
+  )
+    throw new Error("The managed data authority descriptor is unavailable");
+}
+
+/** The operation entry is fixed by the native adapter; request secrets stay on private stdin. */
+export function managedDesktopDataOperationInvocation(
+  scope: Omit<ManagedDesktopDataScope, "format">,
+  purpose: ManagedDesktopDataPurpose,
+  operationId: string,
+): { command: string; args: string[] } {
+  if (
+    !managed ||
+    managed.data ||
+    !uuidPattern.test(operationId) ||
+    !["erase", "restore", "rollback", "update-snapshot", "update-rollback"].includes(purpose)
+  )
+    throw new Error("The data operation requires the installed controller runtime");
+  return {
+    command: managed.launcher,
+    args: [
+      "--data-exclusive",
+      purpose,
+      operationId,
+      Buffer.from(JSON.stringify({ format: 1, ...scope })).toString("base64url"),
+    ],
+  };
+}
+
+/** Controller preview workers pin the exact profile even when their env is independently curated. */
+export function managedDesktopDataConsumerInvocation(
+  scope: Omit<ManagedDesktopDataScope, "format">,
+  args: readonly string[],
+): { command: string; args: string[] } {
+  if (!managed) return managedNodeInvocation(args);
+  if (managed.data) {
+    if (
+      managed.data.scope.configDir !== scope.configDir ||
+      managed.data.scope.instance !== scope.instance ||
+      managed.data.scope.secretService !== scope.secretService
+    )
+      throw new Error("The managed data worker belongs to another installation");
+    return managedNodeInvocation(args);
+  }
+  return {
+    command: managed.launcher,
+    args: [
+      "--data-use",
+      Buffer.from(JSON.stringify({ format: 1, ...scope })).toString("base64url"),
+      "--node",
+      ...args,
+    ],
+  };
+}
+
+/** Only exclusive operation workers share the inherited open description; consumers reacquire SH. */
+export function managedRuntimeSubprocessStdio(stdio: StdioOptions): StdioOptions {
+  if (!managed?.data?.exclusive) return stdio;
+  assertManagedDesktopDataDescriptor(managed.data);
+  if (!Array.isArray(stdio))
+    throw new Error("Exclusive data workers require explicit private streams");
+  const result = [...stdio];
+  while (result.length <= dataDescriptor) result.push("ignore");
+  if (result[dataDescriptor] !== "ignore" && result[dataDescriptor] !== dataDescriptor)
+    throw new Error("The exclusive data descriptor must remain reserved");
+  result[dataDescriptor] = dataDescriptor;
+  return result;
+}
+function managedDataArguments(): string[] {
+  const data = managed?.data;
+  if (!data) return [];
+  const encoded = Buffer.from(JSON.stringify(data.scope)).toString("base64url");
+  return data.exclusive
+    ? ["--data-inherit", data.exclusive.purpose, data.exclusive.operationId, encoded]
+    : ["--data-use", encoded];
+}
+let managed: Readonly<ManagedRuntimeLauncher> | undefined;
+/** Installed only by the authenticated payload's fixed Node preload, never environment values. */
+export function installManagedRuntimeLauncher(value: ManagedRuntimeLauncher): void {
+  if (
+    !isAbsolute(value.root) ||
+    value.launcher !== join(value.root, "runtime-exec") ||
+    value.preload !== join(value.root, "packages/core/dist/managed-runtime-bootstrap.js")
+  )
+    throw new Error("Invalid managed runtime launcher");
+  if (managed && JSON.stringify(managed) !== JSON.stringify(value))
+    throw new Error("The managed runtime identity cannot change while this process is running");
+  if (
+    (value.data &&
+      (value.backgroundOwner !== undefined || value.backgroundRetirement !== undefined)) ||
+    (value.backgroundOwner !== undefined && value.backgroundRetirement !== undefined)
+  )
+    throw new Error("A background controller cannot inherit data authority");
+  if (value.data) assertManagedDesktopDataDescriptor(value.data);
+  managed = Object.freeze({
+    ...value,
+    ...(value.data ? { data: Object.freeze(structuredClone(value.data)) } : {}),
+    ...(value.backgroundOwner === undefined
+      ? {}
+      : { backgroundOwner: Object.freeze(structuredClone(value.backgroundOwner)) }),
+    ...(value.backgroundRetirement === undefined
+      ? {}
+      : { backgroundRetirement: Object.freeze(structuredClone(value.backgroundRetirement)) }),
+  });
+}
+/** Read captured launch identity only; inherited environment never initializes this value. */
+export function managedRuntimeLauncherContext(): Readonly<ManagedRuntimeLauncher> | undefined {
+  // Callers cannot mutate captured nested authority metadata through this read seam.
+  return managed === undefined ? undefined : structuredClone(managed);
+}
+/** Strip helper-only provenance from fork/Worker defaults, preserving all unrelated Node flags. */
+export function managedBackgroundExecArgv(
+  args: readonly string[],
+  ownerPreload: string,
+  ordinaryPreload: string,
+): string[] {
+  const next = [...args];
+  for (let index = 0; index < next.length; index++) {
+    if (next[index] === "--import" && next[index + 1] === ownerPreload)
+      next[index + 1] = ordinaryPreload;
+    else if (next[index] === `--import=${ownerPreload}`)
+      next[index] = `--import=${ordinaryPreload}`;
+  }
+  return next;
+}
+export function managedRuntimePreload(): string[] {
+  if (!managed) return [];
+  const preload = pathToFileURL(managed.preload);
+  // Worker isolates share this OS descriptor but not module state. Their own fixed preload
+  // receives metadata explicitly even after the controller curated process.env.
+  if (managed.data)
+    preload.searchParams.set(
+      "data",
+      Buffer.from(JSON.stringify(managed.data)).toString("base64url"),
+    );
+  return ["--use-system-ca", "--import", preload.href];
+}
+export function managedNodeInvocation(args: readonly string[]): {
+  command: string;
+  args: string[];
+} {
+  return managed
+    ? { command: managed.launcher, args: [...managedDataArguments(), "--node", ...args] }
+    : { command: process.execPath, args: [...args] };
+}
+export function managedNpmInvocation(
+  command: string,
+  args: readonly string[],
+): { command: string; args: string[] } | null {
+  if (
+    !managed ||
+    !["npm", "npx", join(managed.root, "npm"), join(managed.root, "npx")].includes(command)
+  )
+    return null;
+  const cli = command.endsWith("npx") ? "npx-cli.js" : "npm-cli.js";
+  return managedNodeInvocation([join(managed.root, "lib/node_modules/npm/bin", cli), ...args]);
+}
+/** Every directly owned child retains its epoch, including external interpreters reading payload files. */
+export function managedRuntimeExecutableInvocation(
+  command: string,
+  args: readonly string[],
+): { command: string; args: string[] } {
+  if (!managed) return { command, args: [...args] };
+  if (managed.data?.reclamation)
+    throw new Error("Snapshot reclamation cannot start child processes");
+  if (command === managed.launcher)
+    return {
+      command,
+      args:
+        args[0]?.startsWith("--data-") ||
+        args[0] === "--catalog-discovery" ||
+        args[0] === "--gc-reserve" ||
+        args[0] === "--gc-reserve-cancel"
+          ? [...args]
+          : [...managedDataArguments(), ...args],
+    };
+  const npm = managedNpmInvocation(command, args);
+  if (npm) return npm;
+  if (command === process.execPath || command === "node") return managedNodeInvocation(args);
+  if (isAbsolute(command)) {
+    const local = relative(managed.root, resolve(command));
+    if (
+      local &&
+      !isAbsolute(local) &&
+      local !== ".." &&
+      !local.startsWith(`..${sep}`) &&
+      command !== managed.launcher
+    )
+      return {
+        command: managed.launcher,
+        args: [...managedDataArguments(), "--exec", local.split(sep).join("/"), ...args],
+      };
+  }
+  return {
+    command: managed.launcher,
+    args: [...managedDataArguments(), "--external", command, ...args],
+  };
+}
+
+/** Only exact, secret-free absence selectors may name a proposed fresh generation. */
+export function managedDesktopMetadataInvocation(
+  command: string,
+  args: readonly string[],
+  generation: string,
+): NodeCommandInvocation {
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(generation) ||
+    !["security", "/usr/bin/security"].includes(command) ||
+    args.length !== 5 ||
+    args[0] !== "find-generic-password" ||
+    args[1] !== "-a" ||
+    args[3] !== "-s"
+  )
+    throw new Error("Invalid fresh-generation metadata request");
+  if (!managed) return { command, args: [...args] };
+  return {
+    command: managed.launcher,
+    args: ["--metadata-generation", generation, "--external", "/usr/bin/security", ...args],
+  };
+}
+
+/** Only a DATA-free installed controller may request this fixed Keychain-only native adapter. */
+export function managedDesktopKeyRecoveryInvocation(
+  context: ManagedDesktopKeyRecoveryContext,
+): NodeCommandInvocation {
+  if (!managed || managed.data || context.version !== 1 || context.scope.format !== 1)
+    throw new Error("Key recovery requires the installed controller runtime");
+  if (
+    !isAbsolute(context.scope.configDir) ||
+    resolve(context.scope.configDir) !== context.scope.configDir ||
+    !/^desktop-[a-f0-9]{16}$/u.test(context.scope.instance) ||
+    !/^dev\.omnesis\.desktop\.[a-f0-9]{64}$/u.test(context.scope.secretService) ||
+    !/^\d+$/u.test(context.root.device) ||
+    !/^\d+$/u.test(context.root.inode)
+  )
+    throw new Error("Invalid original-key recovery context");
+  // The controller deliberately has no DATA descriptor. The fixed native adapter
+  // independently establishes cert3/root/journal authority before any Keychain call.
+  const text = JSON.stringify(context);
+  if (Buffer.byteLength(text) > 4096)
+    throw new Error("The key recovery context exceeds its bounds");
+  return {
+    command: managed.launcher,
+    args: ["--key-recovery", Buffer.from(text).toString("base64url")],
+  };
+}
+
+/** A real SDK discovery writer retains its generation's catalog lease through exec. */
+export function managedDesktopCatalogDiscoveryInvocation(
+  command: string,
+  args: readonly string[],
+  nonce: string,
+): NodeCommandInvocation {
+  if (!uuidPattern.test(nonce)) throw new Error("Invalid managed catalog discovery request");
+  if (!managed?.data || managed.data.exclusive)
+    throw new Error("Catalog discovery requires the installed data-consumer runtime");
+  const invocation = managedRuntimeExecutableInvocation(command, args);
+  return { command: invocation.command, args: ["--catalog-discovery", nonce, ...invocation.args] };
+}
+
+/** Fixed same-PID native transition; the native adapter must reacquire authority after execve. */
+export function managedDesktopSnapshotGcInvocation(
+  scope: Omit<ManagedDesktopDataScope, "format">,
+  operationId: string,
+  action: "execute" | "reserve" | "cancel" = "execute",
+): NodeCommandInvocation {
+  if (!managed || managed.data?.exclusive || !uuidPattern.test(operationId))
+    throw new Error("Snapshot cleanup requires the installed runtime");
+  return {
+    command: managed.launcher,
+    args: [
+      action === "reserve"
+        ? "--gc-reserve"
+        : action === "cancel"
+          ? "--gc-reserve-cancel"
+          : "--gc-snapshot",
+      operationId,
+      Buffer.from(JSON.stringify({ format: 1, ...scope })).toString("base64url"),
+    ],
+  };
+}
+
+/** Captured preload metadata is accepted only with the same native private lock descriptors. */
+export function assertManagedDesktopSnapshotGcAuthority(
+  scope: Omit<ManagedDesktopDataScope, "format">,
+  operationId: string,
+): void {
+  const fail = () => new Error("Snapshot cleanup requires its native reservation proof");
+  const data = managed?.data,
+    proof = data?.reclamation;
+  if (
+    !managed ||
+    !data ||
+    data.exclusive ||
+    !proof ||
+    !uuidPattern.test(operationId) ||
+    proof.operationId !== operationId ||
+    proof.pid !== process.pid ||
+    proof.currentEpoch !== basename(managed.root) ||
+    !/^[a-f0-9]{64}$/u.test(proof.oldEpoch) ||
+    !uuidPattern.test(proof.installId) ||
+    typeof proof.birth !== "string" ||
+    !proof.birth ||
+    data.scope.configDir !== scope.configDir ||
+    data.scope.instance !== scope.instance ||
+    data.scope.secretService !== scope.secretService ||
+    !["redundant-snapshot", "last-copy-old-epoch", "incomplete-owned"].includes(proof.mode) ||
+    (proof.mode === "last-copy-old-epoch" && proof.oldEpoch === proof.currentEpoch)
+  )
+    throw fail();
+  assertManagedDesktopDataDescriptor(data);
+  const check = (fd: number, path: string, identity: { device: string; inode: string }) => {
+    const held = fstatSync(fd, { bigint: true }),
+      published = lstatSync(path, { bigint: true });
+    if (
+      !held.isFile() ||
+      held.nlink !== 1n ||
+      (held.mode & 0o077n) !== 0n ||
+      (process.getuid && held.uid !== BigInt(process.getuid())) ||
+      published.isSymbolicLink() ||
+      held.dev !== published.dev ||
+      held.ino !== published.ino ||
+      held.dev.toString() !== identity.device ||
+      held.ino.toString() !== identity.inode
+    )
+      throw fail();
+  };
+  check(8, join(dirname(managed.root), ".publication-lock"), proof.publication);
+  if (proof.mode === "last-copy-old-epoch") {
+    if (!proof.usage) throw fail();
+    check(9, join(dirname(managed.root), `.usage-${proof.oldEpoch}.lock`), proof.usage);
+  } else if (proof.usage) throw fail();
+  const fd = openSync(
+    join(`${scope.configDir}.bootstrap`, "gateway.lock"),
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  );
+  try {
+    const info = fstatSync(fd);
+    if (
+      !info.isFile() ||
+      info.nlink !== 1 ||
+      (info.mode & 0o077) !== 0 ||
+      info.size > 4096 ||
+      (process.getuid && info.uid !== process.getuid())
+    )
+      throw fail();
+    const buffer = Buffer.alloc(4097),
+      count = readSync(fd, buffer, 0, buffer.length, 0);
+    if (count !== info.size) throw fail();
+    const value: unknown = JSON.parse(buffer.subarray(0, count).toString("utf8"));
+    if (
+      !value ||
+      typeof value !== "object" ||
+      !("pid" in value) ||
+      value.pid !== process.pid ||
+      !("leaseId" in value) ||
+      value.leaseId !== proof.installId ||
+      !("processStart" in value) ||
+      value.processStart !== proof.birth ||
+      !("locking" in value) ||
+      value.locking !== "darwin-process-v1"
+    )
+      throw fail();
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Fresh managed incarnations alone certify coverage of SDK and other data consumers. */
+export function assertManagedDesktopProcessAuthority(
+  expected?: Omit<ManagedDesktopDataScope, "format">,
+): void {
+  const fail = () =>
+    new Error(
+      "This managed installation lacks verified process ownership; its existing data and keys must be retained.",
+    );
+  const data = managed?.data;
+  if (!data || data.exclusive) throw fail();
+  const scope = data.scope;
+  if (
+    expected &&
+    (expected.configDir !== scope.configDir ||
+      expected.instance !== scope.instance ||
+      expected.secretService !== scope.secretService)
+  )
+    throw fail();
+  assertManagedDesktopDataDescriptor(data);
+  const parent = `${scope.configDir}.bootstrap`;
+  const path = join(parent, "process-authority.json");
+  let descriptor: number | undefined;
+  try {
+    if (realpathSync(parent) !== resolve(parent)) throw fail();
+    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const before = fstatSync(descriptor),
+      published = lstatSync(path);
+    if (
+      !before.isFile() ||
+      before.nlink !== 1 ||
+      (before.mode & 0o077) !== 0 ||
+      (process.getuid && before.uid !== process.getuid()) ||
+      before.size < 1 ||
+      before.size > 4096 ||
+      published.isSymbolicLink() ||
+      before.dev !== published.dev ||
+      before.ino !== published.ino
+    )
+      throw fail();
+    const bytes = Buffer.alloc(4097);
+    const count = readSync(descriptor, bytes, 0, bytes.length, 0);
+    if (count !== before.size) throw fail();
+    const value: unknown = JSON.parse(bytes.subarray(0, count).toString("utf8"));
+    const after = fstatSync(descriptor),
+      current = lstatSync(path);
+    if (
+      current.isSymbolicLink() ||
+      current.dev !== before.dev ||
+      current.ino !== before.ino ||
+      after.size !== before.size ||
+      after.mtimeMs !== before.mtimeMs ||
+      after.ctimeMs !== before.ctimeMs ||
+      !value ||
+      typeof value !== "object" ||
+      Array.isArray(value)
+    )
+      throw fail();
+    const record = value as Record<string, unknown>;
+    if (
+      Object.keys(record).sort().join(",") !== "instance,owner,secretService,version" ||
+      record.version !== 3 ||
+      record.owner !== "omnesis-desktop" ||
+      record.instance !== scope.instance ||
+      record.secretService !== scope.secretService
+    )
+      throw fail();
+  } catch {
+    throw fail();
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
 }

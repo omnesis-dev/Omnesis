@@ -25,6 +25,7 @@ export default defineSource<SyncCursor>({
   name: "Hermes",
   description: "Conversations with the Hermes agent harness",
   provider: { id: "hermes", name: "Hermes" },
+  permissionRequirements: [],
   authType: "local",
   unitName: "conversations",
   icon: {

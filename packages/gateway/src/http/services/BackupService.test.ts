@@ -748,3 +748,41 @@ describe("the watch journal", () => {
     expect(manifest.files.map((f) => f.name)).not.toContain("watch.db");
   });
 });
+
+test("includes encrypted chat history and declares coverage in both authenticated and public manifests", async () => {
+  const { writeSecretTextFile, readInstallRootKey, openSecretFileValueAsync } =
+    await import("@omnesis/core");
+  await ensureInstallRootKey({ backend: "file", configDir });
+  const record = '{"id":"s_fixture","message":"Invented conversation history"}';
+  await writeSecretTextFile(join(configDir, "conversations/s_fixture.json"), record, {
+    backend: "file",
+    configDir,
+  });
+  writeFileSync(join(configDir, "conversations/.summary-index.v4"), "derived index marker");
+  const service = makeService({ secretStoreBackend: "file" });
+  const manifest = await runBackup(service);
+  expect(service.getStatus().lastResult?.ok).toBe(true);
+  expect(manifest.includesConversationHistory).toBe(true);
+  expect(manifest.files.map((file) => file.name)).toContain("conversations/s_fixture.json.enc");
+  const dir = singleBackupDir();
+  expect(existsSync(join(dir, "conversations/.summary-index.v4"))).toBe(false);
+  const rootKey = (await readInstallRootKey({ backend: "file", configDir }))!;
+  const sealed = await decryptArtifactFileToBuffer(join(dir, "conversations/s_fixture.json.enc"), {
+    backend: "file",
+    configDir,
+  });
+  expect(sealed.toString("utf8")).not.toContain("Invented conversation history");
+  expect(
+    await openSecretFileValueAsync(sealed.toString("utf8"), {
+      rootKey,
+      scope: "config:conversations/s_fixture.json",
+    }),
+  ).toBe(record);
+  const full = await decryptArtifactFileToBuffer(join(dir, manifest.encryptedManifest!), {
+    backend: "file",
+    configDir,
+  });
+  expect(JSON.parse(full.toString("utf8")).includesConversationHistory).toBe(true);
+  sealed.fill(0);
+  full.fill(0);
+});

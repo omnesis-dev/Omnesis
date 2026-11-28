@@ -10,7 +10,6 @@ import { nodeCommandInvocation } from "../../packages/core/src/node-command.ts";
 import { runCheckCommand, checkFailureMessage } from "../lib/check-process.mjs";
 import {
   allE2EBundles,
-  allNativeBundles,
   behavioralBundles,
   bundles,
   bundleTestArgs,
@@ -97,7 +96,7 @@ function isGlobal(file) {
   return (
     (file.startsWith("scripts/nx/") && !isTargetedTooling(file)) ||
     /(?:^|\/)package\.json$/.test(file) ||
-    /^(?:package-lock\.json|nx\.json|tsconfig(?:\..+)?\.json|vitest\.config\.ts|eslint\.config\.js|scripts\/(?:run-check\.mjs|test-env\.sh)|\.github\/workflows\/)/.test(
+    /^(?:package-lock\.json|nx\.json|knip\.json|tsconfig(?:\..+)?\.json|vitest\.config\.ts|eslint\.config\.js|scripts\/(?:run-check\.mjs|test-env\.sh)|\.github\/workflows\/)/.test(
       file,
     )
   );
@@ -122,13 +121,13 @@ function isKnown(file) {
     return parts.length > 2 && existsSync(join(root, "package.json"));
   }
   return (
-    /^(?:extension|ios|android|scripts|e2e|evals|integrations|plugins|website|docs|bench|privacy|assets|patches|\.github|\.claude|\.claude-plugin|\.agents|\.changeset)\//.test(
+    /^(?:extension|ios|macos|android|scripts|e2e|evals|integrations|plugins|website|docs|bench|privacy|assets|patches|\.github|\.claude|\.claude-plugin|\.agents|\.changeset)\//.test(
       file,
     ) ||
     /^(?:AGENTS|CLAUDE|README|CONTRIBUTING|ARCHITECTURE|SECURITY|SUPPORT|CODE_OF_CONDUCT|CHANGELOG|CLA|LICENSE|THIRD_PARTY_NOTICES|TRADEMARKS|TELEMETRY)\.md$/.test(
       file,
     ) ||
-    /^(?:package(?:-lock)?\.json|nx\.json|tsconfig.*\.json|vitest\.config\.ts|eslint\.config\.js|lefthook\.yml|playwright\.config\.ts|Dockerfile|worker\.js|wrangler\.jsonc|\.(?:gitignore|gitattributes|dockerignore|editorconfig|prettierignore|prettierrc\.json|nvmrc|swiftformat|swiftlint\.yml|swiftlint-baseline\.json))$/.test(
+    /^(?:package(?:-lock)?\.json|nx\.json|knip\.json|tsconfig.*\.json|vitest\.config\.ts|eslint\.config\.js|lefthook\.yml|playwright\.config\.ts|Dockerfile|worker\.js|wrangler\.jsonc|\.(?:gitignore|gitattributes|dockerignore|editorconfig|prettierignore|prettierrc\.json|nvmrc|swiftformat|swiftlint\.yml|swiftlint-baseline\.json))$/.test(
       file,
     )
   );
@@ -205,6 +204,13 @@ const nativeVersionPatterns = new Map([
   ],
   [
     "ios/project.yml",
+    [
+      /^(\s*MARKETING_VERSION:\s*["']?)([^"'\s]+)(["']?.*)$/gmu,
+      /^(\s*CURRENT_PROJECT_VERSION:\s*["']?)(\d+)(["']?.*)$/gmu,
+    ],
+  ],
+  [
+    "macos/project.yml",
     [
       /^(\s*MARKETING_VERSION:\s*["']?)([^"'\s]+)(["']?.*)$/gmu,
       /^(\s*CURRENT_PROJECT_VERSION:\s*["']?)(\d+)(["']?.*)$/gmu,
@@ -340,7 +346,12 @@ export function buildPlan({ base = "origin/main", extraBundles = [], files: file
   }
   if (selectedFiles.some(isTargetedTooling)) projects.push("omnesis-workspace");
   const selectedBundles = new Set(
-    broad ? [...allE2EBundles, ...allNativeBundles] : behavioralBundles(selectedFiles),
+    broad
+      ? [
+          ...allE2EBundles,
+          ...behavioralBundles(selectedFiles).filter((name) => bundles[name].kind === "native"),
+        ]
+      : behavioralBundles(selectedFiles),
   );
   for (const name of extraBundles) {
     if (!bundles[name])

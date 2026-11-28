@@ -1,0 +1,207 @@
+#!/usr/bin/env node
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Adrien Conrath
+
+import { execFileSync } from "node:child_process";
+import {
+  cpSync,
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  compileRuntimeClosure,
+  localRuntimeClosure,
+  stageRuntime,
+} from "../runtime/stage-runtime.mjs";
+import { acquireNodeArchive, extractNodeArchive, NODE_RUNTIME } from "./node-runtime.mjs";
+import { inventoryBundle, machoArchitectures } from "./native-inventory.mjs";
+import {
+  assertRuntimeDependencyLinks,
+  createRuntimeDependencyPlan,
+  copyNodeTools,
+  copyProductionDependencies,
+} from "./runtime-assets.mjs";
+import { createNativeDependencyFilter } from "./native-dependency-assets.mjs";
+import { stageCodexNotices } from "./codex-notices.mjs";
+import { buildDesktopAnalytics } from "./build-analytics.mjs";
+import { stageDesktopAnalytics } from "./stage-analytics.mjs";
+import { smokeRuntime } from "./smoke-runtime.mjs";
+import { writeDesktopUpdateMetadata } from "./update-metadata.mjs";
+import { parseArguments } from "./arguments.mjs";
+
+const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+
+/** Build and install on the target Mac; never install dependencies into the source checkout. */
+export async function prepareRuntime({
+  architecture = process.arch,
+  output,
+  cache,
+  runtimeExec,
+  build = true,
+  analyticsReceipt,
+}) {
+  if (process.platform !== "darwin" || process.arch !== architecture)
+    throw new Error("Prepare the desktop runtime on macOS with the target architecture");
+  if (process.versions.node !== NODE_RUNTIME.version)
+    throw new Error(`Build using pinned Node ${NODE_RUNTIME.version}`);
+  if (!runtimeExec || !machoArchitectures(readFileSync(runtimeExec))?.includes(architecture))
+    throw new Error("A native runtime-exec built for the target architecture is required");
+  const target = resolve(output);
+  if (existsSync(target)) throw new Error("Runtime output must not already exist");
+  mkdirSync(dirname(target), { recursive: true });
+  const scratch = `${target}.preparing-${process.pid}`;
+  mkdirSync(scratch);
+  let ownsTarget = false;
+  let retain = false;
+  try {
+    const archive = await acquireNodeArchive(architecture, cache);
+    const distribution = await extractNodeArchive(
+      archive,
+      architecture,
+      join(scratch, "node-distribution"),
+    );
+    const node = join(distribution, "bin/node");
+    const npm = join(distribution, "lib/node_modules/npm/bin/npm-cli.js");
+    const input = join(scratch, "input");
+    mkdirSync(input);
+    for (const item of ["package.json", "package-lock.json", "packages", "patches", "scripts"]) {
+      cpSync(join(repo, item), join(input, item), {
+        recursive: true,
+        filter: (path) =>
+          !path
+            .split(/[\\/]/)
+            .some((part) => ["node_modules", ".git", "dist", ".build"].includes(part)),
+      });
+    }
+    const manifest = JSON.parse(readFileSync(join(input, "package.json"), "utf8"));
+    delete manifest.scripts.prepare;
+    delete manifest.scripts.postinstall;
+    writeFileSync(join(input, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+    const env = {
+      ...process.env,
+      PATH: `${join(distribution, "bin")}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+    };
+    execFileSync(
+      node,
+      [
+        npm,
+        "ci",
+        "--omit=dev",
+        "--omit=peer",
+        "--workspace",
+        "@omnesis/gateway",
+        "--workspace",
+        "@omnesis/collector",
+        "--workspace",
+        "omnesis",
+        "--include-workspace-root=false",
+      ],
+      { cwd: input, env, stdio: "inherit" },
+    );
+    // The source checkout's pinned development tool applies production patches,
+    // including removal of provider libraries' sensitive console dumps.
+    execFileSync(node, [join(repo, "node_modules/patch-package/index.js"), "--error-on-fail"], {
+      cwd: input,
+      env,
+      stdio: "inherit",
+    });
+    const entries = localRuntimeClosure(["omnesis"]);
+    const lock = JSON.parse(readFileSync(join(input, "package-lock.json"), "utf8"));
+    const dependencyPlan = createRuntimeDependencyPlan(input, entries, lock);
+    const nativeFilter = createNativeDependencyFilter(input, lock, architecture);
+    if (build) compileRuntimeClosure(entries);
+    const staged = stageRuntime(target, entries);
+    ownsTarget = true;
+    copyProductionDependencies(
+      join(input, "node_modules"),
+      join(target, "node_modules"),
+      dependencyPlan,
+      nativeFilter,
+    );
+    for (const entry of entries) {
+      const source = join(input, entry.dir, "node_modules");
+      if (existsSync(source))
+        copyProductionDependencies(
+          source,
+          join(target, entry.dir, "node_modules"),
+          dependencyPlan,
+          nativeFilter,
+        );
+    }
+    assertRuntimeDependencyLinks(target, dependencyPlan);
+    // Fail on unexpected foreign assets before compiling the replacement analytics engine.
+    await inventoryBundle(target, architecture);
+    stageCodexNotices({
+      target,
+      architecture,
+      dependencyRoots: [
+        join(target, "node_modules"),
+        ...entries.map((entry) => join(target, entry.dir, "node_modules")),
+      ],
+    });
+    const analytics = await buildDesktopAnalytics({
+      architecture,
+      cache: cache ? join(resolve(cache), "analytics") : undefined,
+    });
+    await stageDesktopAnalytics({ target, architecture, build: analytics });
+    cpSync(runtimeExec, join(target, "runtime-exec"));
+    chmodSync(join(target, "runtime-exec"), 0o755);
+    copyNodeTools(distribution, target);
+    for (const notice of ["LICENSE", "THIRD_PARTY_NOTICES.md", "TRADEMARKS.md"])
+      cpSync(join(repo, notice), join(target, notice));
+    await writeDesktopUpdateMetadata(target, architecture, staged.productVersion);
+    const inventory = await inventoryBundle(target, architecture);
+    writeFileSync(
+      join(target, "desktop-runtime.json"),
+      `${JSON.stringify(
+        {
+          format: 1,
+          architecture,
+          nodeVersion: NODE_RUNTIME.version,
+          codeUsageProtocol: 1,
+          dataUsageProtocol: 1,
+          processAuthorityProtocol: 3,
+          runtimeLauncher: "runtime-exec",
+          ...staged,
+          inventory,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    // Native restore requires the sealed inventory and real runtime-exec/data-use owner.
+    await smokeRuntime(target, {
+      analyticsRestore: { input, upstreamNode: node, architecture, receipt: analyticsReceipt },
+    });
+    return target;
+  } catch (error) {
+    // target is exclusively created by stageRuntime during this invocation.
+    retain = error?.cleanupFailure !== undefined;
+    if (ownsTarget && !retain) rmSync(target, { recursive: true, force: true });
+    throw error;
+  } finally {
+    if (!retain) rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+if (import.meta.main) {
+  const args = parseArguments(process.argv.slice(2), {
+    values: ["out", "cache", "arch", "runtime-exec", "analytics-receipt"],
+    booleans: ["no-build"],
+    required: ["out", "cache", "runtime-exec"],
+  });
+  await prepareRuntime({
+    output: args.get("out"),
+    cache: args.get("cache"),
+    architecture: args.get("arch") ?? process.arch,
+    runtimeExec: args.get("runtime-exec"),
+    build: !args.has("no-build"),
+    analyticsReceipt: args.get("analytics-receipt"),
+  });
+}

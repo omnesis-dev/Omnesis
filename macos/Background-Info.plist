@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>OmnesisBuildConfiguration</key><string>$(CONFIGURATION)</string>
+  <key>CFBundleExecutable</key><string>$(EXECUTABLE_NAME)</string>
+  <key>CFBundleIdentifier</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+  <key>CFBundleDisplayName</key><string>Omnesis</string>
+  <key>CFBundleName</key><string>OmnesisBackground</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
+  <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
+  <key>LSUIElement</key><true/>
+  <key>NSLocalNetworkUsageDescription</key><string>Omnesis finds your private library on your home network and connects your devices securely.</string>
+  <key>NSBonjourServices</key><array><string>_omnesis._tcp</string></array>
+</dict></plist>

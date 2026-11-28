@@ -21,6 +21,7 @@ export default defineSource<WhatsAppSyncCursor>({
   name: "WhatsApp Messages",
   description: "Sync WhatsApp conversations via QR code pairing",
   provider: { id: "whatsapp", name: "WhatsApp" },
+  permissionRequirements: [],
   authType: "qr",
   unitName: "messages",
   contentRetention: "best-effort",

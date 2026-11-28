@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { sourcePermissionsRequestSchema } from "@omnesis/core";
+import { z } from "zod";
 import {
   buildPage,
   SourceId,
@@ -10,6 +12,7 @@ import {
   type DeviceId,
   type DeviceRecord,
 } from "@omnesis/types";
+import { SourcePermissionsService } from "../../services/SourcePermissionsService.js";
 import { enforceWriteScopeForSourceType, scope } from "../../scope.js";
 import { validateJson } from "../../validate.js";
 import { PairingService } from "../../services/PairingService.js";
@@ -276,6 +279,22 @@ export function mountSourceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
   // Per http-conventions.md "Param placement and naming": POST is
   // action-bearing → params (including descriptorId) live in the body,
   // path is the bare verb at the collection level.
+  const permissions = new SourcePermissionsService(sourceService, deviceService, wsServer);
+  app.post(
+    "/admin/sources/permissions",
+    scope.admin(),
+    validateJson(
+      sourcePermissionsRequestSchema
+        .omit({ expectedScopeDigest: true })
+        .extend({ deviceId: z.uuid() })
+        .strict(),
+    ),
+    async (c) => {
+      const { deviceId, ...input } = c.req.valid("json");
+      return c.json(await permissions.check(deviceId, input));
+    },
+  );
+
   app.post(
     "/admin/sources/discover",
     scope.admin(),
@@ -415,9 +434,10 @@ export function mountSourceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
   app.get("/admin/sources/:id", scope.admin(), (c) => {
     const id = SourceId(c.req.param("id"));
     assertMutableSource(id);
-    const source = sourceService.getById(id);
-    if (!source) throw new NotFoundError("source not found");
-    return c.json({ source });
+    const settings = sourceService.settingsForAdmin(id);
+    if (!settings) throw new NotFoundError("source not found");
+    c.header("Cache-Control", "no-store");
+    return c.json(settings);
   });
 
   app.post("/admin/sources", scope.admin(), validateJson(createSourceBody), async (c) => {
@@ -504,6 +524,8 @@ export function mountSourceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
     const updated = await runGenerationFenced(() =>
       sourceService.updateSource(id, {
         config: body.config,
+        memberConfig: body.memberConfig,
+        expectedRevision: body.expectedRevision,
         enabled: body.enabled,
         deviceId: did,
         multiDeviceMode: body.multiDeviceMode,
@@ -533,6 +555,17 @@ export function mountSourceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
     },
   );
 
+  app.get("/admin/sources/:id/members/:deviceId", scope.admin(), (c) => {
+    const id = SourceId(c.req.param("id"));
+    assertMutableSource(id);
+    const deviceId = tryDeviceId(c.req.param("deviceId"));
+    if (!deviceId) throw new BadRequestError("invalid device id");
+    const settings = sourceService.settingsForAdmin(id, deviceId);
+    if (!settings) throw new NotFoundError("source member not found");
+    c.header("Cache-Control", "no-store");
+    return c.json(settings);
+  });
+
   app.patch(
     "/admin/sources/:id/members/:deviceId",
     scope.admin(),
@@ -544,7 +577,13 @@ export function mountSourceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
       const did = tryDeviceId(c.req.param("deviceId"));
       if (!did) throw new BadRequestError("invalid device id");
       const source = await runGenerationFenced(() =>
-        sourceService.updateMemberConfig(id, did, c.req.valid("json").configOverride, pairingFence),
+        sourceService.updateMemberConfig(
+          id,
+          did,
+          c.req.valid("json").configOverride,
+          pairingFence,
+          c.req.valid("json").expectedRevision,
+        ),
       );
       return c.json({ source });
     },
@@ -567,7 +606,13 @@ export function mountSourceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
     const pairingFence = pairingGenerationFence(c);
     const id = SourceId(c.req.param("id"));
     assertMutableSource(id);
-    const result = await runGenerationFenced(() => sourceService.deleteSource(id, pairingFence));
+    const match = c.req.header("If-Match");
+    const expectedRevision = match?.replace(/^"([a-f0-9]{64})"$/u, "$1");
+    if (expectedRevision !== undefined && !/^[a-f0-9]{64}$/u.test(expectedRevision))
+      throw new BadRequestError("Invalid source removal precondition.");
+    const result = await runGenerationFenced(() =>
+      sourceService.deleteSource(id, pairingFence, expectedRevision),
+    );
     if (!result) throw new NotFoundError("source not found");
     // The source is gone — stopped syncing, stopped accepting pushes — but
     // purging what it ingested continues after this returns. `removing` is the

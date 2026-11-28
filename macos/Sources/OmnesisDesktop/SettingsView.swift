@@ -1,0 +1,388 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Adrien Conrath
+
+import AppKit
+import DesktopCore
+import Omnesis
+import SwiftUI
+
+enum DesktopSettingsPrerequisite: Hashable { case startup, power, services }
+
+struct DesktopSettingsView: View {
+    @Environment(DesktopStore.self) private var store
+    @Environment(\.openWindow) private var openWindow
+    @State private var showStopConfirmation = false
+    @State private var prerequisiteOrder: [DesktopSettingsPrerequisite] = []
+
+    static func orderedPrerequisites(
+        startupReady: Bool,
+        powerReady: Bool,
+        servicesReady: Bool,
+        home: Bool
+    )
+        -> [DesktopSettingsPrerequisite] {
+        let entries: [(DesktopSettingsPrerequisite, Bool)] = [(.startup, startupReady)] + (home ? [
+            (.power, powerReady),
+            (.services, servicesReady),
+        ] : [])
+        return entries.filter { !$0.1 }.map(\.0) + entries.filter(\.1).map(\.0)
+    }
+
+    private var currentPrerequisiteOrder: [DesktopSettingsPrerequisite] {
+        Self.orderedPrerequisites(
+            startupReady: store.applicationInstallationCurrent && store.automaticStartup.ready,
+            powerReady: store.serverPower.ready,
+            servicesReady: store.homeServices.storage == .ready && store.homeServices.route == .ready,
+            home: store.state.mode == "home"
+        )
+    }
+
+    var body: some View {
+        @Bindable var store = store
+        VStack(spacing: 0) {
+            TabView(selection: $store.settingsTab) {
+                Form {
+                    ForEach(prerequisiteOrder.isEmpty ? currentPrerequisiteOrder : prerequisiteOrder, id: \.self) { section in
+                        prerequisite(section)
+                    }
+                    Section {
+                        DesktopAppearancePicker()
+                    }
+                    Section("Your library") {
+                        LabeledContent("Connection", value: store.state.statusLabel)
+                        if let name = store.state.homeName { LabeledContent("Library server", value: name) }
+                        if store.state.encrypted == true { Label(
+                            store.state
+                                .mode == "joined" ? "This Mac and your library use encrypted storage" :
+                                "Your library on this Mac uses encrypted storage",
+                            systemImage: "lock.shield"
+                        ) }
+                    }
+                    if store.state.mode == "joined", let nearby = store.state.nearby {
+                        DesktopNearbyConnectionView(
+                            status: DesktopNearbyGatewayHints.State(rawValue: nearby) ?? .unavailable,
+                            connected: store.state.canOpenLibrary,
+                            busy: store.busy,
+                            retry: { store.command("status") }
+                        )
+                    }
+                    Section("Protection and collection access") {
+                        Button("Access on this Mac…") { store.accessFocus = nil
+                            store.presentAccess = true
+                            openWindow(id: "main", value: DesktopWindowIdentity.main)
+                        }
+                        Button("Recovery protection…") {
+                            store.recoveryStatus = nil
+                            store.recoveryDraft = nil
+                            store.recoverySaved = false
+                            store.presentRecovery = true
+                            openWindow(id: "main", value: DesktopWindowIdentity.main)
+                        }.disabled(store.busy)
+                    }
+                    Section("Maintenance") {
+                        Text("Stopping or removing Omnesis is separate from protecting your library or choosing what it may collect.")
+                            .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
+                        Button("Stop Omnesis on this Mac", role: .destructive) { showStopConfirmation = true }
+                        Button("Remove Omnesis from this Mac…", role: .destructive) {
+                            store.removalPlan = nil
+                            store.removalOutcome = nil
+                            store.presentRemoval = true
+                            openWindow(id: "main", value: DesktopWindowIdentity.main)
+                        }.disabled(store.busy)
+                    }
+                }.formStyle(.grouped).frame(maxWidth: DesktopDesignTokens.Layout.formWidth).frame(maxWidth: .infinity)
+                    .omnesisTheme().onAppear { prerequisiteOrder = currentPrerequisiteOrder }
+                    .onChange(of: store.state.mode) { prerequisiteOrder = currentPrerequisiteOrder }.tabItem { Label(
+                        "General",
+                        systemImage: "gearshape"
+                    ) }.tag("general")
+                DesktopModelsView(context: store.apiContext).id(store.apiContextEpoch).tabItem { Label("AI", systemImage: "sparkles") }
+                    .tag("ai")
+                DesktopBackupsView(context: store.apiContext).id(store.apiContextEpoch).tabItem { Label(
+                    "Backups",
+                    systemImage: "externaldrive"
+                ) }.tag("backups")
+                DesktopMemoryView(context: store.apiContext).id(store.apiContextEpoch)
+                    .tabItem { Label("Memory", systemImage: "memorychip") }.tag("memory")
+                DesktopUpdatesView().tabItem { Label("Updates", systemImage: "arrow.down.circle") }.tag("updates")
+                DesktopStorageView(context: store.apiContext).id(store.apiContextEpoch).tabItem { Label(
+                    "Storage",
+                    systemImage: "internaldrive"
+                ) }.tag("storage")
+                Form {
+                    Text(
+                        "Your library is stored on your chosen server. The connection service carries encrypted traffic between your devices."
+                    )
+                    Text(
+                        "When you choose a cloud AI provider, information needed for your question is sent to that provider. You can use search without a cloud model."
+                    )
+                    .foregroundStyle(DesktopTheme.secondary)
+                    Button("Open the web portal") { store.openPortal() }
+                }.formStyle(.grouped).frame(maxWidth: DesktopDesignTokens.Layout.formWidth).frame(maxWidth: .infinity)
+                    .omnesisTheme().tabItem { Label("Privacy", systemImage: "hand.raised") }.tag("privacy")
+            }.padding(DesktopDesignTokens.Space.small)
+        }.frame(minWidth: 640, minHeight: 500).omnesisTheme().omnesisWindowChrome()
+            .onChange(of: store.settingsTab) { if store.settingsTab == "general" { prerequisiteOrder = currentPrerequisiteOrder } }
+            .confirmationDialog("Stop Omnesis on this Mac?", isPresented: $showStopConfirmation) {
+                Button("Stop Omnesis", role: .destructive) { store.command("stop") }
+            } message: {
+                Text(
+                    "Your information stays on disk. If this Mac keeps your library, your other devices cannot use it until Omnesis starts again."
+                )
+            }
+    }
+
+    @ViewBuilder
+    private func prerequisite(_ section: DesktopSettingsPrerequisite) -> some View {
+        switch section {
+        case .startup:
+            Section {
+                DesktopStartupPrerequisiteView()
+                Text(
+                    "Closing a window leaves Omnesis open. Collection still needs source access and a working background connection. Automatic startup starts Omnesis at sign-in; it does not prevent sleep."
+                )
+                .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
+            } header: { Text("Launch at sign-in · Required").accessibilityIdentifier("settings-prerequisite-startup") }
+        case .power:
+            Section {
+                DesktopMacServerPrerequisite(
+                    flow: store.serverPower,
+                    primaryAction: DesktopSetupRepair.first(in: store) == .power,
+                    compactReady: true,
+                    compactChecking: true
+                )
+            } header: { Text("Library Mac power · Required").accessibilityIdentifier("settings-prerequisite-power") }
+        case .services:
+            Section {
+                DesktopHomeServicePrerequisites(compactReady: true)
+            } header: { Text("Library storage and connection · Required").accessibilityIdentifier("settings-prerequisite-services") }
+        }
+    }
+}
+
+struct DesktopModelsView: View {
+    let context: DesktopAPIContext?
+    @Environment(DesktopStore.self) private var store
+    @State private var login: CodexLoginFlow?
+    @State private var error: String?
+    @State private var loading = false
+    @State private var provider = ""
+    @State private var apiKey = ""
+    @State private var selectedModel = ""
+    @State private var overview: ModelsOverview?
+    @State private var credentialEntries: [ModelCredentialEntry] = []
+    @State private var refreshGeneration = UUID()
+    @State private var confirmingSignOut = false
+    var loadModels = true
+    init(initialOverview: ModelsOverview? = nil, loadModels: Bool = true, context: DesktopAPIContext? = nil) {
+        self.context = context
+        _overview = State(initialValue: initialOverview)
+        self.loadModels = loadModels
+    }
+
+    var body: some View {
+        Form {
+            Section("Choose how Omnesis answers") {
+                Text("Start with an AI provider you already use. You can skip this and keep searching your library.")
+                Text(
+                    "A model running on your library server keeps its work there. A cloud model receives the information needed for each answer. Provider API keys can incur usage charges; check your provider’s pricing before connecting."
+                )
+                .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
+                if store.reviewModelsAfterRestore {
+                    Text("After restoring, your saved connections stay available but no model is used until you choose it below.")
+                        .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
+                }
+            }
+            Button("Refresh model connections") { context?.run { _ in await refreshModels() } }.disabled(loading || store.api == nil)
+            if let overview, let context, context.isCurrent {
+                if store.reviewModelsAfterRestore || overview.assignmentDisplays.values.contains(where: \.configured)
+                    || overview.capabilities.contains(where: { !DesktopModelSelection.choices(for: $0.role, overview: overview).isEmpty }) {
+                    DesktopModelRolesView(overview: overview, context: context, updated: {
+                        guard context.isCurrent else { return }
+                        refreshGeneration = UUID()
+                        store.observeModelOverview($0)
+                        self.overview = $0
+                    }, reviewingRestoredLibrary: store.reviewModelsAfterRestore)
+                }
+                DesktopModelCredentialsView(entries: credentialEntries, context: context) { await refreshModels() }
+            }
+            if overview?.inference.codex != nil || login != nil {
+                Section("ChatGPT sign-in") {
+                    Text(
+                        "Your chosen provider receives the information needed to answer your questions. Local search keeps working if you skip this step."
+                    )
+                    .foregroundStyle(DesktopTheme.secondary)
+                    if overview?.inference.codex?.runtime?.supported == true {
+                        if overview?.inference.codex?.loggedIn != true {
+                            Button("Sign in with ChatGPT") { context?.run { _ in await startLogin() } }
+                                .buttonStyle(DesktopButtonStyle(primary: true)).disabled(loading)
+                        }
+                        if overview?.inference.codex?.loggedIn == true {
+                            Button("Sign out of ChatGPT…") { confirmingSignOut = true }.disabled(loading)
+                        }
+                    }
+                    if let status = overview?.inference.codex, status.status != "ok", let reason = status.reason {
+                        Text(reason).font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
+                    }
+                    if let login {
+                        if let code = login
+                            .userCode { Text(code).font(DesktopDesignTokens.Typography.pageTitle.monospaced()).textSelection(.enabled) }
+                        if let link = login.verificationUri,
+                           let url = URL(string: link) { Button("Open sign-in page") { store.openBrowser(url) } }
+                        Text(login.reason ?? login.status).foregroundStyle(DesktopTheme.secondary)
+                        Button("Check sign-in") { context?.run { _ in await checkLogin() } }
+                        Button("Cancel sign-in") { context?.run { scope in
+                            _ = try? await scope.perform { try await $0.admin.cancelCodexLogin() }
+                            if scope.isCurrent { self.login = nil }
+                        } }
+                    }
+                }
+            }
+            Section("Use a provider key") {
+                Text(
+                    "Choose the provider whose API key you have, then a chat model listed in that provider’s dashboard. Your ChatGPT subscription and provider API billing can be separate. You can change the model later."
+                )
+                .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
+                Picker("Provider", selection: $provider) {
+                    Text("Choose a provider").tag("")
+                    ForEach((overview?.presets ?? []).filter { $0.defaultUrl != nil }, id: \.id) { preset in
+                        Text(preset.name).tag(preset.id)
+                    }
+                }
+                Text(
+                    "Connecting allows models you select outside your library server to receive information for their work, including any other cloud models you have already selected."
+                )
+                .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
+                SecureField("API key", text: $apiKey)
+                Picker("Model", selection: $selectedModel) {
+                    Text("Choose a model").tag("")
+                    ForEach(overview?.presets.first(where: { $0.id == provider })?.knownModels ?? [], id: \.self) { model in
+                        Text(model).tag(model)
+                    }
+                }
+                Button("Connect provider") { context?.run { _ in await saveProvider() } }
+                    .buttonStyle(DesktopButtonStyle(primary: true))
+                    .disabled(provider.isEmpty || apiKey.isEmpty || selectedModel.isEmpty || loading)
+            }
+            if let error { Text(error).foregroundStyle(DesktopTheme.danger) }
+            if loading { ProgressView("Updating AI settings…") }
+        }.formStyle(.grouped).frame(maxWidth: DesktopDesignTokens.Layout.formWidth).frame(maxWidth: .infinity)
+            .omnesisTheme()
+            .task(id: context?.id) { if loadModels { await refreshModels() } }
+            .onDisappear { apiKey = ""
+                login = nil
+            }
+            .confirmationDialog("Sign out of ChatGPT?", isPresented: $confirmingSignOut) {
+                Button("Sign out of ChatGPT", role: .destructive) { context?.run { _ in await signOut() } }
+            } message: {
+                Text(
+                    "This removes Omnesis’s ChatGPT sign-in and its model assignments. Running Omnesis ChatGPT tasks finish before the sign-in is removed. Your separate Codex app or terminal sign-in is not changed."
+                )
+            }
+    }
+
+    private func refreshModels() async {
+        let generation = UUID()
+        refreshGeneration = generation
+        guard let context, context.isCurrent else {
+            overview = nil
+            credentialEntries = []
+            login = nil
+            return
+        }
+        do {
+            async let models = context.perform { try await $0.admin.modelOverview() }
+            async let credentials = context.perform { try await $0.admin.listModelCredentials() }
+            let result = try await (models, credentials)
+            guard !Task.isCancelled, refreshGeneration == generation, context.isCurrent else { return }
+            overview = result.0
+            store.observeModelOverview(result.0)
+            credentialEntries = result.1
+            error = nil
+        } catch is CancellationError { } catch {
+            guard refreshGeneration == generation, context.isCurrent else { return }
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func startLogin() async {
+        loading = true
+        defer { loading = false }
+        do { guard let context else { return }
+            login = try await context.perform { try await $0.admin.startCodexLogin() }
+        } catch is CancellationError {} catch { self.error = error.localizedDescription }
+    }
+
+    private func signOut() async {
+        guard let context else { return }
+        loading = true
+        defer { loading = false }
+        do {
+            _ = try await context.perform { try await $0.admin.removeCodexBackend() }
+            guard context.isCurrent else { return }
+            login = nil
+            await refreshModels()
+        } catch {
+            self.error = "Sign-out could not be confirmed. Refresh model connections before trying again. \(error.localizedDescription)"
+        }
+    }
+
+    private func checkLogin() async {
+        do {
+            guard let context else { return }
+            login = try await context.perform { try await $0.admin.getCodexLogin() }
+            if login?.status == "complete" {
+                let status = try await context.perform { try await $0.admin.refreshCodexBackend() }
+                guard let model = status.modelDetails?.first(where: { $0.recommended == true })?.id ?? status.models.first else {
+                    throw DesktopAPIError.message("Sign-in finished, but no AI model is available for this account yet.")
+                }
+                try await context.mutate("POST", "admin/inference/codex/agent", body: ["model": model])
+                login = nil
+                await refreshModels()
+            }
+        } catch { self.error = error.localizedDescription }
+    }
+
+    private func saveProvider() async {
+        guard let context, context.isCurrent, let preset = overview?.presets.first(where: { $0.id == provider }),
+              let providerURL = preset.defaultUrl else { return }
+        loading = true
+        defer { loading = false }
+        do {
+            try await context.mutate("PATCH", "admin/config", body: ["inference": [
+                "allowRemoteInference": true,
+                "backends": [preset.id: [
+                    "type": "http",
+                    "url": providerURL,
+                    "preset": preset.id,
+                    "apiKey": apiKey,
+                    "apiPathPrefix": preset.apiPathPrefix ?? "/v1",
+                ]],
+                "assignments": ["agent": "\(preset.id)/\(selectedModel)"],
+            ]])
+            apiKey = ""
+            error = nil
+            await refreshModels()
+        } catch { self.error = error.localizedDescription }
+    }
+}
+
+#Preview("Settings · Light") {
+    DesktopSettingsView().environment(DesktopStore.preview()).environment(\.desktopAppearanceOverride, .light)
+        .frame(width: 720, height: 640)
+}
+
+#Preview("Settings · Dark") {
+    DesktopSettingsView().environment(DesktopStore.preview()).environment(\.desktopAppearanceOverride, .dark)
+        .frame(width: 720, height: 640)
+}
+
+#Preview("Answer connections · Light") {
+    DesktopModelsView(loadModels: false).environment(DesktopStore.preview()).environment(\.desktopAppearanceOverride, .light)
+        .frame(width: 720, height: 640)
+}
+
+#Preview("Answer connections · Dark") {
+    DesktopModelsView(loadModels: false).environment(DesktopStore.preview()).environment(\.desktopAppearanceOverride, .dark)
+        .frame(width: 720, height: 640)
+}

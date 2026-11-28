@@ -347,6 +347,22 @@ describe("resolveCollectorToken", () => {
     });
   });
 
+  test("explicit collector restart never self-pairs a refused credential with the bootstrap token", async () => {
+    writeCollectorTokenFile("omn_saved", dir);
+    recordAuthenticated("omn_saved");
+    process.env.OMNESIS_TOKEN = "omn_fictional_admin";
+    const requests: string[] = [];
+    const replies = answer({ config: 401 });
+    globalThis.fetch = async (input, init) => {
+      requests.push(String(input));
+      return replies(input, init);
+    };
+    expect(await resolveCollectorToken(GATEWAY, dir, { allowSelfPair: false })).toEqual({
+      outcome: "needs-pairing",
+    });
+    expect(requests.every((url) => !url.includes("/admin/devices"))).toBe(true);
+  });
+
   test("keeps a saved token the gateway still accepts, and records that it worked", async () => {
     writeCollectorTokenFile("omn_saved", dir);
     globalThis.fetch = answer({ config: 200 });

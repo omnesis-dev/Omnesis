@@ -55,6 +55,11 @@ export class DeviceService {
     return listDevices(this.db);
   }
 
+  requiresEncryptedStorage(auth: RequestIdentity): boolean {
+    const id = auth.deviceId ?? (auth.tokenId ? deviceIdForToken(this.db, auth.tokenId) : null);
+    return id !== null && getDevice(this.db, id)?.capabilities.requiresEncryptedStorage === true;
+  }
+
   tokenIsActive(id: TokenId, deviceId: DeviceId): boolean {
     return isDeviceTokenActive(this.db, id, deviceId);
   }

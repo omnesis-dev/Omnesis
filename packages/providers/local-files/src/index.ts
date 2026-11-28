@@ -13,7 +13,10 @@ import {
 } from "@omnesis/core";
 import {
   defineSource,
+  isReadAccessDenied,
+  expandHostPath,
   probeTreeReadAccess,
+  probeRootReadAccess,
   syncPage,
   SnapshotEnumeration,
   config as configSchema,
@@ -93,6 +96,7 @@ function rootRefusal(path: string, label: string): string | null {
 }
 
 interface ScanResult {
+  permissionDenied?: true;
   files: LocalFileEntry[];
   /**
    * Absolute paths of files that are present but were not indexed this cycle:
@@ -116,6 +120,7 @@ interface ScanResult {
 }
 
 interface WalkState {
+  permissionDenied?: true;
   files: LocalFileEntry[];
   placeholders: string[];
   unsafePaths: string[];
@@ -177,7 +182,8 @@ function walkDir(
   let dirents;
   try {
     dirents = readdirSync(dir, { withFileTypes: true });
-  } catch {
+  } catch (error) {
+    if (isReadAccessDenied(error)) state.permissionDenied = true;
     state.unreadable += 1;
     state.rootFailure = `Unreadable directory ${displayPath(dir)}`;
     return;
@@ -214,7 +220,8 @@ function walkDir(
       let resolvedTarget: string;
       try {
         resolvedTarget = realpathSync(fullPath);
-      } catch {
+      } catch (error) {
+        if (isReadAccessDenied(error)) state.permissionDenied = true;
         countSkip(state, "dangling-symlink");
         continue;
       }
@@ -227,7 +234,8 @@ function walkDir(
         const target = statSync(resolvedTarget);
         isDir = target.isDirectory();
         isFile = target.isFile();
-      } catch {
+      } catch (error) {
+        if (isReadAccessDenied(error)) state.permissionDenied = true;
         countSkip(state, "dangling-symlink");
         continue;
       }
@@ -245,7 +253,8 @@ function walkDir(
       let resolved: string;
       try {
         resolved = realpathSync(fullPath);
-      } catch {
+      } catch (error) {
+        if (isReadAccessDenied(error)) state.permissionDenied = true;
         countSkip(state, "dangling-symlink");
         continue;
       }
@@ -275,7 +284,8 @@ function walkDir(
           // Recorded under the name the file has when its bytes come back,
           // which is the name everything this source stored is keyed on.
           state.placeholders.push(join(realpathSync(dir), icloudPlaceholderTarget(entry.name)));
-        } catch {
+        } catch (error) {
+          if (isReadAccessDenied(error)) state.permissionDenied = true;
           countSkip(state, "dangling-symlink");
         }
         continue;
@@ -296,7 +306,8 @@ function walkDir(
       let resolvedPath: string;
       try {
         resolvedPath = realpathSync(fullPath);
-      } catch {
+      } catch (error) {
+        if (isReadAccessDenied(error)) state.permissionDenied = true;
         countSkip(state, "dangling-symlink");
         continue;
       }
@@ -316,7 +327,8 @@ function walkDir(
         stat = statSync(resolvedPath);
         if (process.platform === "win32")
           fileIdentity = exactFileIdentity(statSync(resolvedPath, { bigint: true }));
-      } catch {
+      } catch (error) {
+        if (isReadAccessDenied(error)) state.permissionDenied = true;
         // There, and momentarily unreadable — a permission that changed, an
         // I/O error. Carried as present so a transient failure cannot be
         // mistaken for the file being gone.
@@ -417,6 +429,41 @@ export default defineSource({
   name: "Local Files",
   description: "Files on this machine — your documents, joined to what arrived by mail and cloud",
   provider: { id: "local-files", name: "Local Files" },
+  permissionRequirements: [
+    {
+      id: "selected-folders",
+      kind: "selected-folder",
+      summary: "Allow access to the selected folders",
+      scope: "Selected local source roots",
+      blocking: true,
+      actions: [{ kind: "choose-folder" }, { kind: "retry-access" }],
+    },
+  ],
+  async probePermissionAccess({ params, signal }) {
+    if (!params.roots) return { status: "unavailable" };
+    let selected: unknown;
+    try {
+      selected = params.roots.trim().startsWith("[")
+        ? JSON.parse(params.roots)
+        : params.roots
+            .split("\n")
+            .map((value) => value.trim())
+            .filter(Boolean);
+    } catch {
+      return { status: "unavailable" };
+    }
+    if (
+      !Array.isArray(selected) ||
+      selected.length === 0 ||
+      selected.length > 32 ||
+      !selected.every((value) => typeof value === "string" && value.length > 0)
+    )
+      return { status: "unavailable" };
+    return probeRootReadAccess({
+      signal,
+      roots: selected.map((path) => ({ path: expandHostPath(path) })),
+    });
+  },
   authType: "local",
   unitName: "files",
   singleInstance: true,
@@ -608,7 +655,8 @@ export default defineSource({
             continue;
           }
           visited.add(canonicalRoot);
-        } catch {
+        } catch (error) {
+          if (isReadAccessDenied(error)) state.permissionDenied = true;
           gaps.set(root, `Root unreadable: ${displayPath(root)}`);
           continue;
         }
@@ -621,11 +669,14 @@ export default defineSource({
         placeholders: [...state.placeholders, ...state.presentButUnread],
         unsafePaths: state.unsafePaths,
         gaps,
+        ...(state.permissionDenied ? { permissionDenied: true as const } : {}),
         stats: { skipped: state.skipped, unreadable: state.unreadable },
       };
     }
 
     return {
+      probePermissionAccess: ({ signal }) =>
+        probeRootReadAccess({ signal, roots: roots.map((path) => ({ path })) }),
       probeReadAccess: ({ signal }) =>
         probeTreeReadAccess({
           signal,
@@ -644,6 +695,7 @@ export default defineSource({
         const isBootstrap = !cursor;
 
         const scan = scanRoots();
+        let permissionDenied = scan.permissionDenied === true;
         // The cutoff decides what is worth reading. It does not decide what is
         // on the disk, so it is applied to the queue and not to the scan: a
         // file whose mtime moved below the window — restored from a backup,
@@ -811,6 +863,7 @@ export default defineSource({
               }
             }
           } catch (err) {
+            if (isReadAccessDenied(err)) permissionDenied = true;
             const root = rootOf(file.absolutePath);
             const previous = previousFileMap[file.absolutePath];
             if (root !== null && !previous) failedRoots.add(root);
@@ -1003,6 +1056,7 @@ export default defineSource({
         return syncPage(documents, updatedCursor, {
           hasMore,
           issues: hasMore ? undefined : issue ? [issue] : [],
+          ...(permissionDenied ? { permissionDenied: true as const } : {}),
           // The whole-source form when the read was complete; folder by folder
           // when it was not but some folders still read cleanly; and nothing
           // at all otherwise, which an empty claim list would state as if it

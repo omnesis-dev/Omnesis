@@ -545,6 +545,7 @@ export function toSourceParams(
   type: "string" | "path" | "select" | "secret";
   scope?: ConfigScope;
   required?: boolean;
+  mustExist?: "file" | "directory";
   placeholder?: string;
   help?: string;
   pattern?: string;
@@ -576,6 +577,7 @@ export function toSourceParams(
         return {
           ...base,
           type: "path" as const,
+          ...(field.mustExist ? { mustExist: field.mustExist } : {}),
           ...(field.provesLocalAvailabilityForAccount
             ? { provesLocalAvailabilityForAccount: field.provesLocalAvailabilityForAccount }
             : {}),

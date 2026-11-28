@@ -1,0 +1,122 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Adrien Conrath
+
+import AppKit
+import DesktopCore
+
+/// The registered login item owns only the desktop daemon. Runtime lifecycle
+/// and its single-instance lock remain in the portable desktop package.
+@MainActor
+final class BackgroundDelegate: NSObject, NSApplicationDelegate {
+    private var service: BackgroundService?
+    private var terminating = false
+    private var runtime: URL?
+    private var retirement: DesktopBackgroundDaemonProcess?
+    private var retirementPreparing = false
+    private var retirementIntent = DesktopBackgroundRetirementIntent()
+    private var retryCount = 0
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        let mainBundle = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        Task {
+            do {
+                let service = BackgroundService(application: mainBundle) { [weak self] location in self?.applicationMoved(to: location) }
+                self.service = service
+                try await service.prepare()
+                runtime = service.runtime
+                // The daemon remains independently supervised if opening presentation fails.
+                try? await BackgroundMainApplication.openIfNeeded(mainBundle)
+            } catch { NSApp.terminate(nil) }
+        }
+    }
+
+    @MainActor private func applicationMoved(to location: URL?) {
+        if let location {
+            guard let trash = try? FileManager.default.url(
+                for: .trashDirectory,
+                in: .userDomainMask,
+                appropriateFor: location,
+                create: false
+            ),
+                (try? DesktopBackgroundApplicationOrigin.canonicalTrashContains(location, trash: trash)) == true else {
+                handleLocation(inTrash: false)
+                return
+            }
+        }
+        handleLocation(inTrash: true)
+    }
+
+    private func handleLocation(inTrash: Bool) {
+        switch retirementIntent.observe(inTrash: inTrash) {
+        case .unchanged: return
+        case .retire:
+            service?.freezeStarts()
+            retireOwnedLibrary()
+        case .shutdown:
+            // A restored app uses a fresh helper on Retry; this frozen owner never reopens admission.
+            // The termination delegate joins its exact daemon, discovery and retirement owners first.
+            NSApp.terminate(nil)
+        }
+    }
+
+    private func retireOwnedLibrary() {
+        guard let intent = retirementIntent.ticket, !retirementPreparing, !terminating,
+              retirement == nil, let runtime else { return }
+        retirementPreparing = true
+        let generation = service?.retirementGeneration
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { retirementPreparing = false }
+            do {
+                let deadline = ContinuousClock.now.advanced(by: .seconds(80))
+                guard await service?.prepareRetirement(until: deadline) == .confirmed else {
+                    retryRetirement()
+                    return
+                }
+                guard !terminating, retirementIntent.permits(intent),
+                      let generation, service?.canLaunchRetirement(generation: generation) == true,
+                      ContinuousClock.now < deadline else { return }
+                let descriptor = try DesktopBackgroundDaemonAuthority.descriptor(
+                    profile: DesktopBackgroundManagedProfile.current(), epoch: runtime.lastPathComponent, activation: nil
+                )
+                let child = try DesktopBackgroundDaemonProcess.launchRetirement(runtime: runtime, descriptor: descriptor)
+                retirement = child
+                service?.registerRetirement(child)
+                let result = await child.waitForExit()
+                guard retirement === child else { return }
+                retirement = nil
+                service?.registerRetirement(nil)
+                if result.clean { if !terminating { NSApp.terminate(nil) } }
+                else { retryRetirement() }
+            } catch { retryRetirement() }
+        }
+    }
+
+    private func retryRetirement() {
+        guard retirementIntent.ticket != nil, !terminating, retryCount < 5 else { return }
+        retryCount += 1
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in self?.retireOwnedLibrary() }
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !terminating else { return .terminateLater }
+        terminating = true
+        Task { @MainActor [weak self] in
+            guard let self else { sender.reply(toApplicationShouldTerminate: false)
+                return
+            }
+            let deadline = ContinuousClock.now.advanced(by: .seconds(80))
+            let result = await service?.shutdown(until: deadline)
+            let confirmed = result == .confirmed
+            if !confirmed { terminating = false }
+            sender.reply(toApplicationShouldTerminate: confirmed)
+        }
+        return .terminateLater
+    }
+}
+
+let app = NSApplication.shared
+let delegate = MainActor.assumeIsolated { BackgroundDelegate() }
+app.delegate = delegate
+app.setActivationPolicy(.prohibited)
+app.run()

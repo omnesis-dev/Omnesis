@@ -18,8 +18,9 @@ import {
   type ExecFileException,
 } from "node:child_process";
 import { createRequire } from "node:module";
+import { randomUUID } from "node:crypto";
 import { chmod, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve, relative, isAbsolute, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 
@@ -30,12 +31,16 @@ import {
   execWindowsJob,
   readPackageVersion,
   atomicWriteFile,
+  codexKeyringAccount,
   type AgentContextAssessment,
   type AgentEvent,
   type Logger,
   type ToolResult,
+  type NodeCommandInvocation,
+  managedDesktopCatalogDiscoveryInvocation,
 } from "@omnesis/core";
 
+import { assertManagedDesktopProcessAuthority } from "@omnesis/core/node-command";
 import { readJsonRpcLines, encodeJsonRpcLine } from "./json-rpc-lines.js";
 import { markActivity } from "./activity.js";
 import { codexPoolAuthOwner, prepareCodexPrivateState } from "./codex-private-state.js";
@@ -53,7 +58,25 @@ import {
   wrapEvent,
 } from "./backend.js";
 import { CODEX_RUNTIME_COMPAT, isSupportedCodexCliVersion } from "./codex-compat.js";
+import {
+  assertNoManagedCodexAuthFile,
+  assertManagedCodexPolicy,
+  managedCodexArgs,
+  managedCodexAuth,
+} from "./codex-managed-auth.js";
+import {
+  prepareManagedCodexModelCatalog,
+  assertManagedCodexStaticCatalog,
+  type PreparedManagedCodexCatalog,
+  type ManagedCatalogPlatform,
+} from "./codex-managed-model-discovery.js";
+import { resolveManagedCodexNativeCommand } from "./codex-managed-native-command.js";
 import { CONTEXT_WINDOW_EXCEEDED_MESSAGE } from "./turn-outcome.js";
+import {
+  assertManagedCodexEffectiveFeatures,
+  assertManagedCodexWorkspace,
+  managedCodexThreadConfig,
+} from "./codex-managed-process.js";
 import type { ChatBackend, ToolCaller, ToolHandle, TurnInput } from "./backend.js";
 
 export { isSupportedCodexCliVersion } from "./codex-compat.js";
@@ -151,12 +174,20 @@ export interface CodexRuntimeProbe {
 export interface CodexAppServerRuntimeOptions {
   /** Dedicated Omnesis-owned CODEX_HOME. Never point this at the user's ~/.codex. */
   codexHome: string;
+  /** An isolated installer probe can never list selectable models or start a conversation. */
+  purpose?: "compatibility-probe";
+  /** Separate worker SQLite/log directory when the managed credential home is shared. */
+  stateHome?: string;
   /** Empty Omnesis-owned working directory handed to Codex as cwd. */
   workspaceDir?: string;
   /** Advanced override. When unset, Omnesis uses its pinned managed @openai/codex runtime. */
   command?: string;
   /** Pre-resolved gateway-owned managed runtime. Takes precedence over package resolution. */
   commandInfo?: CodexRuntimeCommandInfo;
+  /** Explicit OS adapter for fixtures; production resolves the pinned native asset directly. */
+  resolveManagedCommand?: (info: CodexRuntimeCommandInfo) => Promise<CodexRuntimeCommandInfo>;
+  /** Explicit native lock adapter for source fixtures; never read from environment. */
+  managedCatalogPlatform?: ManagedCatalogPlatform;
   args?: readonly string[];
   versionArgs?: readonly string[];
   startupTimeoutMs?: number;
@@ -226,9 +257,16 @@ function hasCodexCleanupFailure(error: unknown): error is { cleanupFailure: unkn
 export class CodexAppServerRuntime {
   readonly codexHome: string;
   readonly workspaceDir: string;
+  private readonly stateHome: string;
+  private readonly protocolOnly: boolean;
 
   private readonly commandOverride: string | undefined;
   private readonly configuredCommandInfo: CodexRuntimeCommandInfo | undefined;
+  private readonly resolveManagedCommand: typeof resolveManagedCodexNativeCommand;
+  private readonly managedCatalogPlatform: ManagedCatalogPlatform | undefined;
+  private managedCatalog: PreparedManagedCodexCatalog | undefined;
+  private managedPolicyProbe: Promise<void> | null = null;
+  private protocolProbe: Promise<void> | null = null;
   private readonly args: readonly string[];
   private readonly versionArgs: readonly string[];
   private readonly startupTimeoutMs: number;
@@ -246,13 +284,30 @@ export class CodexAppServerRuntime {
   private retiringClient: Promise<void> | undefined;
   private disposal: Promise<void> | undefined;
   private disposed = false;
+  private managedProcessVersion: string | undefined;
 
   constructor(opts: CodexAppServerRuntimeOptions) {
     this.codexHome = opts.codexHome;
+    this.protocolOnly = opts.purpose === "compatibility-probe";
+    if (
+      this.protocolOnly &&
+      (!opts.workspaceDir ||
+        basename(dirname(opts.codexHome)) !== ".omnesis-compat-probe" ||
+        basename(opts.codexHome) !== "home" ||
+        opts.workspaceDir !== join(dirname(opts.codexHome), "workspace"))
+    )
+      throw new Error("Compatibility probes require their isolated owned home and workspace");
     this.workspaceDir = opts.workspaceDir ?? join(opts.codexHome, DEFAULT_CODEX_WORKSPACE_DIRNAME);
     this.commandOverride = opts.command?.trim() || undefined;
     this.configuredCommandInfo = opts.commandInfo;
-    this.args = opts.args ?? DEFAULT_CODEX_ARGS;
+    this.resolveManagedCommand = opts.resolveManagedCommand ?? resolveManagedCodexNativeCommand;
+    this.managedCatalogPlatform = opts.managedCatalogPlatform;
+    this.stateHome = opts.stateHome ?? opts.codexHome;
+    this.args = managedCodexArgs(
+      opts.env ?? process.env,
+      opts.args ?? DEFAULT_CODEX_ARGS,
+      this.stateHome,
+    );
     this.versionArgs = opts.versionArgs ?? DEFAULT_CODEX_VERSION_ARGS;
     this.startupTimeoutMs = opts.startupTimeoutMs ?? 10_000;
     this.requestTimeoutMs = opts.requestTimeoutMs ?? 120_000;
@@ -267,16 +322,54 @@ export class CodexAppServerRuntime {
     if (this.cleanupFailure !== undefined) throw unconfirmedCodexCleanup(this.cleanupFailure);
   }
 
+  private assertManagedProfile(): void {
+    if (
+      !managedCodexAuth(this.env) ||
+      this.resolveManagedCommand !== resolveManagedCodexNativeCommand
+    )
+      return;
+    const configDir = this.env.OMNESIS_CONFIG_DIR,
+      instance = this.env.OMNESIS_SERVICE_INSTANCE,
+      secretService = this.env.OMNESIS_SECRET_SERVICE;
+    if (!configDir || !instance || !secretService)
+      throw new Error("Managed SDK startup requires its exact installation profile");
+    assertManagedDesktopProcessAuthority({ configDir, instance, secretService });
+    if (this.protocolOnly) {
+      const slot = relative(join(configDir, "codex-runtimes", "staging"), this.codexHome);
+      const parts = slot.split(sep);
+      if (
+        isAbsolute(slot) ||
+        parts.length !== 3 ||
+        !/^[a-zA-Z0-9_-]{1,128}$/u.test(parts[0] ?? "") ||
+        parts[1] !== ".omnesis-compat-probe" ||
+        parts[2] !== "home"
+      )
+        throw new Error(
+          "Managed SDK compatibility probes require this installation's staging slot",
+        );
+    } else if (this.codexHome !== join(configDir, "codex-home", instance))
+      throw new Error("Managed SDK credentials must remain in this installation's scoped home");
+    for (const path of [this.workspaceDir, this.stateHome]) {
+      const owned = relative(configDir, path);
+      if (!owned || isAbsolute(owned) || owned === ".." || owned.startsWith(`..${sep}`))
+        throw new Error(
+          "Managed SDK workspaces and diagnostics must remain inside this installation",
+        );
+    }
+  }
+
   async resolveCommandInfo(): Promise<CodexRuntimeCommandInfo> {
     this.assertCleanupConfirmed();
     if (this.retiringClient) await this.retiringClient.catch(() => {});
     this.assertCleanupConfirmed();
     if (!this.commandInfo) {
-      this.commandInfo =
+      this.assertManagedProfile();
+      const resolved =
         this.configuredCommandInfo ??
-        (await resolveCodexRuntimeCommand({
-          commandOverride: this.commandOverride,
-        }));
+        (await resolveCodexRuntimeCommand({ commandOverride: this.commandOverride }));
+      this.commandInfo = managedCodexAuth(this.env)
+        ? await this.resolveManagedCommand(resolved)
+        : resolved;
     }
     return this.commandInfo;
   }
@@ -301,7 +394,7 @@ export class CodexAppServerRuntime {
       return await assertSupportedCodexRuntime({
         command: commandInfo.command,
         args: this.versionArgs,
-        env: buildCodexEnv(this.env, this.codexHome),
+        env: buildCodexEnv(this.env, this.codexHome, process.platform, this.workspaceDir),
         timeoutMs,
       });
     } catch (error) {
@@ -311,6 +404,7 @@ export class CodexAppServerRuntime {
   }
 
   async listModels(timeoutMs = this.requestTimeoutMs): Promise<unknown[]> {
+    if (this.protocolOnly) throw new Error("Compatibility probes cannot supply selectable models");
     const client = await this.ensureClient();
     const models: unknown[] = [];
     let cursor: string | undefined;
@@ -338,6 +432,69 @@ export class CodexAppServerRuntime {
       if (!cursor) break;
     }
     return models;
+  }
+
+  /** Metadata-only compatibility probe. Its private client is never eligible for a conversation. */
+  probeProtocolModels(timeoutMs = this.startupTimeoutMs): Promise<void> {
+    if (this.protocolProbe) return this.protocolProbe;
+    const pending = this.runProtocolProbe(timeoutMs);
+    this.protocolProbe = pending;
+    return pending.finally(() => {
+      if (this.protocolProbe === pending) this.protocolProbe = null;
+    });
+  }
+
+  private async runProtocolProbe(timeoutMs: number): Promise<void> {
+    const client = await this.startClient(true);
+    let failure: unknown;
+    try {
+      const reply = await client.request(
+        "model/list",
+        { limit: 1, includeHidden: false },
+        timeoutMs,
+      );
+      if (!asRecord(reply) || !Array.isArray(asRecord(reply)?.data))
+        throw new Error("Codex model metadata compatibility could not be verified");
+    } catch (error) {
+      failure = error;
+    }
+    try {
+      await client.dispose();
+    } catch (error) {
+      this.cleanupFailure = error;
+      throw unconfirmedCodexCleanup(error, failure);
+    }
+    if (failure !== undefined) throw failure;
+  }
+
+  async verifyManagedCredentialPolicy(): Promise<void> {
+    if (!managedCodexAuth(this.env)) return;
+    if (this.managedPolicyProbe) return this.managedPolicyProbe;
+    const verify = async () => {
+      if (this.startingClient) await this.startingClient;
+      if (this.client && this.managedCatalog) {
+        assertManagedCodexPolicy(
+          await this.client.request("config/read", { includeLayers: true }, this.startupTimeoutMs),
+        );
+        return;
+      }
+      const client = await this.startClient(true);
+      try {
+        await client.dispose();
+      } catch (error) {
+        this.cleanupFailure = error;
+        throw unconfirmedCodexCleanup(error);
+      } finally {
+        if (this.client === client) this.client = null;
+      }
+    };
+    const pending = verify();
+    this.managedPolicyProbe = pending;
+    try {
+      await pending;
+    } finally {
+      if (this.managedPolicyProbe === pending) this.managedPolicyProbe = null;
+    }
   }
 
   async *runTurn(opts: {
@@ -371,6 +528,14 @@ export class CodexAppServerRuntime {
     let client: CodexJsonRpcClient;
     try {
       client = await this.ensureClient();
+      if (managedCodexAuth(this.env)) {
+        if (!this.managedCatalog) throw new Error("Managed model metadata is unavailable");
+        await assertManagedCodexStaticCatalog(
+          this.managedCatalog,
+          await client.request("config/read", { includeLayers: true }, this.requestTimeoutMs),
+          model,
+        );
+      }
     } catch (err) {
       const code = codexErrorCode(err);
       const message = friendlyCodexErrorMessage(err, this.codexHome);
@@ -463,9 +628,10 @@ export class CodexAppServerRuntime {
           personality: null,
           ephemeral: true,
           serviceName: "omnesis",
-          config: STRICT_CODEX_CONFIG_OBJECT,
-          // Present in the 0.142.x app-server runtime even though the generated
-          // TS schema omits it. Keep this as a narrow boundary object.
+          config: managedCodexAuth(this.env)
+            ? managedCodexThreadConfig(STRICT_CODEX_CONFIG_OBJECT, this.managedCatalog, model)
+            : STRICT_CODEX_CONFIG_OBJECT,
+          // Explicit dynamic tools keep execution in Omnesis's own handlers.
           dynamicTools: tools,
         },
         this.requestTimeoutMs,
@@ -475,6 +641,13 @@ export class CodexAppServerRuntime {
       threadId = parsedThreadId;
       state.threadId = threadId;
       this.activeTurn = state;
+      if (managedCodexAuth(this.env)) {
+        await assertManagedCodexEffectiveFeatures(
+          (params) => client.request("experimentalFeature/list", params, this.requestTimeoutMs),
+          threadId,
+          this.managedProcessVersion,
+        );
+      }
       // Cancelled while thread/start was in flight, with no active turn for the
       // abort to complete. Starting one now would only spend the model's time.
       if (signal?.aborted) abort();
@@ -585,6 +758,16 @@ export class CodexAppServerRuntime {
     const active = this.activeTurn;
     this.completeActiveTurn("canceled");
     const starting = this.startingClient;
+    try {
+      await Promise.allSettled([this.managedPolicyProbe, this.protocolProbe]).then(() => {
+        this.assertCleanupConfirmed();
+      });
+    } catch (error) {
+      // The probe reports its joined startup failure to its caller. Only uncertain
+      // physical cleanup is a reason to refuse generation retirement.
+      if (this.cleanupFailure !== undefined)
+        throw unconfirmedCodexCleanup(this.cleanupFailure, error);
+    }
     const client = this.client;
     this.client = null;
     await Promise.allSettled([...(active?.pendingTools ?? [])]);
@@ -647,6 +830,7 @@ export class CodexAppServerRuntime {
   }
 
   private async ensureClient(): Promise<CodexJsonRpcClient> {
+    if (this.managedPolicyProbe) await this.managedPolicyProbe;
     this.assertCleanupConfirmed();
     if (this.retiringClient) await this.retiringClient.catch(() => {});
     this.assertCleanupConfirmed();
@@ -669,18 +853,103 @@ export class CodexAppServerRuntime {
     }
   }
 
-  private async startClient(): Promise<CodexJsonRpcClient> {
+  private async startClient(policyOnly = false): Promise<CodexJsonRpcClient> {
+    if (this.disposed) throw new Error("Codex backend has been disposed");
+    if (this.protocolOnly && !policyOnly)
+      throw new Error("Compatibility probes cannot start conversations");
+    this.assertManagedProfile();
     const owner = codexPoolAuthOwner(this);
     if (process.platform === "win32" && owner) await prepareCodexPrivateState([owner.home]);
-    await ensureRuntimeDirs(this.codexHome, this.workspaceDir, owner?.path);
+    await ensureRuntimeDirs(this.codexHome, this.workspaceDir, owner?.path, this.env);
+    if (managedCodexAuth(this.env)) {
+      await assertManagedCodexWorkspace(this.workspaceDir);
+      codexKeyringAccount(this.stateHome);
+      await ensurePrivateDirectory(this.stateHome);
+      await assertNoManagedCodexAuthFile(this.env, [this.codexHome, this.stateHome]);
+    }
     const commandInfo = await this.resolveCommandInfo();
-    await this.probeCommandRuntime(commandInfo, this.startupTimeoutMs);
+    const probe = await this.probeCommandRuntime(commandInfo, this.startupTimeoutMs);
+    if (this.disposed) throw new Error("Codex backend has been disposed");
+    if (!managedCodexAuth(this.env))
+      return this.openClient(
+        { command: commandInfo.command, args: [...this.args] },
+        probe.version,
+        !policyOnly,
+      );
+    if (policyOnly) {
+      if (this.protocolOnly)
+        return this.openClient(
+          { command: commandInfo.command, args: [...this.args] },
+          probe.version,
+          false,
+        );
+      const invocation = (
+        this.managedCatalogPlatform?.invocation ?? managedDesktopCatalogDiscoveryInvocation
+      )(commandInfo.command, this.args, randomUUID());
+      return this.openClient(invocation, probe.version, false);
+    }
+    const configDir = this.env.OMNESIS_CONFIG_DIR,
+      instance = this.env.OMNESIS_SERVICE_INSTANCE,
+      secretService = this.env.OMNESIS_SECRET_SERVICE;
+    if (!configDir || !instance || !secretService || !probe.version)
+      throw new Error("Managed model discovery requires its exact profile and pinned runtime");
+    let catalog: PreparedManagedCodexCatalog;
+    try {
+      catalog = await prepareManagedCodexModelCatalog({
+        scope: { configDir, instance, secretService },
+        codexHome: this.codexHome,
+        stateHome: this.stateHome,
+        command: commandInfo.command,
+        args: this.args,
+        version: probe.version,
+        timeoutMs: this.startupTimeoutMs,
+        platform: this.managedCatalogPlatform,
+        open: (invocation) => this.openClient(invocation, probe.version, false),
+      });
+    } catch (error) {
+      if (hasCodexCleanupFailure(error)) {
+        this.cleanupFailure = error;
+        throw unconfirmedCodexCleanup(error);
+      }
+      throw error;
+    }
+    if (this.disposed) throw new Error("Codex backend has been disposed");
+    const client = await this.openClient(
+      {
+        command: commandInfo.command,
+        args: [...this.args, "-c", `model_catalog_json=${JSON.stringify(catalog.path)}`],
+      },
+      probe.version,
+    );
+    try {
+      await assertManagedCodexStaticCatalog(
+        catalog,
+        await client.request("config/read", { includeLayers: true }, this.startupTimeoutMs),
+      );
+      this.managedCatalog = catalog;
+      return client;
+    } catch (error) {
+      try {
+        await client.dispose();
+      } catch (cleanupError) {
+        this.cleanupFailure = cleanupError;
+        throw unconfirmedCodexCleanup(cleanupError, error);
+      }
+      if (this.client === client) this.client = null;
+      throw error;
+    }
+  }
 
+  private async openClient(
+    invocation: NodeCommandInvocation,
+    version: string | undefined,
+    activate = true,
+  ): Promise<CodexJsonRpcClient> {
     const client = new CodexJsonRpcClient({
-      command: commandInfo.command,
-      args: this.args,
+      command: invocation.command,
+      args: invocation.args,
       cwd: this.workspaceDir,
-      env: buildCodexEnv(this.env, this.codexHome),
+      env: buildCodexEnv(this.env, this.codexHome, process.platform, this.workspaceDir),
       requestTimeoutMs: this.requestTimeoutMs,
       log: this.log,
       onNotification: (method, params) => {
@@ -694,7 +963,7 @@ export class CodexAppServerRuntime {
       onExit: (code, sig, cleanupError) => this.handleClientExit(client, code, sig, cleanupError),
     });
     client.start();
-    this.client = client;
+    if (activate) this.client = client;
     try {
       await client.request(
         "initialize",
@@ -722,6 +991,17 @@ export class CodexAppServerRuntime {
         this.startupTimeoutMs,
       );
       client.notify("initialized", {});
+      if (managedCodexAuth(this.env)) {
+        assertManagedCodexPolicy(
+          await client.request("config/read", { includeLayers: true }, this.startupTimeoutMs),
+        );
+        await assertManagedCodexEffectiveFeatures(
+          (params) => client.request("experimentalFeature/list", params, this.startupTimeoutMs),
+          undefined,
+          version,
+        );
+        this.managedProcessVersion = version;
+      }
     } catch (err) {
       try {
         await client.dispose();
@@ -1263,8 +1543,16 @@ export function convertToolsToCodexDynamicTools(
   }));
 }
 
-export async function ensureCodexHome(codexHome: string): Promise<void> {
-  await ensureCodexRuntimeDirs(codexHome, join(codexHome, DEFAULT_CODEX_WORKSPACE_DIRNAME));
+export async function ensureCodexHome(
+  codexHome: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
+  await ensureRuntimeDirs(
+    codexHome,
+    join(codexHome, DEFAULT_CODEX_WORKSPACE_DIRNAME),
+    undefined,
+    env,
+  );
 }
 
 export async function ensureCodexRuntimeDirs(
@@ -1278,13 +1566,22 @@ async function ensureRuntimeDirs(
   codexHome: string,
   workspaceDir: string,
   sharedAuthPath?: string,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
+  if (managedCodexAuth(env)) {
+    codexKeyringAccount(codexHome);
+    codexKeyringAccount(workspaceDir);
+  }
+  const config = managedCodexAuth(env)
+    ? 'cli_auth_credentials_store = "keyring"\nhistory.persistence = "none"\nanalytics.enabled = false\notel.log_user_prompt = false\n' +
+      STRICT_CODEX_CONFIG_TOML
+    : STRICT_CODEX_CONFIG_TOML;
   if (process.platform === "win32") {
     await prepareCodexPrivateState(
       [codexHome, workspaceDir],
       sharedAuthPath ? { home: codexHome, target: sharedAuthPath } : undefined,
     );
-    await atomicWriteFile(join(codexHome, "config.toml"), STRICT_CODEX_CONFIG_TOML, {
+    await atomicWriteFile(join(codexHome, "config.toml"), config, {
       mode: 0o600,
     });
     return;
@@ -1293,6 +1590,10 @@ async function ensureRuntimeDirs(
   await ensurePrivateDirectory(workspaceDir);
   const configPath = join(codexHome, "config.toml");
   await rejectSymlinkIfPresent(configPath);
+  if (managedCodexAuth(env)) {
+    await atomicWriteFile(configPath, config, { mode: 0o600 });
+    return;
+  }
   await writeFile(configPath, STRICT_CODEX_CONFIG_TOML, { encoding: "utf8", mode: 0o600 });
   await chmod(configPath, 0o600);
 }
@@ -1301,6 +1602,7 @@ export function buildCodexEnv(
   env: NodeJS.ProcessEnv,
   codexHome: string,
   platform: NodeJS.Platform = process.platform,
+  workspace: string = join(codexHome, DEFAULT_CODEX_WORKSPACE_DIRNAME),
 ): NodeJS.ProcessEnv {
   const childEnv: NodeJS.ProcessEnv = { CODEX_HOME: codexHome };
   for (const key of SAFE_CODEX_ENV_KEYS) {
@@ -1316,6 +1618,21 @@ export function buildCodexEnv(
     if (SAFE_CODEX_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))) {
       childEnv[key] = value;
     }
+  }
+  // Direct CLI login otherwise installs its own plaintext diagnostic file logger.
+  // This controls that supported logger; the separate SQLite sink is audited independently.
+  if (managedCodexAuth(env)) {
+    for (const key of ["SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS"])
+      delete childEnv[key];
+    Object.assign(childEnv, {
+      RUST_LOG: "off",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: platform === "win32" ? "NUL" : "/dev/null",
+      GIT_CONFIG_SYSTEM: platform === "win32" ? "NUL" : "/dev/null",
+      GIT_CONFIG_COUNT: "0",
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_CEILING_DIRECTORIES: workspace,
+    });
   }
   return childEnv;
 }

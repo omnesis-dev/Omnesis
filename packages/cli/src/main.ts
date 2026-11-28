@@ -40,7 +40,7 @@ const rawArgs = process.argv.slice(2).filter((a) => a !== "--");
 // Daemon subcommands host long-lived processes that register their own
 // SIGINT/SIGTERM graceful-shutdown handlers — runCli's default
 // exit(130)-on-SIGINT would preempt them, so it's disabled for these.
-const isDaemonInvocation = rawArgs[0] === "gateway" || rawArgs[0] === "collector";
+const isDaemonInvocation = ["gateway", "collector", "desktop"].includes(rawArgs[0] ?? "");
 const isUpdateInvocation = rawArgs[0] === "update";
 
 // Commands that never call the default gateway (or do so only best-effort)

@@ -2207,11 +2207,9 @@ export function pairInstructionLines(
 }
 
 /**
- * The store listing of the browser extension. The portal's Sources card and
- * pairing dialog link the same address from
- * `packages/gateway/portal/js/lib/extension-links.js`; the two are asserted
- * equal by the CLI's tests, since the portal's copy is plain JS the CLI
- * cannot import.
+ * The store listing of the browser extension. The provider-owned source
+ * installation guide exposes the same address through the source registry;
+ * the CLI's tests keep the two entry points aligned.
  */
 export const CHROME_WEB_STORE_URL =
   "https://chromewebstore.google.com/detail/omnesis-browser-capture/akojepkcdbncipjdonhnnfmjacknplmn";

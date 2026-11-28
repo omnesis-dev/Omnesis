@@ -3179,3 +3179,21 @@ describe("explicit experimental speech-to-speech assignment", () => {
     expect(reg.resolve("speech-to-speech")).toMatchObject({ kind: "unresolved" });
   });
 });
+
+it("a managed desktop rejects unisolated subscription assignments before backend creation", () => {
+  const previous = process.env.OMNESIS_DESKTOP_MANAGED;
+  process.env.OMNESIS_DESKTOP_MANAGED = "1";
+  try {
+    const registry = makeRegistry();
+    delete process.env.OMNESIS_DESKTOP_MANAGED;
+    registry.loadConfig(configWithAssignments({ agent: "claude-code/sonnet" }));
+    expect(registry.resolve("agent")).toMatchObject({
+      kind: "claude-code",
+      available: false,
+      reason: expect.stringContaining("Anthropic API key"),
+    });
+  } finally {
+    if (previous === undefined) delete process.env.OMNESIS_DESKTOP_MANAGED;
+    else process.env.OMNESIS_DESKTOP_MANAGED = previous;
+  }
+});

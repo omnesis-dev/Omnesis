@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { html } from "htm/preact";
+import { RecordingRestoreReview } from "../components/recording-restore-review.js";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { getStorage, setStoragePolicy, refreshStorage, cancelStorageCleanup } from "../api.js";
 import { sourceIcon, sourceLabel } from "../lib/format.js";
@@ -211,6 +212,7 @@ export function StorageView({ onChange } = {}) {
   const policies = new Map(snapshot?.retention?.map((policy) => [policy.sourceId, policy.maxAgeDays]));
   return html`<section class="storage-view" aria-labelledby="storage-heading">
     <header class="storage-header"><h2 id="storage-heading">Storage</h2></header>
+    <${RecordingRestoreReview} variant="settings" />
     ${error && html`<p class="storage-alert" role="alert">${error} ${html`<button class="btn-secondary" disabled=${busy} onClick=${() => snapshot ? action(refreshMeasurements) : setRetry((n) => n + 1)}>Try again</button>`}</p>`}
     ${message && html`<div class="toast storage-toast" role="status">
       <span>${message}${measuring ? " Updating storage charts…" : ""}</span>

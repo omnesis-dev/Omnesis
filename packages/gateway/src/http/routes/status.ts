@@ -56,6 +56,7 @@ type Db = Database.Database;
 const log = createLogger("gateway:http").child("routes:status");
 
 export interface StatusRoutesDeps {
+  storageProtection?: import("../../storage-protection.js").GatewayStorageProtection;
   /** Whether this installation has the gateway's own Tailscale device (its helper program). */
   tailscaleEmbed?: boolean;
   getLabStatus?: () => LabFlags;
@@ -206,7 +207,9 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
   // plugin reads it to decide whether to register them. It is public for the
   // same reason `experimental` is — a harness asks before it holds a token.
   app.get("/health", scope.public(), (c) => {
+    c.header("Cache-Control", "no-store");
     return c.json({
+      ...(deps.storageProtection ? { storageProtection: deps.storageProtection } : {}),
       status: "ok",
       version: GATEWAY_VERSION,
       experimental: experimentalVisible(),

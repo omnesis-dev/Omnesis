@@ -7,6 +7,8 @@ import { createLogger, toErrorMessage } from "@omnesis/core";
 import {
   defineSource,
   probeFileReadAccess,
+  listReadAccessDirectory,
+  expandHostPath,
   syncPage,
   config as configSchema,
   SnapshotEnumeration,
@@ -133,6 +135,41 @@ export default defineSource({
   name: "Chrome Bookmarks",
   description: "Bookmarks from Google Chrome",
   provider: { id: "chrome", name: "Google Chrome" },
+  permissionRequirements: [
+    {
+      id: "bookmark-stores",
+      kind: "protected-files",
+      summary: "Allow access to selected bookmark stores",
+      scope: "Selected bookmark stores",
+      blocking: true,
+      actions: [
+        { kind: "open-system-settings", category: "privacy-security" },
+        { kind: "retry-access" },
+        { kind: "restart-collector" },
+      ],
+    },
+  ],
+  async probePermissionAccess({ params, signal }) {
+    const base = params.basePath ? expandHostPath(params.basePath) : getChromeBaseDir();
+    if (!base) return { status: "unavailable" };
+    if (params.profileDir)
+      return probeFileReadAccess(join(base, params.profileDir, "Bookmarks"), { signal });
+    // Account discovery reads Preferences JSON; permission preflight only enumerates profile metadata.
+    const listing = await listReadAccessDirectory(base, { signal });
+    if (listing.status !== "readable") return listing;
+    const profiles = listing.entries.filter(
+      (entry) =>
+        entry.isDirectory() && (entry.name === "Default" || /^Profile [0-9]+$/u.test(entry.name)),
+    );
+    if (profiles.length === 0) return { status: "unavailable" };
+    for (const profile of profiles) {
+      const observation = await probeFileReadAccess(join(base, profile.name, "Bookmarks"), {
+        signal,
+      });
+      if (observation.status !== "readable") return observation;
+    }
+    return { status: "readable" };
+  },
   authType: "local",
   unitName: "bookmarks",
   contract: {

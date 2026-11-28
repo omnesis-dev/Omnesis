@@ -93,6 +93,7 @@ export function verifyMicrosoftMailbox(
 
 export default defineProvider<MicrosoftContext>({
   provider: { id: "microsoft", name: "Microsoft" },
+  permissionRequirements: [],
   authType: "oauth",
   credentials: outlookCredentialsSpec,
 

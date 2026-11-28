@@ -55,6 +55,41 @@ function buildFixturePlan(files) {
 }
 
 describe("Nx change selection", () => {
+  test("desktop restore integration and its fixture select the actual restore E2E", () => {
+    const restored = "packages/collector/src/e2e/desktop-restore.e2e.test.ts";
+    const runtime = "packages/collector/src/e2e/desktop-runtime.e2e.test.ts";
+    for (const file of [restored, "packages/collector/src/e2e/desktop-restore-fixture.ts"]) {
+      expect(behavioralBundles([file])).toContain("desktop-runtime");
+    }
+    expect(bundleTestArgs("desktop-runtime", [runtime, restored])).toEqual([runtime, restored]);
+  });
+
+  test("released peer ownership and fixture inputs select the existing desktop runtime bundle", () => {
+    const released = "packages/collector/src/e2e/released-collector-current-gateway.e2e.test.ts";
+    const reverse = "packages/collector/src/e2e/released-gateway-current-collector.e2e.test.ts";
+    const runtime = "packages/collector/src/e2e/desktop-runtime.e2e.test.ts";
+    const restored = "packages/collector/src/e2e/desktop-restore.e2e.test.ts";
+    for (const file of [
+      released,
+      reverse,
+      "packages/collector/src/e2e/released-peer-fixture.ts",
+      "scripts/desktop/test-released-peer-container.mjs",
+      "scripts/desktop/test-released-peer-container.test.mjs",
+      "packages/cli/src/desktop/coordinator.ts",
+    ]) {
+      expect(behavioralBundles([file])).toContain("desktop-runtime");
+    }
+    expect(bundleTestArgs("desktop-runtime", [runtime, restored, released, reverse])).toEqual([
+      runtime,
+      restored,
+      released,
+      reverse,
+    ]);
+    expect(behavioralBundles(["scripts/desktop/test-released-peer-container.mjs"])).not.toContain(
+      "desktop-account",
+    );
+  });
+
   test("gateway bootstrap changes select startup and ownership lifecycle coverage", () => {
     for (const input of [
       "packages/gateway/src/index.ts",
@@ -172,6 +207,8 @@ describe("Nx change selection", () => {
 
   test("runs each native bridge in its native lane without unrelated backend E2E", () => {
     const bridges = {
+      "scripts/macos-logic.sh": "macos-logic",
+      "scripts/macos-test.sh": "macos-test",
       "scripts/ios-logic.sh": "ios-logic",
       "scripts/ios-snapshot.sh": "ios-snapshot",
       "scripts/run-ios-e2e.sh": "ios-e2e",
@@ -280,6 +317,102 @@ describe("Nx change selection", () => {
     const plan = buildFixturePlan(["packages/core/src/index.ts"]);
     expect(plan.tasks.filter((task) => task.endsWith(":nx-lint"))).toEqual([
       "omnesis-workspace:nx-lint",
+    ]);
+  });
+
+  test("desktop source is known and selects only desktop native checks", () => {
+    process.chdir(originalCwd);
+    const plan = buildFixturePlan(["macos/Sources/OmnesisDesktop/AskView.swift"]);
+    expect(plan.fallback).toBeNull();
+    expect(plan.bundles).toEqual(["macos-logic", "macos-test"]);
+    expect(plan.tasks).toEqual(
+      expect.arrayContaining([
+        "omnesis-workspace:nx-bundle-macos-logic",
+        "omnesis-workspace:nx-bundle-macos-test",
+      ]),
+    );
+    expect(plan.bundles.some((name) => /^(?:ios|android)-/.test(name))).toBe(false);
+  });
+
+  test("shared tooling runs broad Linux coverage while native checks follow actual paths", () => {
+    process.chdir(originalCwd);
+    const shared = buildFixturePlan(["knip.json"]);
+    expect(shared.tasks).toContain("omnesis-workspace:nx-unit-all");
+    expect(shared.bundles.some((name) => /^(?:ios|macos|android)-/.test(name))).toBe(false);
+    const desktop = buildFixturePlan(["knip.json", "macos/Sources/OmnesisDesktop/AskView.swift"]);
+    expect(desktop.bundles.filter((name) => /^(?:ios|macos|android)-/.test(name))).toEqual([
+      "macos-logic",
+      "macos-test",
+    ]);
+  });
+
+  test.each(["prepare-node-test-fixture.mjs", "node-test-fixture.test.mjs"])(
+    "the real process fixture producer selects native logic and application checks: %s",
+    (filename) => {
+      process.chdir(originalCwd);
+      const plan = buildFixturePlan([`scripts/desktop/${filename}`]);
+      expect(plan.bundles).toEqual(["macos-logic", "macos-test"]);
+    },
+  );
+
+  test("exact desktop runtime factory inputs select the native build without global lane expansion", () => {
+    for (const name of [
+      "analytics-build.json",
+      "analytics-native-fixture.mjs",
+      "analytics-notices.mjs",
+      "analytics-sources.mjs",
+      "arguments.mjs",
+      "assemble-app.mjs",
+      "build-analytics.mjs",
+      "codex-notices.mjs",
+      "distribute.mjs",
+      "native-dependency-assets.mjs",
+      "native-inventory.mjs",
+      "native-package.mjs",
+      "node-entitlements.plist",
+      "node-runtime.json",
+      "node-runtime.mjs",
+      "package-fixture-extract.mjs",
+      "package-fixture.mjs",
+      "pinned-extensions.mjs",
+      "prepare-runtime.mjs",
+      "qualify-analytics.mjs",
+      "release-application.mjs",
+      "release-build.mjs",
+      "runtime-assets.mjs",
+      "smoke-runtime.mjs",
+      "stage-analytics.mjs",
+      "update-metadata.mjs",
+      "licenses/codex/LICENSE",
+      "licenses/codex/NOTICE",
+    ])
+      expect(behavioralBundles([`scripts/desktop/${name}`])).toEqual(["macos-build"]);
+    for (const path of [
+      "scripts/desktop/native-dependency-assets.test.mjs",
+      "scripts/desktop/build-analytics.test.mjs",
+      "scripts/desktop/README.md",
+      "scripts/desktop/unrelated-helper.mjs",
+      "scripts/unrelated.mjs",
+      "packages/core/src/unrelated.ts",
+      "packages/gateway/src/http/routes/search.ts",
+      "package-lock.json",
+    ])
+      expect(behavioralBundles([path])).not.toContain("macos-build");
+    process.chdir(originalCwd);
+    const plan = buildFixturePlan(["scripts/desktop/native-dependency-assets.mjs"]);
+    expect(plan.bundles).toEqual(["macos-build"]);
+    expect(plan.tasks).toContain("omnesis-workspace:nx-bundle-macos-build");
+  });
+
+  test("the production native bridge selects logic, application and build paths", () => {
+    expect(behavioralBundles(["scripts/desktop/native-check.mjs"])).toEqual([
+      "macos-build",
+      "macos-logic",
+      "macos-test",
+    ]);
+    expect(behavioralBundles(["scripts/desktop/native-check.test.mjs"])).toEqual([
+      "macos-logic",
+      "macos-test",
     ]);
   });
 

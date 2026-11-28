@@ -66,6 +66,7 @@ jobs:
       portal: ${{ steps.scope.outputs.portal }}
       embedder: ${{ steps.scope.outputs.embedder }}
       node_macos: ${{ steps.scope.outputs.node_macos }}
+      desktop: ${{ steps.scope.outputs.desktop }}
       knip: ${{ steps.scope.outputs.knip }}
       apple: ${{ steps.scope.outputs.apple }}
       swift_lint: ${{ steps.scope.outputs.swift_lint }}
@@ -138,6 +139,13 @@ jobs:
     needs: scope
     if: ${{ needs.scope.outputs.apple == 'true' }}
     uses: ./.github/workflows/ios.yml
+    with:
+      target_sha: ${{ github.sha }}
+
+  desktop:
+    needs: scope
+    if: ${{ needs.scope.outputs.desktop == 'true' }}
+    uses: ./.github/workflows/macos-desktop.yml
     with:
       target_sha: ${{ github.sha }}
 
@@ -225,6 +233,7 @@ jobs:
       - knip
       - swift
       - ios
+      - desktop
       - android
       - docker-smoke
       - install-smoke
@@ -248,6 +257,7 @@ jobs:
               knip: "knip",
               swift: "swift_lint",
               ios: "apple",
+              desktop: "desktop",
               android: "android",
               "docker-smoke": "docker_smoke",
               "install-smoke": "install_smoke",

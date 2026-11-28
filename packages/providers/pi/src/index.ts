@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import {
   defineSource,
+  probeRootReadAccess,
   config as configSchema,
   expandHostPath,
   type SourceInstance,
@@ -309,6 +310,25 @@ export default defineSource({
   name: "Pi Sessions",
   description: "Coding-agent conversations saved by Pi",
   provider: { id: "pi", name: "Pi" },
+  permissionRequirements: [
+    {
+      id: "conversation-folder",
+      kind: "selected-folder",
+      summary: "Allow access to the selected conversation folder",
+      scope: "Selected conversation source root",
+      blocking: true,
+      actions: [{ kind: "choose-folder" }, { kind: "retry-access" }],
+    },
+  ],
+  async probePermissionAccess({ params, signal }) {
+    // Resolving the default can read a private settings file; preflight requires an explicit folder instead.
+    const selected = params.sessionsPath || process.env.PI_CODING_AGENT_SESSION_DIR;
+    if (!selected) return { status: "unavailable" };
+    return probeRootReadAccess({
+      signal,
+      roots: [{ path: expandHostPath(selected) }],
+    });
+  },
   authType: "local",
   unitName: "conversation days",
   primaryCount: "documents",

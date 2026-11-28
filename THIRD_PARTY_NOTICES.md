@@ -4,7 +4,7 @@ Omnesis itself is licensed under **AGPL-3.0-or-later** (see `LICENSE`). This fil
 is separate from that license: it aggregates the attribution and license notices
 for **third-party** code and assets that Omnesis **distributes** — either bundled
 directly in this repository, baked into a published `@omnesis/*` npm package, or
-included in the Docker image. It exists so that anyone redistributing Omnesis can
+included in the Docker image or native desktop application. It exists so that anyone redistributing Omnesis can
 satisfy the notice-retention requirements of the permissive licenses (MIT, BSD,
 ISC, Apache-2.0, OFL) and the weak-copyleft licenses (MPL-2.0, LGPL-3.0) those
 components carry.
@@ -77,6 +77,29 @@ Omnesis's AGPL. The dependency distributions retain their upstream notices.
 
 ---
 
+## Codex runtime
+
+The desktop runtime includes **OpenAI Codex 0.171.0**, under **Apache-2.0**.
+Its audited source is commit
+[`ccf9be8cc458bd6b8336fe84d68d8893f2691a5e`](https://github.com/openai/codex/tree/ccf9be8cc458bd6b8336fe84d68d8893f2691a5e).
+The unmodified upstream [license](https://github.com/openai/codex/blob/ccf9be8cc458bd6b8336fe84d68d8893f2691a5e/LICENSE)
+and [notice](https://github.com/openai/codex/blob/ccf9be8cc458bd6b8336fe84d68d8893f2691a5e/NOTICE)
+are retained under `scripts/desktop/licenses/codex/` and copied to the bundled
+runtime's `licenses/codex/`. The notice includes the upstream Ratatui attribution.
+These third-party texts are not relicensed under Omnesis's AGPL.
+
+The selected native package also contains separately licensed voice libraries.
+Their original `codex-resources/voice/NOTICE.md`, `manifest.json`, `sources.json`
+and accompanying license texts remain in that package and are also copied to
+`licenses/codex/resources/voice/` in the desktop runtime. These record the
+GStreamer, GLib, PCRE2, libffi, Opus, libintl and zlib notices, upstream source
+archives, versions, build references and hashes. The LGPL components remain
+separate dynamic libraries under their upstream terms. The packaging helper
+refuses a different SDK version or missing resource notices instead of silently
+omitting them.
+
+---
+
 ## Models.dev catalog snapshot
 
 `packages/gateway/models-dev/api.json` is a committed snapshot of the
@@ -105,6 +128,20 @@ unmodified; its version and per-platform checksums are pinned in
 ([duckdb/duckdb-httpfs](https://github.com/duckdb/duckdb-httpfs)) is licensed under
 MIT, copyright the DuckDB Foundation, and statically links OpenSSL, licensed under
 Apache-2.0 (<https://www.openssl.org/source/license.html>).
+
+The macOS desktop runtime instead builds DuckDB with `httpfs` linked into
+`libduckdb.dylib`, including static OpenSSL and curl, so its encryption module
+can be signed as ordinary native library code. The reviewed source revisions
+and checksums are recorded in `scripts/desktop/analytics-build.json`.
+[DuckDB](https://github.com/duckdb/duckdb) and `httpfs` retain their MIT licenses;
+[OpenSSL](https://github.com/openssl/openssl) retains Apache-2.0;
+[curl](https://curl.se/docs/copyright.html) retains its curl license, copyright
+Daniel Stenberg and the credited contributors. Original source and vendored
+dependency notices are copied without relicensing into the runtime's
+`packages/gateway/desktop-analytics-notices/` directory. The original Node
+binding's license is also retained. Build provenance records each notice's
+checksum and the native library's pre-distribution checksum; code signing
+subsequently changes the library bytes covered by the final runtime inventory.
 
 ---
 

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { randomUUID, X509Certificate, createPrivateKey } from "node:crypto";
 import { beforeEach, afterEach, expect, test, vi } from "vitest";
 import * as core from "@omnesis/core";
 import { expiredCertificate } from "../test/expired-certificate.js";
@@ -13,11 +13,13 @@ import { tlsFiles } from "../test/support.js";
 import { brokerHarness } from "../test/dns-broker-owner.js";
 import { acmeTrustedRoots, createGatewayAcmeController } from "./acme-integration.js";
 import { hostedGatewayHostname } from "./hosted-name.js";
+import * as gatewaySecrets from "./gateway-secret-storage.js";
+import { savePrivateJson } from "./google-credentials.js";
 import type { AcmeDnsChallenges as AcmeDnsService } from "./acme-dns.js";
 
 let directory: string;
 beforeEach(async () => {
-  directory = await mkdtemp(join(tmpdir(), "omnesis-acme-integration-"));
+  directory = await realpath(await mkdtemp(join(tmpdir(), "omnesis-acme-integration-")));
   if (process.platform === "win32") await core.ensurePrivateDirs([directory]);
 });
 afterEach(async () => {
@@ -45,6 +47,43 @@ async function environment() {
     OMNESIS_ACME_DNS_TOKEN_FILE: tokenFile,
   };
 }
+test.skipIf(process.platform === "win32")(
+  "scoped ACME activation decrypts only in memory and preserves sealed public and owner keys",
+  async () => {
+    const env = await environment();
+    const secretOptions: core.SecretFileOptions = {
+      backend: "file",
+      configDir: directory,
+      service: "fixture-acme-activation",
+    };
+    await core.ensureInstallRootKey(secretOptions);
+    await core.markSecretFileEncryptionRequired(directory, secretOptions);
+    vi.spyOn(gatewaySecrets, "gatewayCredentialOptions").mockReturnValue(secretOptions);
+    vi.stubEnv("OMNESIS_DESKTOP_MANAGED", "1");
+    await savePrivateJson(
+      env.OMNESIS_ACME_DNS_TOKEN_FILE,
+      { token: "fixture-dns-token" },
+      secretOptions,
+    );
+    const activate = vi.fn(async (material: { cert: string; key: string }) => {
+      expect(
+        new X509Certificate(material.cert).checkPrivateKey(createPrivateKey(material.key)),
+      ).toBe(true);
+    });
+    const controller = await createGatewayAcmeController(env, { configDir: directory, activate });
+    try {
+      expect(activate).toHaveBeenCalledOnce();
+      expect(controller!.fingerprintSha256()).toMatch(/^[a-f0-9]{64}$/u);
+      for (const path of [
+        `${env.OMNESIS_ACME_CERT_FILE}.key`,
+        `${env.OMNESIS_CLOUD_RELAY_SESSION_FILE}.owner-key`,
+      ])
+        expect(core.isEncryptedSecretFile(await readFile(path, "utf8"))).toBe(true);
+    } finally {
+      await controller!.close();
+    }
+  },
+);
 test("without an ACME directory nothing is created, activated or asked, whatever else is configured", async () => {
   const activate = vi.fn(async () => {}),
     fetch = vi.fn<typeof globalThis.fetch>();

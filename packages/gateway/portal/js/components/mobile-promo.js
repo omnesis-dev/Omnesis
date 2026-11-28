@@ -6,9 +6,9 @@
 // source (no phone has ever synced: no Apple Health from iOS, no Health
 // Connect / photos / app-usage / call-log / activity-segments from Android).
 // Any mobile source hides both — a user with either phone paired is assumed
-// not to want a nudge for the other. Unlike the browser-extension promo there
-// is no browser gate: the install links open anywhere. The cards have no
-// dismiss affordance: they stay until a phone push creates a mobile source.
+// not to want a nudge for the other. The install links open in any browser.
+// The cards have no dismiss affordance: they stay until a phone push creates a
+// mobile source.
 
 import { sourceTypeOf } from "../lib/source-id.js";
 
@@ -32,7 +32,7 @@ const MOBILE_SOURCE_TYPES = new Set([
 /**
  * Whether any known source was pushed by a mobile app (iOS or Android).
  * Prefers the row's `type`, falls back to the id prefix — the same rule
- * the extension promo's `hasWebSource` uses for `web`.
+ * registered rows use when their identifiers include an account suffix.
  */
 export function hasMobileSource(sources) {
   if (!Array.isArray(sources)) return false;

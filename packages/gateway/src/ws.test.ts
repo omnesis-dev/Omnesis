@@ -1623,3 +1623,61 @@ describe("DeviceWsServer token-check rate limit", () => {
     expect((await legacyHello(validToken)).ok).toBe(true);
   });
 });
+
+describe("DeviceWsServer encrypted desktop admission", () => {
+  test.each([true, false])(
+    "blocks stored and first-hello requirements before authentication: stored=%s",
+    async (stored) => {
+      const path = join(tmpdir(), `omnesis-ws-protected-${randomUUID()}.db`);
+      const database = createDatabase(path);
+      const device = createDevice(database, {
+        name: "Protected desktop",
+        kind: "collector",
+        capabilities: stored ? { requiresEncryptedStorage: true } : {},
+      });
+      const credential = createToken(database, device.id, [SCOPE_WRITE_ALL]);
+      const connected = vi.fn();
+      const srv = new DeviceWsServer({
+        db: database,
+        writeGate: directWriteGate(database),
+        onCollectorConnected: connected,
+      });
+      const sent: string[] = [];
+      const socket = { send: (data: string) => sent.push(data), close: vi.fn() };
+      try {
+        const upgrade = srv.authenticateUpgradeToken("192.0.2.1", credential.token);
+        expect(upgrade.ok).toBe(!stored);
+        if (stored)
+          expect(upgrade).toMatchObject({ status: 503, code: "STORAGE_PROTECTION_REQUIRED" });
+        // Also prove the legacy handshake and first declaration cannot bypass it.
+        srv.onOpen(socket, "192.0.2.1");
+        srv.onMessage(
+          socket,
+          JSON.stringify(
+            makeCommand("hello", {
+              token: credential.token,
+              protocolVersion: PROTOCOL_VERSION,
+              capabilities: { requiresEncryptedStorage: true },
+            }),
+          ),
+        );
+        await vi.waitFor(() => expect(socket.close).toHaveBeenCalled());
+        expect(sent.join("")).toContain("STORAGE_PROTECTION_REQUIRED");
+        expect(srv.authenticatedClientCount).toBe(0);
+        expect(connected).not.toHaveBeenCalled();
+        const protectedServer = new DeviceWsServer({
+          db: database,
+          writeGate: directWriteGate(database),
+          isStorageProtected: () => true,
+        });
+        expect(protectedServer.authenticateUpgradeToken("192.0.2.1", credential.token).ok).toBe(
+          true,
+        );
+      } finally {
+        srv.onClose(socket);
+        database.close();
+        cleanupDb(path);
+      }
+    },
+  );
+});

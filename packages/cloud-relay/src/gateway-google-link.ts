@@ -4,6 +4,7 @@
 import { readFile } from "node:fs/promises";
 import { X509Certificate } from "node:crypto";
 import { z } from "zod";
+import { gatewayCredentialOptions } from "./gateway-secret-storage.js";
 import {
   publicGatewayCertificateFile,
   publicGatewayPrivateKeyFile,
@@ -57,7 +58,10 @@ export async function runGatewayGoogleLink(
   const config = keyEnvironment.parse(env);
   const relay = relayOrigin(config.OMNESIS_CLOUD_RELAY_URL);
   const google = command === "link-google" ? await googleAuthorization(config, env) : undefined;
+  const secretFileOptions = gatewayCredentialOptions(env.OMNESIS_CONFIG_DIR, env);
   const owner = await (dependencies.registerKey ?? registerGatewayKey)({
+    configDir: env.OMNESIS_CONFIG_DIR,
+    secretFileOptions,
     relayUrl: relay.origin,
     sessionFile: config.OMNESIS_CLOUD_RELAY_SESSION_FILE,
     gatewayId: config.OMNESIS_CLOUD_RELAY_GATEWAY_ID,
@@ -85,9 +89,14 @@ export async function runGatewayGoogleLink(
   if (response.status !== 204) throw new Error("Google gateway discovery link change refused");
   if (credentials) {
     // Account metadata enables optional gateway pairing; key-owned control never needs a Google refresh grant.
-    await saveGoogleCredentials(google!.credentialsFile, google!.options.clientId, {
-      idToken: credentials.idToken,
-      identity: credentials.identity,
-    });
+    await saveGoogleCredentials(
+      google!.credentialsFile,
+      google!.options.clientId,
+      {
+        idToken: credentials.idToken,
+        identity: credentials.identity,
+      },
+      secretFileOptions,
+    );
   }
 }

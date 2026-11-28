@@ -3,7 +3,7 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdir, readFile, link, rm, chmod } from "node:fs/promises";
+import { mkdir, readFile, link, rm, chmod, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   randomUUID,
@@ -12,17 +12,33 @@ import {
   createPrivateKey,
   createPublicKey,
 } from "node:crypto";
-import { acquireGatewayLock, atomicWriteFile, ownedProcessCleanupReceipt } from "@omnesis/core";
+import {
+  acquireGatewayLock,
+  atomicWriteFile,
+  ownedProcessCleanupReceipt,
+  runOpenSslWithPrivateInput,
+} from "@omnesis/core";
+import {
+  gatewayCredentialOptions,
+  readOrCreateScopedGatewayKey,
+} from "./gateway-secret-storage.js";
 import { isJoinedPrivateFileError } from "./private-file-errors.js";
 import { publicKeyFingerprint } from "./gateway-key-auth.js";
 import { bindingOrigin, validateCertificateDates } from "./gateway-binding.js";
 import { readPrivateInput, identityArtifactPresent } from "./private-inputs.js";
+import type { SecretFileOptions } from "@omnesis/core";
 
 async function privateKey(
   path: string,
   certificateFile: string,
   generate: boolean,
+  options?: SecretFileOptions,
 ): Promise<Buffer> {
+  if (options) {
+    const allowCreate = generate && !(await identityArtifactPresent(certificateFile));
+    const key = await readOrCreateScopedGatewayKey(path, allowCreate, options, "p256");
+    return Buffer.from(key.export({ type: "pkcs8", format: "pem" }));
+  }
   try {
     return await readPrivateInput(path);
   } catch (error) {
@@ -70,15 +86,22 @@ export async function ensureAcmeBootstrap(options: {
   privateKeyFile: string;
   signal: AbortSignal;
   generatePrivateKey?: boolean;
+  configDir?: string;
+  secretFileOptions?: SecretFileOptions;
 }): Promise<void> {
   options.signal.throwIfAborted();
   const hostname = bindingOrigin(options.publicOrigin).hostname;
   if (!/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]*$/.test(hostname))
     throw new Error("ACME requires one DNS hostname");
+  const secretFileOptions =
+    options.secretFileOptions ?? gatewayCredentialOptions(options.configDir);
+  if (secretFileOptions && process.platform === "win32")
+    throw new Error("Managed ACME key input requires a supported private pipe adapter");
   const key = await privateKey(
     options.privateKeyFile,
     options.certificateFile,
     options.generatePrivateKey === true,
+    secretFileOptions,
   );
   const keyFingerprint = publicKeyFingerprint(createPublicKey(createPrivateKey(key)));
   let previous: string | undefined;
@@ -115,31 +138,66 @@ export async function ensureAcmeBootstrap(options: {
   await mkdir(lockDirectory, { recursive: true, mode: 0o700 });
   const lock = await acquireGatewayLock(lockDirectory, { waitMs: 0 });
   const temporary = `${options.certificateFile}.${randomUUID()}.tmp`;
+  const configuration = `${temporary}.cnf`;
+  let publicationFailure: unknown;
   try {
-    await promisify(execFile)(
-      "openssl",
-      [
-        "req",
-        "-new",
-        "-x509",
-        "-key",
-        options.privateKeyFile,
-        "-out",
-        temporary,
-        "-days",
-        "7",
-        "-sha256",
-        "-subj",
-        `/CN=${hostname}`,
-        "-addext",
-        `subjectAltName=DNS:${hostname}`,
-        "-addext",
-        "basicConstraints=critical,CA:FALSE",
-      ],
-      { signal: options.signal, timeout: 15_000, maxBuffer: 65_536 },
-    );
+    const args = [
+      "req",
+      "-new",
+      "-x509",
+      "-key",
+      secretFileOptions ? "/dev/stdin" : options.privateKeyFile,
+      "-out",
+      temporary,
+      "-days",
+      "7",
+      "-sha256",
+      "-subj",
+      `/CN=${hostname}`,
+      "-addext",
+      `subjectAltName=DNS:${hostname}`,
+      "-addext",
+      "basicConstraints=critical,CA:FALSE",
+    ];
+    if (secretFileOptions) {
+      // Public metadata only: req's configuration works across OS OpenSSL/LibreSSL
+      // variants without requiring their optional -addext argument support.
+      await writeFile(
+        configuration,
+        `[req]\nprompt=no\ndistinguished_name=dn\nx509_extensions=v3\n[dn]\nCN=${hostname}\n[v3]\nsubjectAltName=DNS:${hostname}\nbasicConstraints=critical,CA:FALSE\n`,
+        { mode: 0o600, flag: "wx" },
+      );
+      await runOpenSslWithPrivateInput(
+        [
+          "req",
+          "-new",
+          "-x509",
+          "-key",
+          "/dev/stdin",
+          "-out",
+          temporary,
+          "-days",
+          "7",
+          "-sha256",
+          "-config",
+          configuration,
+        ],
+        key,
+        { signal: options.signal },
+      );
+    } else {
+      await promisify(execFile)("openssl", args, {
+        signal: options.signal,
+        timeout: 15_000,
+        maxBuffer: 65_536,
+      });
+    }
     await chmod(temporary, 0o600);
-    if (!(await readPrivateInput(options.privateKeyFile)).equals(key))
+    if (
+      !(
+        await privateKey(options.privateKeyFile, options.certificateFile, false, secretFileOptions)
+      ).equals(key)
+    )
       throw new Error("Gateway key changed during public certificate bootstrap");
     options.signal.throwIfAborted();
     if (previous === undefined) await link(temporary, options.certificateFile);
@@ -148,8 +206,14 @@ export async function ensureAcmeBootstrap(options: {
         throw new Error("Public certificate changed during bootstrap");
       await atomicWriteFile(options.certificateFile, await readFile(temporary), { mode: 0o600 });
     }
+  } catch (error) {
+    publicationFailure = error;
+    throw error;
   } finally {
-    await rm(temporary, { force: true });
-    lock.release();
+    if (ownedProcessCleanupReceipt(publicationFailure) === undefined) {
+      await rm(temporary, { force: true });
+      await rm(configuration, { force: true });
+      lock.release();
+    }
   }
 }

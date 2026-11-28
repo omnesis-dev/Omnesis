@@ -792,3 +792,35 @@ describe("what a restore replaces and what it keeps", () => {
     expect(readFileSync(join(target, "omnesis.db"), "utf8")).toBe("corpus");
   });
 });
+
+test.each([false, true])(
+  "conversation history coverage=%s preserves older backups and replaces explicitly covered history",
+  async (includesHistory) => {
+    const target = tmp("omnesis-restore-history-");
+    mkdirSync(join(target, "conversations"));
+    writeFileSync(join(target, "conversations/s_existing.json"), "existing target history");
+    const backupDir = plainBackupInside(target, "history-fixture", {
+      "omnesis.db": ["restored-document"],
+      ...(includesHistory ? { "conversations/s_restored.json": "restored history" } : {}),
+    });
+    if (includesHistory) {
+      const path = join(backupDir, "backup-manifest.json");
+      const metadata = JSON.parse(readFileSync(path, "utf8"));
+      metadata.includesConversationHistory = true;
+      writeFileSync(path, JSON.stringify(metadata));
+    }
+    await restore(backupDir, {
+      target,
+      backend: "file",
+      codeArg: undefined,
+      envelopeFileArg: undefined,
+      force: true,
+    });
+    expect(existsSync(join(target, "conversations/s_existing.json"))).toBe(!includesHistory);
+    expect(existsSync(join(target, "conversations/s_restored.json"))).toBe(includesHistory);
+    if (!includesHistory)
+      expect(readFileSync(join(target, "conversations/s_existing.json"), "utf8")).toBe(
+        "existing target history",
+      );
+  },
+);

@@ -128,7 +128,7 @@
             <li><a href="search">Search</a></li>
             <li><a href="agent">The agent</a></li>
             <li><a href="connect">Agents &amp; MCP</a></li>
-            <li><a href="apps">Mobile apps</a></li>
+            <li><a href="apps">Apps</a></li>
             <li><a href="notifications">Notifications</a></li>
             <li><a href="operating">Operating</a></li>
             <li><a href="security">Security</a></li>
@@ -166,6 +166,39 @@
 
         <h2 id="backup">Backup</h2>
         <p>
+          In the Mac app, Settings → Backups can create a library backup or a data export and follow
+          the job until it finishes. The completed files remain on the library Mac. Save a copy
+          downloads an archive to a new file you choose on the Mac you are using; cancelling or
+          failing a download removes its incomplete local copy. The app explains whether the archive
+          includes readable contents before saving it. Recovery protection is prepared separately on
+          the library Mac under Settings → General.
+        </p>
+        <p>
+          Automatic recovery copies made for Mac app updates and library restores are separate from
+          personal backups and exports. Omnesis tracks up to sixteen verified automatic copies,
+          including copies retained after recovered update or restore attempts. Pinned copies count
+          toward that limit. The current operation's copy and a pending restore's recovery copy are
+          kept. At the limit, another update waits for reviewed cleanup instead of silently removing
+          a personal backup. Older copies whose ownership cannot be verified remain kept for review.
+          <strong>Settings → Backups → Automatic recovery copies on this Mac</strong> shows recorded
+          copies, when they were retained and their recorded size.
+          <strong>Always keep this copy</strong>
+          saves your keep preference. Clearing that preference does not remove the copy; copies
+          still needed for recovery stay protected. Unfinished and older unlisted copies remain
+          kept. Removing an eligible automatic copy requires a separate review and confirmation; the
+          app keeps copies that are still in use or whose ownership is uncertain. This does not
+          remove personal backups or exports. An interrupted cleanup can finish only against the
+          same original copy.
+        </p>
+        <p>
+          For a data export, <strong>Save readable export</strong> offers a separate choice. After
+          you approve saving private information without encryption, it downloads a TAR archive of
+          JSON Lines or CSV files you can use outside Omnesis. Anyone with that saved archive can
+          read its contents. Your library's stored files stay encrypted, and backups keep their
+          existing protection. If an older encrypted export cannot be downloaded in readable form,
+          create a new export and try again; you can still save its stored encrypted copy.
+        </p>
+        <p>
           <code>omnesis backup</code> takes a snapshot while the gateway keeps running, into
           <code>~/.config/omnesis/backups/&lt;timestamp&gt;/</code> on the gateway machine. It holds
           the databases (documents, index, analytics), <code>omnesis.json</code>,
@@ -191,12 +224,17 @@
   <span class="t-dim">Saved on the gateway host at</span> ~/.config/omnesis/backups/2026-03-14T09-12-05</pre>
           </div>
         </div>
+        <p>
+          New backups include filesystem-backed chat history. Chat summaries are rebuilt after
+          restoring; queued submissions and provider session state are not restored. Older backups
+          without chat-history metadata preserve the target installation's existing chats.
+        </p>
         <p>A backup leaves out four things:</p>
         <ul>
           <li><strong>Models</strong>, which can be downloaded again.</li>
           <li>
-            <strong>Agent conversations</strong> (<code>conversations/</code>): copy that directory
-            yourself if you want to keep your chat history.
+            <strong>Brain run transcripts</strong>, which are debug artifacts. They remain encrypted
+            at rest in an encrypted installation.
           </li>
           <li>
             <strong>OAuth sign-ins</strong> (Google, Microsoft and similar): sources that use them
@@ -219,6 +257,41 @@
         </p>
 
         <h2 id="restore">Restore and export</h2>
+        <h3 id="desktop-restore">In the Mac app</h3>
+        <p>
+          On the Mac that keeps the library, choose a completed backup archive in Backups settings.
+          Omnesis previews its measured contents and asks before replacing the current library. An
+          encrypted backup from another installation needs that backup's recovery code and, when
+          absent from the archive, its sealed recovery file. The app keeps this Mac's existing root
+          key, account, devices, access settings, certificates and model connections.
+        </p>
+        <p>
+          Import staging and restored stores stay encrypted. A protected copy of the current library
+          is retained before replacement. Restored sources, watches and background automation remain
+          paused for review. Model connections are kept, while model assignments and automatic
+          deletion pause until you review Models and retention settings. Review source paths,
+          credentials and device assignments before resuming collection; search indexes and chat
+          summaries are rebuilt. The selected original archive is left untouched, so an original
+          containing readable data remains readable where you selected it.
+        </p>
+        <p>
+          After applying the backup, explicitly start the library to verify its protected startup,
+          retained device identity and restored data. The app reports completion only after those
+          checks pass. An interrupted or unverified restore blocks automatic startup and offers
+          recovery of the previous library. Unsupported database versions and backups with
+          uncheckpointed database sidecars are refused; create a completed online backup instead. A
+          Mac that only collects cannot restore the library.
+        </p>
+        <p>
+          Imported recording history, when present, keeps its saved audio and transcripts unchanged.
+          Its background work stays paused until you review transcription, speaker models and audio
+          retention on the portal's recording review page. This review remains available with
+          Recordings off. A zero-day audio retention choice can delete old or failed audio
+          immediately after resuming. Pending audio needs a transcription model before the guided
+          review can resume it. Recording features remain experimental; see
+          <a href="experimental#recordings">Recording conversations</a>.
+        </p>
+        <h3 id="command-line-restore">From the command line</h3>
         <p>
           <code>omnesis restore &lt;backup-dir&gt;</code> puts a backup back into a configuration
           directory, <code>~/.config/omnesis/</code> or the one <code>--target</code> names. It
@@ -334,6 +407,14 @@
           collectors and phones reconnect once the gateway's address reaches the new machine. The
           backup's certificates come back too: a certificate that names the old machine does not
           cover a new name, and a device that reaches the gateway by a new name pairs again.
+        </p>
+
+        <p>
+          Administrative clients can save completed backups and exports from the gateway as TAR
+          archives. Saving transfers the existing files without decrypting them or changing their
+          keys. Encrypted payloads stay sealed, while archive filenames and public manifests remain
+          readable. An older plaintext backup or a mixed archive still contains readable data;
+          protect its saved location accordingly. Keep the recovery code separately from the backup.
         </p>
 
         <h3 id="export">Export</h3>

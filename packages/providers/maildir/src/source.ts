@@ -30,7 +30,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { lstatSync } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "@omnesis/core";
-import { SnapshotEnumeration } from "@omnesis/source-sdk";
+import { SnapshotEnumeration, isReadAccessDenied } from "@omnesis/source-sdk";
 import { SourceId, ProviderId, SyncError } from "@omnesis/types";
 import { MaildirIndex } from "./index-store.js";
 import { folderTag, tooLargeError, walkMaildir } from "./layout.js";
@@ -139,6 +139,7 @@ interface CyclePlan {
   unscanned: FileRow[];
   /** How many files this cycle could not read; reported once, on the final page. */
   unreadableFiles: number;
+  permissionDenied?: true;
   /** Of those, how many the index could not name, because their headers never read. */
   unnamedFiles: number;
   pending?: PlanEntry[];
@@ -190,6 +191,7 @@ export class MaildirSource {
   /** Bumped by a resync, so a page still being built for the old run cannot record anything. */
   private epoch = 0;
   private syncInFlight = false;
+  private pagePermissionDenied = false;
   /** When the current sync's first page began; unset between syncs. */
   private syncStartedAt: number | undefined;
 
@@ -231,11 +233,12 @@ export class MaildirSource {
       throw new SyncError("transient", "A Maildir sync is already in progress for this source");
     }
     this.syncInFlight = true;
+    this.pagePermissionDenied = false;
     this.syncStartedAt ??= this.now();
     try {
       const page = await this.syncPage(cursor, opts?.signal);
       if (!page.hasMore) this.syncStartedAt = undefined;
-      return page;
+      return this.pagePermissionDenied ? { ...page, permissionDenied: true } : page;
     } catch (err) {
       this.plan = undefined;
       this.syncStartedAt = undefined;
@@ -257,6 +260,8 @@ export class MaildirSource {
     index.alignWithCursor(generation, committedSeq);
 
     const plan = this.currentPlan(generation, committedSeq, cursor === null, index);
+    this.pagePermissionDenied =
+      plan.permissionDenied === true || plan.walk.permissionDenied === true;
     plan.seq = next.seq;
     this.plan = plan;
 
@@ -465,6 +470,10 @@ export class MaildirSource {
         );
         scans.push({ mailboxId: file.mailboxId, uniq: file.uniq, ...scanned });
       } catch (err) {
+        if (isReadAccessDenied(err)) {
+          plan.permissionDenied = true;
+          this.pagePermissionDenied = true;
+        }
         // A file that will not open stays unread in the index and is tried
         // again next cycle; one that moved since the walk is found where it
         // went by the next walk. Either could be the only copy left of a
@@ -581,6 +590,10 @@ export class MaildirSource {
       try {
         parsed = await parseMessageFile(path);
       } catch (err) {
+        if (isReadAccessDenied(err)) {
+          plan.permissionDenied = true;
+          this.pagePermissionDenied = true;
+        }
         if (!isGoneError(err)) {
           plan.unreadableFiles += 1;
           log.debug(

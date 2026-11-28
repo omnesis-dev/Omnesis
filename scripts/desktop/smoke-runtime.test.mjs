@@ -1,0 +1,417 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Adrien Conrath
+
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  renameSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { spawnSync } from "node:child_process";
+import * as filesystem from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
+import { afterEach, expect, test, vi } from "vitest";
+import {
+  telemetryForcedOff,
+  telemetryRuntimeAllowed,
+  telemetryTestRuntime,
+} from "../../packages/gateway/src/telemetry/policy.js";
+import * as analytics from "./qualify-analytics.mjs";
+import * as inventory from "./native-inventory.mjs";
+import { smokeRuntime, smokeRuntimeEnvironment } from "./smoke-runtime.mjs";
+import { readAnalyticsRestoreReceipt } from "./native-package.mjs";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, rm: vi.fn(actual.rm) };
+});
+
+const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
+
+test("the compiled smoke environment retains unrelated profile probes and denies telemetry independently", () => {
+  const runtime = join(tmpdir(), "invented-smoke-runtime");
+  const home = join(tmpdir(), "invented-smoke-home");
+  const env = smokeRuntimeEnvironment(runtime, home);
+  expect(env).toEqual({
+    PATH: join(runtime, "bin") + ":/usr/bin:/bin",
+    HOME: home,
+    TMPDIR: tmpdir(),
+    LANG: "en_US.UTF-8",
+    OMNESIS_RUNTIME_MODE: "test",
+    OMNESIS_TELEMETRY: "0",
+    OMNESIS_E2E_DESKTOP_RUNTIME_SMOKE: "1",
+    OMNESIS_CONFIG_DIR: join(home, "unrelated-headless"),
+    OMNESIS_SECRET_SERVICE: "dev.omnesis.unrelated-fixture",
+    OMNESIS_GATEWAY_URL: "https://unreachable.example.test",
+    OMNESIS_TOKEN: "omn_test",
+  });
+  const entryPath = join(runtime, "packages/cli/dist/index.js");
+  expect(telemetryForcedOff(env)).toBe(true);
+  expect(telemetryRuntimeAllowed({ env, entryPath })).toBe(false);
+  // Even accidentally enabling both ordinary controls cannot remove the independent test veto.
+  const production = { ...env, OMNESIS_RUNTIME_MODE: "production", OMNESIS_TELEMETRY: "on" };
+  expect(telemetryTestRuntime(production)).toBe(true);
+  expect(telemetryRuntimeAllowed({ env: production, entryPath })).toBe(false);
+  delete production.OMNESIS_E2E_DESKTOP_RUNTIME_SMOKE;
+  expect(telemetryRuntimeAllowed({ env: production, entryPath })).toBe(true);
+});
+
+test("importing the smoke helper is inert while direct CLI execution still requires the runtime argument", () => {
+  const env = { ...process.env };
+  // Inherited color controls can emit warnings before the imported module runs.
+  delete env.FORCE_COLOR;
+  delete env.NO_COLOR;
+  const imported = spawnSync(
+    process.execPath,
+    ["--input-type=module", "--eval", 'await import("./scripts/desktop/smoke-runtime.mjs")'],
+    { cwd: root, env, encoding: "utf8", timeout: 10000 },
+  );
+  expect(imported.error).toBeUndefined();
+  expect(imported.status).toBe(0);
+  expect(imported.stdout).toBe("");
+  expect(imported.stderr).toBe("");
+  const direct = spawnSync(process.execPath, ["scripts/desktop/smoke-runtime.mjs"], {
+    cwd: root,
+    env,
+    encoding: "utf8",
+    timeout: 10000,
+  });
+  expect(direct.error).toBeUndefined();
+  expect(direct.status).not.toBe(0);
+  expect(direct.stderr).toContain("Missing --runtime");
+});
+
+const ownedHomes = [];
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.mocked(filesystem.rm).mockReset();
+  vi.unstubAllEnvs();
+  for (const home of ownedHomes.splice(0)) rmSync(home, { recursive: true, force: true });
+});
+function analyticsSmokeFixture() {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-analytics-smoke-test-")));
+  ownedHomes.push(home);
+  const runtime = join(home, "runtime");
+  mkdirSync(runtime, { mode: 0o700 });
+  writeFileSync(
+    join(runtime, "desktop-runtime.json"),
+    JSON.stringify({
+      format: 1,
+      architecture: process.arch,
+      codeUsageProtocol: 1,
+      dataUsageProtocol: 1,
+      processAuthorityProtocol: 3,
+      runtimeLauncher: "runtime-exec",
+      inventory: [],
+    }),
+  );
+  vi.spyOn(inventory, "inventoryBundle").mockResolvedValue([]);
+  vi.spyOn(analytics, "qualifyDesktopAnalytics").mockReturnValue({
+    extension: "invented-offline-extension",
+    engineVersion: "v1.5.6",
+  });
+  vi.stubEnv("TMPDIR", home);
+  return {
+    home,
+    runtime,
+    options: {
+      analyticsRestore: {
+        input: join(home, "input"),
+        upstreamNode: process.execPath,
+        architecture: process.arch,
+      },
+    },
+  };
+}
+
+test("analytics-only smoke mode creates the ordinary private epoch/profile owner and cleans it after success", async () => {
+  const f = analyticsSmokeFixture();
+  const qualify = vi
+    .spyOn(analytics, "qualifyDesktopAnalyticsRestore")
+    .mockImplementation(({ runtime, home, scope, env }) => {
+      expect(runtime).toMatch(/[a-f0-9]{64}$/u);
+      expect(statSync(home).mode & 0o777).toBe(0o700);
+      expect(statSync(join(scope.configDir, "desktop-install.json")).mode & 0o777).toBe(0o600);
+      expect(env.OMNESIS_RUNTIME_MODE).toBe("test");
+      return Promise.resolve();
+    });
+  await smokeRuntime(f.runtime, f.options);
+  expect(qualify).toHaveBeenCalledTimes(1);
+  expect(readdirSync(f.home)).toEqual(["runtime"]);
+});
+
+test("unknown physical qualification cleanup retains its exact private runtime/profile home", async () => {
+  const f = analyticsSmokeFixture(),
+    failure = Object.assign(new Error("Invented joined-owner refusal"), {
+      cleanupFailure: "invented-join",
+    });
+  vi.spyOn(analytics, "qualifyDesktopAnalyticsRestore").mockRejectedValue(failure);
+  await expect(smokeRuntime(f.runtime, f.options)).rejects.toBe(failure);
+  const homes = readdirSync(f.home).filter((name) =>
+    name.startsWith("omnesis-desktop-bundle-smoke-"),
+  );
+  expect(homes).toHaveLength(1);
+  expect(statSync(join(f.home, homes[0])).mode & 0o777).toBe(0o700);
+});
+
+test("a changed sealed inventory refuses analytics qualification before any engine process", async () => {
+  const f = analyticsSmokeFixture();
+  vi.spyOn(inventory, "inventoryBundle").mockResolvedValue([{ path: "invented-mismatch" }]);
+  const qualify = vi.spyOn(analytics, "qualifyDesktopAnalyticsRestore").mockResolvedValue();
+  await expect(smokeRuntime(f.runtime, f.options)).rejects.toThrow(
+    "Runtime differs from its sealed build inventory",
+  );
+  expect(analytics.qualifyDesktopAnalytics).not.toHaveBeenCalled();
+  expect(qualify).not.toHaveBeenCalled();
+  expect(readdirSync(f.home)).toEqual(["runtime"]);
+});
+
+// This exercises the owned filesystem boundary, not a native process-join proof.
+test("home removal refusal preserves the primary qualification error and exact retained home", async () => {
+  const f = analyticsSmokeFixture();
+  const primary = new Error("Invented qualification failure");
+  const removal = Object.assign(new Error("Invented removal refusal"), { code: "EACCES" });
+  let ownedHome;
+  vi.spyOn(analytics, "qualifyDesktopAnalyticsRestore").mockImplementation(({ home }) => {
+    ownedHome = home;
+    return Promise.reject(primary);
+  });
+  const remove = vi.mocked(filesystem.rm).mockRejectedValueOnce(removal);
+  let failure;
+  try {
+    await smokeRuntime(f.runtime, f.options);
+  } catch (error) {
+    failure = error;
+  }
+  expect(failure).toBeInstanceOf(AggregateError);
+  expect(failure.errors).toEqual([primary, removal]);
+  expect(failure.errors[0]).toBe(primary);
+  expect(failure.errors[1]).toBe(removal);
+  expect(failure.cleanupFailure).toBe("runtime-qualification-home");
+  expect(remove).toHaveBeenCalledExactlyOnceWith(ownedHome, { recursive: true, force: true });
+  expect(statSync(ownedHome).mode & 0o777).toBe(0o700);
+  expect(readdirSync(f.home)).toContain(ownedHome.slice(f.home.length + 1));
+});
+
+function receiptSmokeFixture() {
+  const f = analyticsSmokeFixture();
+  const output = join(f.home, "package-1-1"),
+    artifact = join(f.home, "evidence/package-1-1");
+  mkdirSync(output, { mode: 0o700 });
+  mkdirSync(join(f.home, "evidence"), { mode: 0o700 });
+  mkdirSync(artifact, { mode: 0o700 });
+  writeFileSync(join(f.home, ".omnesis-desktop-scratch"), "desktop-native-v1\n", { mode: 0o600 });
+  // This is an actual canonical owned package attempt, not an arbitrary export path.
+  const runtime = join(output, "runtime");
+  renameSync(f.runtime, runtime);
+  f.runtime = runtime;
+  f.destination = join(artifact, "analytics-restore.json");
+  f.options.analyticsRestore.receipt = f.destination;
+  return f;
+}
+async function writeSmokeProof({ home }) {
+  const receipt = (role) => ({
+    format: 1,
+    role,
+    rootClosed: true,
+    treeJoined: true,
+    code: 0,
+    forced: false,
+  });
+  for (const role of ["source", "target"])
+    await filesystem.writeFile(
+      join(home, `analytics-restore-${role}-process.json`),
+      JSON.stringify(receipt(role)),
+      { mode: 0o600 },
+    );
+  await filesystem.mkdir(join(home, "database-fixture/analytics-restore"), { mode: 0o700 });
+  await filesystem.writeFile(
+    join(home, "database-fixture/analytics-restore/qualification.json"),
+    JSON.stringify({
+      format: 1,
+      compiledEntry: true,
+      staticModule: true,
+      sourceUnchanged: true,
+      keyedRowsAndConstraints: true,
+      encryptedPrivateOutputs: true,
+      authenticatedStagingRemoved: true,
+      nativeDataFdMatched: true,
+    }),
+    { mode: 0o600 },
+  );
+}
+
+test("analytics smoke exports actual private proof before its successful home cleanup", async () => {
+  const f = receiptSmokeFixture();
+  let ownedHome;
+  vi.spyOn(analytics, "qualifyDesktopAnalyticsRestore").mockImplementation(async (args) => {
+    ownedHome = args.home;
+    await writeSmokeProof(args);
+  });
+  await smokeRuntime(f.runtime, f.options);
+  const receipt = JSON.parse(await filesystem.readFile(f.destination, "utf8"));
+  expect(receipt).toMatchObject({
+    scope: "compiled-analytics-restore",
+    source: { treeJoined: true, rootClosed: true },
+    target: { treeJoined: true, rootClosed: true },
+    qualification: { compiledEntry: true },
+  });
+  expect(statSync(f.destination).mode & 0o777).toBe(0o600);
+  await expect(filesystem.lstat(ownedHome)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await filesystem.readFile(f.destination, "utf8")).not.toContain(f.home);
+});
+
+test("an unconfirmed export retains its home and never turns qualification failure into success", async () => {
+  const f = receiptSmokeFixture();
+  let ownedHome;
+  vi.spyOn(analytics, "qualifyDesktopAnalyticsRestore").mockImplementation(async (args) => {
+    ownedHome = args.home;
+    await writeSmokeProof(args);
+    await filesystem.writeFile(
+      join(args.home, "analytics-restore-target-process.json"),
+      JSON.stringify({
+        format: 1,
+        role: "target",
+        rootClosed: true,
+        treeJoined: false,
+        code: 0,
+        forced: false,
+      }),
+    );
+  });
+  await expect(smokeRuntime(f.runtime, f.options)).rejects.toMatchObject({
+    cleanupFailure: "analytics-restore-evidence",
+  });
+  expect(statSync(ownedHome).mode & 0o777).toBe(0o700);
+  await expect(filesystem.lstat(f.destination)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+test("duplicate export refuses before any analytics process and preserves the original artifact", async () => {
+  const f = receiptSmokeFixture();
+  writeFileSync(f.destination, "invented prior receipt", { mode: 0o600 });
+  const qualify = vi.spyOn(analytics, "qualifyDesktopAnalyticsRestore");
+  await expect(smokeRuntime(f.runtime, f.options)).rejects.toThrow("already exists");
+  expect(qualify).not.toHaveBeenCalled();
+  expect(analytics.qualifyDesktopAnalytics).not.toHaveBeenCalled();
+  expect(await filesystem.readFile(f.destination, "utf8")).toBe("invented prior receipt");
+});
+
+function failedTarget() {
+  return Object.defineProperty(new Error("invented-private-secret"), "analyticsRestoreFailure", {
+    value: { role: "target", stage: "beforeDataFD", errorClass: "Error", errorCode: "EBADF" },
+  });
+}
+test("failed compiled proof survives actual home cleanup as private failure evidence, never success", async () => {
+  const f = receiptSmokeFixture(),
+    primary = failedTarget();
+  let ownedHome;
+  vi.spyOn(analytics, "qualifyDesktopAnalyticsRestore").mockImplementation(async (args) => {
+    ownedHome = args.home;
+    await writeSmokeProof(args);
+    await filesystem.writeFile(
+      join(args.home, "analytics-restore-target-process.json"),
+      JSON.stringify({
+        format: 1,
+        role: "target",
+        rootClosed: true,
+        treeJoined: true,
+        code: 1,
+        forced: false,
+      }),
+    );
+    throw primary;
+  });
+  await expect(smokeRuntime(f.runtime, f.options)).rejects.toBe(primary);
+  const path = join(dirname(f.destination), "analytics-restore-failure.json"),
+    text = await filesystem.readFile(path, "utf8"),
+    receipt = JSON.parse(text);
+  expect(receipt).toMatchObject({
+    scope: "compiled-analytics-restore-failure",
+    role: "target",
+    stage: "beforeDataFD",
+    errorClass: "Error",
+    errorCode: "EBADF",
+    source: { rootClosed: true, treeJoined: true, code: 0 },
+    target: { rootClosed: true, treeJoined: true, code: 1 },
+  });
+  expect(text).not.toContain("invented-private-secret");
+  expect(text).not.toContain(f.home);
+  expect(statSync(path).mode & 0o777).toBe(0o600);
+  await expect(filesystem.lstat(ownedHome)).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(filesystem.lstat(f.destination)).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(
+    readAnalyticsRestoreReceipt({ artifact: dirname(f.destination), runtime: f.runtime }),
+  ).rejects.toThrow("cannot be accepted as success");
+});
+test("failure without trusted stage markers exports unavailable, never arbitrary error properties", async () => {
+  const f = receiptSmokeFixture(),
+    primary = Object.assign(new Error("invented-private-secret"), {
+      analyticsRestoreFailure: {
+        role: "target",
+        stage: "invented-private-secret",
+        errorClass: "Error",
+        errorCode: "EBADF",
+      },
+    });
+  vi.spyOn(analytics, "qualifyDesktopAnalyticsRestore").mockImplementation(async (args) => {
+    await writeSmokeProof(args);
+    throw primary;
+  });
+  await expect(smokeRuntime(f.runtime, f.options)).rejects.toBe(primary);
+  const text = await filesystem.readFile(
+    join(dirname(f.destination), "analytics-restore-failure.json"),
+    "utf8",
+  );
+  expect(JSON.parse(text)).toMatchObject({
+    role: "target",
+    stage: "unavailable",
+    errorClass: "unavailable",
+    errorCode: "unavailable",
+  });
+  expect(text).not.toContain("invented-private-secret");
+});
+test.each(["duplicate", "unknown-process"])(
+  "failure export refusal preserves primary and cleanup causes plus exact home (%s)",
+  async (kind) => {
+    const f = receiptSmokeFixture(),
+      primary = failedTarget();
+    let ownedHome;
+    const path = join(dirname(f.destination), "analytics-restore-failure.json");
+    if (kind === "duplicate") writeFileSync(path, "invented prior evidence", { mode: 0o600 });
+    vi.spyOn(analytics, "qualifyDesktopAnalyticsRestore").mockImplementation(async (args) => {
+      ownedHome = args.home;
+      await writeSmokeProof(args);
+      if (kind === "unknown-process")
+        await filesystem.writeFile(
+          join(args.home, "analytics-restore-target-process.json"),
+          JSON.stringify({
+            format: 1,
+            role: "target",
+            rootClosed: true,
+            treeJoined: true,
+            code: 999,
+            forced: false,
+          }),
+        );
+      throw primary;
+    });
+    const failure = await smokeRuntime(f.runtime, f.options).then(
+      () => null,
+      (error) => error,
+    );
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect(failure.errors[0]).toBe(primary);
+    expect(failure.errors[1]).toBeInstanceOf(Error);
+    expect(failure.cleanupFailure).toBe("analytics-restore-failure-evidence");
+    expect(statSync(ownedHome).mode & 0o777).toBe(0o700);
+    if (kind === "duplicate")
+      expect(await filesystem.readFile(path, "utf8")).toBe("invented prior evidence");
+    else await expect(filesystem.lstat(path)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);

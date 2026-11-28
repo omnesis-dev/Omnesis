@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { ownedProcessCleanupReceipt } from "@omnesis/core";
-
 /**
  * E2E test harness: starts a real gateway subprocess + collector in-process
  * with injected mock providers. Tests communicate via direct harness method
@@ -17,8 +15,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "nod
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createServer, type AddressInfo } from "node:net";
-import type { ChildProcess } from "node:child_process";
-import { parseSourceKey, websocketAuthProtocol } from "@omnesis/core";
+import { ownedProcessCleanupReceipt, parseSourceKey, websocketAuthProtocol } from "@omnesis/core";
 import { SourceId } from "@omnesis/types";
 import { GatewayWsClient, HttpGatewayClient } from "@omnesis/gateway-client";
 import { SyncEngine } from "../sync-engine.js";
@@ -39,6 +36,7 @@ import {
   createMockDescriptor,
   type MockSourceOptions,
 } from "./mock-source.js";
+import type { ChildProcess } from "node:child_process";
 import type { SourceDescriptor } from "@omnesis/source-sdk";
 import type { CollectorInternalConfig } from "../internal-config.js";
 
@@ -64,6 +62,8 @@ async function getFreePort(): Promise<number> {
 }
 
 export interface HarnessOptions {
+  /** Owned protected-store fixtures decrypt their bootstrap credential through their declared OS adapter. */
+  readGatewayToken?: (configDir: string) => Promise<string | null>;
   /** Explicit environment for an isolated gateway under test. Fixed state paths win. */
   extraGatewayEnv?: NodeJS.ProcessEnv;
   /** Route collector and assertion traffic through a test transport after gateway boot. */
@@ -124,6 +124,11 @@ export class E2EHarness {
     mkdirSync(this.configDir, { recursive: true });
     this.dbPath = join(this.tempDir, "omnesis-e2e.db");
     this.configPath = join(this.configDir, "collector.json");
+  }
+
+  /** Read-only location for verifying that another installation does not adopt this instance. */
+  getGatewayConfigDirectory(): string {
+    return this.configDir;
   }
 
   /**
@@ -566,9 +571,11 @@ export class E2EHarness {
           await new Promise((r) => setTimeout(r, 100));
           continue;
         }
-        let token: string;
+        let token: string | null;
         try {
-          token = readFileSync(tokenPath, "utf-8").trim();
+          token = this.options.readGatewayToken
+            ? await this.options.readGatewayToken(this.configDir)
+            : readFileSync(tokenPath, "utf-8").trim();
         } catch {
           await new Promise((r) => setTimeout(r, 100));
           continue;

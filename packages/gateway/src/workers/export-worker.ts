@@ -26,6 +26,7 @@ import { createWriteStream } from "node:fs";
 import { once } from "node:events";
 import { parentPort, workerData } from "node:worker_threads";
 import Database from "better-sqlite3";
+import { produceEncryptedArtifact } from "@omnesis/core";
 type Db = Database.Database;
 
 import { openEncryptedSqlite } from "../sqlite-encryption.js";
@@ -148,11 +149,10 @@ async function run(input: ExportWorkerInput): Promise<void> {
     `FROM documents ${where} ORDER BY id ASC LIMIT ?`;
   const stmt = db.prepare<(string | number)[], DocRow>(sql);
 
-  const stream = createWriteStream(input.destPath, { encoding: "utf8" });
   const perSource: Record<string, number> = {};
   let total = 0;
 
-  try {
+  const produce = async (stream: NodeJS.WritableStream) => {
     if (input.format === "csv") {
       await write(stream, CSV_COLUMNS.join(",") + "\n");
     }
@@ -178,10 +178,26 @@ async function run(input: ExportWorkerInput): Promise<void> {
 
       if (rows.length < input.batchSize) break;
     }
-
-    await new Promise<void>((resolve, reject) => {
-      stream.end((err?: Error | null) => (err ? reject(err) : resolve()));
-    });
+  };
+  try {
+    if (input.artifactEncryption) {
+      await produceEncryptedArtifact(input.destPath, input.artifactEncryption, produce);
+    } else {
+      const stream = createWriteStream(input.destPath, {
+        encoding: "utf8",
+        flags: "wx",
+        mode: 0o600,
+      });
+      try {
+        await produce(stream);
+        await new Promise<void>((resolve, reject) => {
+          stream.once("error", reject);
+          stream.end(() => resolve());
+        });
+      } finally {
+        stream.destroy();
+      }
+    }
   } finally {
     db.close();
   }

@@ -56,7 +56,11 @@ jobs:
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
 
       - name: Record content-bound telemetry build provenance
-        run: node scripts/release/telemetry-build.mjs --write-proof
+        run: |
+          # Historical release tags predate the telemetry provenance helper.
+          if [ -f scripts/release/telemetry-build.mjs ]; then
+            node scripts/release/telemetry-build.mjs --write-proof
+          fi
 
       - name: Derive immutable image tag
         id: target

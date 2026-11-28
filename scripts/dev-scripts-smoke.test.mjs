@@ -2068,6 +2068,58 @@ describe("android.yml CI workflow structure (C20)", () => {
 });
 
 describe("release.yml verification permissions", () => {
+  it.each(
+    [
+      ["release.yml", "images"],
+      ["docker-publish.yml", "publish"],
+    ].flatMap(([workflowFile, jobName]) =>
+      ["historical", "current", "failing-helper"].map((tree) => ({ workflowFile, jobName, tree })),
+    ),
+  )(
+    "retains content-bound telemetry provenance without breaking historical release trees ($workflowFile/$tree)",
+    async ({ workflowFile, jobName, tree }) => {
+      const { parse } = await import("yaml");
+      const workflow = parse(
+        readFileSync(join(repoRoot, ".github/workflows", workflowFile), "utf8"),
+      );
+      const step = workflow.jobs[jobName].steps.find(
+        (candidate) => candidate.name === "Record content-bound telemetry build provenance",
+      );
+      const directory = tmpDir("omnesis-release-telemetry-step-");
+      if (tree !== "historical") {
+        mkdirSync(join(directory, "scripts/release"), { recursive: true });
+        writeFileSync(
+          join(directory, "scripts/release/telemetry-build.mjs"),
+          'import { writeFileSync } from "node:fs";\n' +
+            'writeFileSync("invocation.json", JSON.stringify(process.argv.slice(2)));\n' +
+            (tree === "failing-helper"
+              ? "process.exit(23);\n"
+              : 'writeFileSync("telemetry-proof.json", "invented proof");\n'),
+        );
+      }
+      const result = spawnSync(
+        bashExecutable(),
+        ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", step.run],
+        {
+          cwd: directory,
+          env: { ...process.env, PATH: prependPath(dirname(process.execPath), process.env.PATH) },
+          encoding: "utf8",
+          timeout: 10000,
+        },
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(tree === "failing-helper" ? 23 : 0);
+      expect(existsSync(join(directory, "telemetry-proof.json"))).toBe(tree === "current");
+      if (tree === "historical") {
+        expect(existsSync(join(directory, "invocation.json"))).toBe(false);
+      } else {
+        expect(JSON.parse(readFileSync(join(directory, "invocation.json"), "utf8"))).toEqual([
+          "--write-proof",
+        ]);
+      }
+    },
+  );
+
   it("can read the full-validation evidence that gates a release tag", async () => {
     const { parse } = await import("yaml");
     const workflow = parse(readFileSync(join(repoRoot, ".github/workflows/release.yml"), "utf8"));
@@ -2247,12 +2299,17 @@ describe("release.yml verification permissions", () => {
     expect(dryRun.if).toBe("needs.verify.outputs.armed != 'true'");
   });
 
-  it("creates the GitHub Release on every tag and lists tarball sums only when they were published", async () => {
+  it("selects the required release publisher and lists tarball sums only when they were published", async () => {
     const { parse } = await import("yaml");
     const workflow = parse(readFileSync(join(repoRoot, ".github/workflows/release.yml"), "utf8"));
     const steps = workflow.jobs["github-release"].steps;
     const create = steps.find((step) => step.name === "Create the GitHub Release");
-    expect(create.if).toBeUndefined();
+    expect(create.if).toBe("needs.verify.outputs.desktop_armed != 'true'");
+    const desktop = steps.find(
+      (step) => step.name === "Publish complete verified desktop release from a draft",
+    );
+    expect(desktop.if).toBe("needs.verify.outputs.desktop_armed == 'true'");
+    expect(desktop.run).toBe("node scripts/release/github-release.mjs release --publish-desktop");
     const notes = steps.find((step) => step.name === "Compose the release notes");
     expect(notes.env.PACKAGES_PUBLISHED).toBe("${{ needs.verify.outputs.armed }}");
     // github-release.test.mjs covers what the shared module attaches.
@@ -2394,6 +2451,7 @@ describe("full-validation workflow topology", () => {
       knip: "knip",
       swift: "swift_lint",
       ios: "apple",
+      desktop: "desktop",
       android: "android",
       "docker-smoke": "docker_smoke",
       "install-smoke": "install_smoke",

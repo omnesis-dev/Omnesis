@@ -10,7 +10,8 @@ import { z } from "zod";
 import { ensureAcmeBootstrap } from "./acme-bootstrap.js";
 import { AcmeDnsChallenges } from "./acme-dns.js";
 import { cloudflareDnsProvider } from "./cloudflare-dns.js";
-import { readPrivateJson } from "./google-credentials.js";
+import { readPrivateJson, readPrivateText as readScopedPrivateText } from "./google-credentials.js";
+import { gatewayCredentialOptions } from "./gateway-secret-storage.js";
 import {
   gatewayKeySessionSource,
   prepareGatewayOwner,
@@ -106,6 +107,7 @@ export async function createGatewayAcmeController(
   | undefined
 > {
   if (!env.OMNESIS_ACME_DIRECTORY_URL) return undefined;
+  const secretFileOptions = gatewayCredentialOptions(options.configDir, env);
   const config = schema.parse(env);
   if (
     config.OMNESIS_ACME_DNS_PROVIDER === "independent" &&
@@ -139,6 +141,7 @@ export async function createGatewayAcmeController(
     throw new Error("Public ACME requires a separate stable private key path");
   const keyOptions = {
     configDir: options.configDir,
+    secretFileOptions,
     relayUrl: config.OMNESIS_CLOUD_RELAY_URL,
     sessionFile: config.OMNESIS_CLOUD_RELAY_SESSION_FILE,
     gatewayId: config.OMNESIS_CLOUD_RELAY_GATEWAY_ID,
@@ -199,7 +202,9 @@ export async function createGatewayAcmeController(
     assertContinuing(signal);
     const cert = await readFile(config.OMNESIS_ACME_CERT_FILE, "utf8");
     assertContinuing(signal);
-    const key = await readPrivateText(publicKeyFile);
+    const key = secretFileOptions
+      ? await readScopedPrivateText(publicKeyFile, secretFileOptions)
+      : await readPrivateText(publicKeyFile);
     assertContinuing(signal);
     await options.activate({ hostname: bindingOrigin(publicOrigin).hostname, cert, key }, signal);
     assertContinuing(signal);
@@ -215,6 +220,8 @@ export async function createGatewayAcmeController(
         try {
           assertContinuing(signal);
           await ensureAcmeBootstrap({
+            configDir: options.configDir,
+            secretFileOptions,
             publicOrigin: publicOrigin,
             certificateFile: config.OMNESIS_ACME_CERT_FILE,
             privateKeyFile: publicKeyFile,
@@ -310,6 +317,8 @@ export async function createGatewayAcmeController(
           assertContinuing(signal);
           state = {
             renewal: new GatewayAcmeRenewal({
+              configDir: options.configDir,
+              secretFileOptions,
               directoryUrl: config.OMNESIS_ACME_DIRECTORY_URL,
               publicOrigin: publicOrigin,
               certificateFile: config.OMNESIS_ACME_CERT_FILE,
@@ -375,6 +384,8 @@ export async function createGatewayAcmeController(
           if (!state) await initialize(combined);
           assertContinuing(combined);
           await ensureAcmeBootstrap({
+            configDir: options.configDir,
+            secretFileOptions,
             publicOrigin: publicOrigin,
             certificateFile: config.OMNESIS_ACME_CERT_FILE,
             privateKeyFile: publicKeyFile,

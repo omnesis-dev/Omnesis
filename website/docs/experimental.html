@@ -125,7 +125,7 @@
             <li><a href="search">Search</a></li>
             <li><a href="agent">The agent</a></li>
             <li><a href="connect">Agents &amp; MCP</a></li>
-            <li><a href="apps">Mobile apps</a></li>
+            <li><a href="apps">Apps</a></li>
             <li><a href="notifications">Notifications</a></li>
             <li><a href="operating">Operating</a></li>
             <li><a href="security">Security</a></li>
@@ -734,6 +734,24 @@
           the documents it already wrote; parts a phone has not uploaded yet stay on the phone until
           Recordings is turned back on. Recording other people is your responsibility: tell them,
           and follow the law where you record.
+        </p>
+
+        <p>
+          A library restore preserves recording history and pauses all recording background work for
+          review, including audio deletion, transcription and document processing. Review the
+          current transcription model, speaker setting and audio retention in the portal before
+          resuming. Selecting local speakers can download voice models. Retention of zero days can
+          remove old or failed audio immediately; it does not promise to keep audio until
+          transcription succeeds. Unrelated configuration updates preserve this pause. An advanced
+          administrator can explicitly acknowledge these choices by setting
+          <code>inference.recordings.restoreReviewRequired</code> to <code>false</code> through the
+          configuration API. Omitting the field from an older API configuration replacement does not
+          acknowledge review.
+        </p>
+        <p>
+          Restoring history never enrolls the backup's voice as the destination's owner. Recognition
+          is turned off after restore; turn it on explicitly and enrol your voice again if needed
+          before using recognition on restored data.
         </p>
 
         <h2 id="brain">Omnesis Brain</h2>

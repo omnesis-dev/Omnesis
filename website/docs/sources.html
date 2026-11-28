@@ -128,7 +128,7 @@
             <li><a href="search">Search</a></li>
             <li><a href="agent">The agent</a></li>
             <li><a href="connect">Agents &amp; MCP</a></li>
-            <li><a href="apps">Mobile apps</a></li>
+            <li><a href="apps">Apps</a></li>
             <li><a href="notifications">Notifications</a></li>
             <li><a href="operating">Operating</a></li>
             <li><a href="security">Security</a></li>
@@ -1747,6 +1747,15 @@
           <code>omnesis sources add obsidian-notes ~/Vaults/Work --device &lt;collector&gt;</code>.
           The path is checked on that collector, so <code>~</code> and relative paths refer to its
           machine, not the one running the CLI.
+        </p>
+
+        <p>
+          The Mac app checks the selected collection computer's source requirements. Missing
+          permission information is unverified, rather than permission to collect. If an older
+          gateway or collector cannot check required access, update it before adding that source in
+          the app. A collector that explicitly declares no local permission requirement needs no
+          file-access grant; account sign-in remains separate. Existing collection and library reads
+          remain available during this setup limitation.
         </p>
 
         <h3 id="adding-without-a-terminal">Adding a source from a script or an agent</h3>

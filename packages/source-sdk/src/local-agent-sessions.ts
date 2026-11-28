@@ -10,6 +10,7 @@ import {
   renderConversationDay,
   toErrorMessage,
 } from "@omnesis/core";
+import { isReadAccessDenied } from "./read-access.js";
 import {
   localAgentRootId,
   scanLocalAgentSessionFiles,
@@ -21,6 +22,7 @@ import {
 import { SnapshotEnumeration } from "./snapshot.js";
 import { syncPage } from "./source.js";
 import { probeTreeReadAccess } from "./read-access-tree.js";
+import { probeRootReadAccess } from "./read-access-roots.js";
 import type { SnapshotClaim } from "./snapshot.js";
 import type { ConversationMessage } from "@omnesis/core";
 import type { DocumentInput, ProviderId, SourceId, SyncIssue } from "@omnesis/types";
@@ -311,6 +313,8 @@ export function createLocalAgentSessionSource(
   const roots = options.adapter.roots.map((root) => root.path);
 
   return {
+    probePermissionAccess: ({ signal }) =>
+      probeRootReadAccess({ signal, roots: options.adapter.roots }),
     probeReadAccess: ({ signal }) =>
       probeTreeReadAccess({
         signal,
@@ -337,6 +341,7 @@ export function createLocalAgentSessionSource(
       if (options.adapter.duplicateSessionPolicy === "newest") {
         scan.files.sort((a, b) => b.mtimeMs - a.mtimeMs || b.key.localeCompare(a.key));
       }
+      let permissionDenied = scan.permissionDenied === true;
       if (!scan.complete) {
         // The scan already recorded why each root fell short; saying only
         // that it "is incomplete" sends the reader looking for a cause the
@@ -657,6 +662,7 @@ export function createLocalAgentSessionSource(
             complete: true,
           };
         } catch (error) {
+          if (isReadAccessDenied(error)) permissionDenied = true;
           if (syncOptions?.signal?.aborted) throw syncOptions.signal.reason;
           const lastKnownComplete =
             previous?.complete === true || previous?.lastKnownComplete === true;
@@ -758,6 +764,7 @@ export function createLocalAgentSessionSource(
         throw new Error(`Session cursor exceeds ${MAX_CURSOR_BYTES} bytes`);
       }
       return syncPage(outputDocuments, nextCursor, {
+        ...(permissionDenied ? { permissionDenied: true as const } : {}),
         hasMore,
         presentExternalIds,
         presentClaims,

@@ -597,7 +597,62 @@ authenticated_before="$(docker compose -f "$COMPOSE_FILE" logs collector 2>/dev/
 "${omnesis_env[@]}" OMNESIS_RESTORE_HEALTH_TIMEOUT=300 "$OMNESIS" restore "$BACKUP_PATH" --force < /dev/null > "$WORK/restore.out" 2>&1 \
   || { cat "$WORK/restore.out" >&2; die "omnesis restore failed"; }
 grep -q "the gateway is up and healthy" "$WORK/restore.out" || { cat "$WORK/restore.out" >&2; die "the restore did not report a healthy gateway"; }
-grep -qx "Standing instructions at backup time." "$CONFIG_DIR/OMNESIS.md" || die "the backup's instructions were not restored"
+# Startup seals restored prose again. Verify its actual decrypted HTTP view and
+# the encrypted disk representation, rather than expecting a plaintext file.
+docker compose -f "$COMPOSE_FILE" exec -T gateway node --input-type=module - <<'NODE' \
+  || die "the backup's instructions were not restored encrypted and readable"
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { get } from "node:https";
+import { join } from "node:path";
+import { loadBootstrapDotEnv } from "@omnesis/config/dotenv-bootstrap";
+
+// Compose exec starts a fresh process. Match the gateway's bootstrap: secure
+// records the backend/passphrase-file selectors in this install's .env.
+loadBootstrapDotEnv();
+const { DEFAULT_CONFIG_DIR, isEncryptedSecretFile, readTokenFile } = await import("@omnesis/core");
+
+const expected = "Standing instructions at backup time.\n";
+const configDir = process.env.OMNESIS_CONFIG_DIR || DEFAULT_CONFIG_DIR;
+const token = readTokenFile(configDir);
+assert.ok(token, "the restored admin token must be readable");
+const raw = readFileSync(join(configDir, "OMNESIS.md"), "utf8");
+assert.ok(isEncryptedSecretFile(raw), "restored instructions must be encrypted at rest");
+assert.ok(!raw.includes(expected.trim()), "restored prose must not remain plaintext");
+const current = await new Promise((resolve, reject) => {
+  const request = get({
+    hostname: "127.0.0.1",
+    port: Number(process.env.OMNESIS_GATEWAY_PORT || 7600),
+    path: "/admin/instructions",
+    // The isolated smoke gateway uses its own self-signed certificate.
+    rejectUnauthorized: false,
+    headers: { Authorization: `Bearer ${token}` },
+    timeout: 10_000,
+  }, (response) => {
+    if (response.statusCode !== 200) {
+      response.resume();
+      reject(new Error("Restored instructions request failed"));
+      return;
+    }
+    let body = "";
+    response.setEncoding("utf8");
+    response.on("data", (chunk) => {
+      body += chunk;
+      if (body.length > 32_768) request.destroy(new Error("Instructions response is too large"));
+    });
+    response.on("error", reject);
+    response.on("end", () => {
+      try { resolve(JSON.parse(body)); } catch (error) { reject(error); }
+    });
+  });
+  request.on("timeout", () => request.destroy(new Error("Instructions request timed out")));
+  request.on("error", reject);
+});
+assert.equal(current.exists, true);
+assert.equal(current.problem, null);
+assert.equal(current.truncated, false);
+assert.equal(current.content, expected);
+NODE
 [[ "$(cd "$CONFIG_DIR" && sha256sum docker-compose.yml install-method keyring.pass models/sentinel.bin exports/sentinel.jsonl backups/older-sentinel/backup-manifest.json)" == "$machine_before" ]] \
   || die "the restore changed what the machine owns"
 [[ -f "$BACKUP_PATH/backup-manifest.json" ]] || die "the restore removed the backup it restored"

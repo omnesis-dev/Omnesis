@@ -123,6 +123,7 @@ export const discordDocumentProfile: DocumentEventProfile = {
 
 export default defineProvider<DiscordContext>({
   provider: { id: "discord", name: "Discord" },
+  permissionRequirements: [],
   authType: "api-key",
   credentials: discordCredentialsSpec,
 

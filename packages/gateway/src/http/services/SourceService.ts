@@ -33,6 +33,7 @@ import {
 } from "@omnesis/types";
 import {
   getSource,
+  getSourceMemberConfigOverride,
   getSourceForMember,
   isSourceCleanupPending,
   isSourceRemoved,
@@ -51,6 +52,7 @@ import {
   countRestoredByMember,
   listDeletersByRestorer,
 } from "../../data/repositories/ReplicaDeletionClaimRepository.js";
+import { sourceSettingsRevision } from "../../data/repositories/source-settings-revision.js";
 import {
   deviceForgetImpact,
   isDeviceForgotten,
@@ -1047,6 +1049,26 @@ export class SourceService {
     return device;
   }
 
+  settingsForAdmin(
+    id: SourceId,
+    member?: DeviceId,
+  ): { source: SourceRecord; revision: string } | null {
+    const source = getSource(this.deps.db, id);
+    if (!source || (member !== undefined && !isSourceMember(this.deps.db, id, member))) return null;
+    return {
+      source: member === undefined ? source : this.sourceForMember(source, member),
+      revision: sourceSettingsRevision(
+        source,
+        member === undefined
+          ? undefined
+          : {
+              deviceId: member,
+              config: getSourceMemberConfigOverride(this.deps.db, id, member),
+            },
+      ),
+    };
+  }
+
   private sourceForMember(source: SourceRecord, deviceId: DeviceId): SourceRecord {
     return getSourceForMember(this.deps.db, source.id, deviceId) ?? source;
   }
@@ -1228,11 +1250,21 @@ export class SourceService {
     deviceId: DeviceId,
     configOverride: Record<string, unknown>,
     pairingFence?: PairingGenerationFence,
+    expectedRevision?: string,
   ): Promise<SourceRecord> {
     this.assertNoModeTransition(sourceId);
     const { db, writeGate: w, statusCache, notifySourceChange } = this.deps;
     const source = getSource(db, sourceId);
     if (!source) throw new HttpError(404, "SOURCE_NOT_FOUND", `source ${sourceId} not found`);
+    if (
+      expectedRevision !== undefined &&
+      this.settingsForAdmin(sourceId, deviceId)?.revision !== expectedRevision
+    )
+      throw new HttpError(
+        409,
+        "SOURCE_SETTINGS_CHANGED",
+        "These source settings changed. Refresh them before saving again.",
+      );
     if (!isSourceMember(db, sourceId, deviceId)) {
       throw new HttpError(409, "DEVICE_NOT_MEMBER", `device ${deviceId} does not host ${sourceId}`);
     }
@@ -1257,9 +1289,17 @@ export class SourceService {
         configOverride,
         memberScopedParams,
         pairingFence,
+        expectedRevision,
       ))
     ) {
       this.assertNoModeTransition(sourceId);
+      const actual = this.settingsForAdmin(sourceId, deviceId);
+      if (expectedRevision !== undefined && actual && actual.revision !== expectedRevision)
+        throw new HttpError(
+          409,
+          "SOURCE_SETTINGS_CHANGED",
+          "These source settings changed. Refresh them before saving again.",
+        );
       if (!getSource(db, sourceId)) {
         throw new HttpError(404, "SOURCE_NOT_FOUND", `source ${sourceId} not found`);
       }
@@ -2209,6 +2249,8 @@ export class SourceService {
     id: SourceId,
     patch: {
       config?: Record<string, unknown>;
+      memberConfig?: Record<string, unknown>;
+      expectedRevision?: string;
       enabled?: boolean;
       deviceId?: DeviceId;
       multiDeviceMode?: MultiDeviceMode;
@@ -2225,10 +2267,25 @@ export class SourceService {
       notifySourceChange,
     } = this.deps;
     const current = getSource(db, id);
+    if (patch.expectedRevision !== undefined) {
+      if (patch.multiDeviceMode !== undefined)
+        throw new HttpError(
+          400,
+          "MODE_TRANSITION_MUST_BE_ISOLATED",
+          "Change source mode separately from its settings revision.",
+        );
+      if (current && sourceSettingsRevision(current) !== patch.expectedRevision)
+        throw new HttpError(
+          409,
+          "SOURCE_SETTINGS_CHANGED",
+          "These source settings changed. Refresh them before saving again.",
+        );
+    }
     if (patch.multiDeviceMode !== undefined && patch.multiDeviceMode !== current?.multiDeviceMode) {
       if (!current) return null;
       if (
         patch.config !== undefined ||
+        patch.memberConfig !== undefined ||
         patch.enabled !== undefined ||
         patch.deviceId !== undefined
       ) {
@@ -2321,17 +2378,45 @@ export class SourceService {
     }
     const mutablePatch: {
       config?: Record<string, unknown>;
+      memberConfigOverride?: Record<string, unknown>;
+      expectedRevision?: string;
       enabled?: boolean;
       deviceId?: DeviceId;
       memberScopedParams?: readonly string[];
       pairingFence?: PairingGenerationFence;
     } = {
       config: patch.config,
+      memberConfigOverride: patch.memberConfig,
+      expectedRevision: patch.expectedRevision,
       enabled: patch.enabled,
       deviceId: patch.deviceId,
       memberScopedParams: validatedMemberScopedParams,
       pairingFence: patch.pairingFence,
     };
+    if (patch.memberConfig !== undefined && current) {
+      if (
+        !patch.expectedRevision ||
+        current.multiDeviceMode !== "exclusive" ||
+        patch.deviceId === undefined ||
+        patch.deviceId === current.deviceId ||
+        isSourceMember(db, current.id, patch.deviceId)
+      )
+        throw new HttpError(
+          400,
+          "MEMBER_SETTINGS_MUST_BE_ADDRESSED",
+          "Edit an existing device's settings through its addressed source member. New local settings may accompany a confirmed exclusive move.",
+        );
+      const target = getDevice(db, patch.deviceId ?? current.deviceId);
+      if (!target) throw new HttpError(404, "DEVICE_NOT_FOUND", "The source device is unavailable");
+      const names = this.memberConfigContractFor(current);
+      this.assertMemberConfigContract(target, current.type, names);
+      this.assertMemberConfigPlacement(
+        target,
+        { type: current.type, accountId: current.accountId, memberConfig: patch.memberConfig },
+        names,
+      );
+      mutablePatch.memberScopedParams = names;
+    }
     if (patch.deviceId !== undefined) {
       // A deviceId patch is the explicit re-home path, so it validates the
       // target the way a join does: the device must exist, be paired, and
@@ -2394,6 +2479,17 @@ export class SourceService {
     const moved =
       patch.deviceId === undefined ? await move() : await this.withLeaseMutation(id, move);
     if (!moved) {
+      const actual = getSource(db, id);
+      if (
+        patch.expectedRevision !== undefined &&
+        actual &&
+        sourceSettingsRevision(actual) !== patch.expectedRevision
+      )
+        throw new HttpError(
+          409,
+          "SOURCE_SETTINGS_CHANGED",
+          "These source settings changed. Refresh them before saving again.",
+        );
       this.assertNoModeTransition(id);
       if (patch.deviceId !== undefined && isSourceStreamCleanupPending(db, id, patch.deviceId)) {
         throw new HttpError(
@@ -2682,8 +2778,23 @@ export class SourceService {
   async deleteSource(
     id: SourceId,
     pairingFence?: PairingGenerationFence,
+    expectedRevision?: string,
   ): Promise<{ source: SourceRecord } | null> {
     this.assertNoModeTransition(id);
+    const assertRevision = () => {
+      const source = getSource(this.deps.db, id);
+      if (
+        expectedRevision !== undefined &&
+        source &&
+        sourceSettingsRevision(source) !== expectedRevision
+      )
+        throw new HttpError(
+          409,
+          "SOURCE_SETTINGS_CHANGED",
+          "This source changed. Refresh it before confirming removal again.",
+        );
+    };
+    assertRevision();
     const {
       writeGate: w,
       statusCache,
@@ -2692,14 +2803,16 @@ export class SourceService {
       syncSourceSettingsToConfig,
     } = this.deps;
     const removed = await this.withLeaseMutation(id, async () => {
+      assertRevision();
       if (getSource(this.deps.db, id)) {
         await this.deps.sourceDataRemoval.prepareSourceRemoval(id);
       }
-      const result = await w.removeSource(id, pairingFence);
+      const result = await w.removeSource(id, pairingFence, expectedRevision);
       if (result) this.deps.syncLease?.forgetSource(id);
       return result;
     });
     if (!removed) {
+      assertRevision();
       this.assertNoModeTransition(id);
       return null;
     }

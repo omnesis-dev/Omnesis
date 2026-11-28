@@ -20,6 +20,8 @@ export interface ExportWorkerInput {
   gatewayDbPath: string;
   /** Hex-encoded gateway DB storage key, when live storage encryption is enabled. */
   gatewayDbKeyHex?: string;
+  /** Memory-only output key and authenticated scope; plaintext never reaches a file. */
+  artifactEncryption?: { rootKey: string; scope: string };
   /** Absolute path the documents file is written to (must not exist yet). */
   destPath: string;
   format: ExportFormat;

@@ -537,3 +537,52 @@ describe("ConfigStore — settings kept across a downgrade", () => {
     expect(warned).toMatch(/Ignoring .*omnesis\.json\.newer-settings: not valid JSON/);
   });
 });
+
+test("recording restore review survives legacy replacements and restart; only explicit false acknowledges review", async () => {
+  await store.load();
+  await store.patch({ inference: { recordings: { restoreReviewRequired: true } } });
+  for (const apply of [
+    () => store.put({ inference: { assignments: { transcriber: null } } }),
+    () => store.patch({ inference: null }),
+    () => store.update(() => ({ indexer: { cycleInterval: "10m" } })),
+  ]) {
+    expect((await apply()).ok).toBe(true);
+    expect(store.get().inference?.recordings?.restoreReviewRequired).toBe(true);
+    expect(store.get().inference?.entailment).toEqual({ promptStyle: "judge" });
+  }
+  const restarted = new ConfigStore({ filePath: path });
+  try {
+    await restarted.load();
+    expect(restarted.get().inference?.recordings?.restoreReviewRequired).toBe(true);
+  } finally {
+    restarted.stop();
+  }
+  await store.patch({ inference: { recordings: { restoreReviewRequired: false } } });
+  expect(store.get().inference?.recordings?.restoreReviewRequired).toBe(false);
+});
+
+test("review preservation does not repair invalid input shapes or mutate a caller's raw replacement", async () => {
+  await store.load();
+  await store.patch({ inference: { recordings: { restoreReviewRequired: true } } });
+  for (const candidate of [
+    null,
+    [],
+    7,
+    { inference: null },
+    { inference: [] },
+    { inference: { recordings: null } },
+    { inference: { recordings: [] } },
+    { inference: { recordings: { restoreReviewRequired: "false" } } },
+  ]) {
+    expect((await store.put(candidate)).ok).toBe(false);
+    expect(store.get().inference?.recordings?.restoreReviewRequired).toBe(true);
+  }
+  const candidate = { indexer: { cycleInterval: "10m" } };
+  const before = structuredClone(candidate);
+  expect((await store.put(candidate)).ok).toBe(true);
+  expect(candidate).toEqual(before);
+  expect(store.get().inference).toMatchObject({
+    entailment: { promptStyle: "judge" },
+    recordings: { restoreReviewRequired: true },
+  });
+});

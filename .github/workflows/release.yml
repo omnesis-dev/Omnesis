@@ -56,6 +56,7 @@ jobs:
       # Decided in a step: in an expression an unset variable is null, and
       # null != '0' is false, which silently disabled image publication.
       images_armed: ${{ steps.arming.outputs.images }}
+      desktop_armed: ${{ steps.arming.outputs.desktop }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -111,7 +112,16 @@ jobs:
         id: arming
         env:
           IMAGE_PUBLISH: ${{ vars.OMNESIS_IMAGE_PUBLISH }}
+          OMNESIS_DESKTOP_RELEASE: ${{ vars.OMNESIS_DESKTOP_RELEASE }}
         run: |
+          case "${OMNESIS_DESKTOP_RELEASE:-0}" in
+            0|"") echo "desktop=false" >> "$GITHUB_OUTPUT" ;;
+            1)
+              node --input-type=module -e 'import { assertDesktopReleaseContext } from "./scripts/desktop/release-build.mjs"; assertDesktopReleaseContext(process.env);'
+              echo "desktop=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *) echo "OMNESIS_DESKTOP_RELEASE must be 0 or 1" >&2; exit 1 ;;
+          esac
           if [ "$ARMED" = "true" ]; then
             echo "::notice::npm publication is ARMED."
           else
@@ -125,13 +135,91 @@ jobs:
             echo "images=true" >> "$GITHUB_OUTPUT"
           fi
 
+  # Both native installers must be signed and notarized before any channel publishes.
+  desktop:
+    name: desktop (${{ matrix.arch }})
+    needs: verify
+    if: ${{ needs.verify.outputs.desktop_armed == 'true' }}
+    environment: desktop-release
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            os: macos-26
+          - arch: x64
+            os: macos-26-intel
+    env:
+      RELEASE_SHA: ${{ needs.verify.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          persist-credentials: false
+      - name: Verify fixed release revision and native architecture
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          test "$(uname -m)" = "$(test "$EXPECTED_ARCH" = arm64 && echo arm64 || echo x86_64)"
+      - name: Read pinned runtime version
+        id: runtime
+        run: echo "node=$(python3 -c 'import json; print(json.load(open("scripts/desktop/node-runtime.json"))["version"])')" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ steps.runtime.outputs.node }}
+          cache: npm
+      - name: Validate desktop credential configuration before building or publishing
+        env:
+          OMNESIS_DESKTOP_SIGNING_P12_BASE64: ${{ secrets.OMNESIS_DESKTOP_SIGNING_P12_BASE64 }}
+          OMNESIS_DESKTOP_SIGNING_P12_PASSWORD: ${{ secrets.OMNESIS_DESKTOP_SIGNING_P12_PASSWORD }}
+          OMNESIS_DESKTOP_SIGNING_IDENTITY: ${{ vars.OMNESIS_DESKTOP_SIGNING_IDENTITY }}
+          OMNESIS_DESKTOP_TEAM_ID: ${{ vars.OMNESIS_DESKTOP_TEAM_ID }}
+          OMNESIS_DESKTOP_NOTARY_PRIVATE_KEY: ${{ secrets.OMNESIS_DESKTOP_NOTARY_PRIVATE_KEY }}
+          OMNESIS_DESKTOP_NOTARY_KEY_ID: ${{ vars.OMNESIS_DESKTOP_NOTARY_KEY_ID }}
+          OMNESIS_DESKTOP_NOTARY_ISSUER_ID: ${{ vars.OMNESIS_DESKTOP_NOTARY_ISSUER_ID }}
+        run: node scripts/desktop/release-build.mjs --mode preflight
+      - name: Install production build tools
+        run: |
+          scripts/ci/npm-ci.sh
+          brew install xcodegen
+      - name: Assemble and qualify the complete unsigned Release app
+        id: build
+        env:
+          DESKTOP_ARCH: ${{ matrix.arch }}
+        run: node scripts/desktop/release-build.mjs --mode build --arch "$DESKTOP_ARCH" --out "$RUNNER_TEMP/desktop-build"
+      - name: Sign, qualify and notarize the app and installer
+        id: sign
+        env:
+          DESKTOP_ARCH: ${{ matrix.arch }}
+          OMNESIS_DESKTOP_SIGNING_P12_BASE64: ${{ secrets.OMNESIS_DESKTOP_SIGNING_P12_BASE64 }}
+          OMNESIS_DESKTOP_SIGNING_P12_PASSWORD: ${{ secrets.OMNESIS_DESKTOP_SIGNING_P12_PASSWORD }}
+          OMNESIS_DESKTOP_SIGNING_IDENTITY: ${{ vars.OMNESIS_DESKTOP_SIGNING_IDENTITY }}
+          OMNESIS_DESKTOP_TEAM_ID: ${{ vars.OMNESIS_DESKTOP_TEAM_ID }}
+          OMNESIS_DESKTOP_NOTARY_PRIVATE_KEY: ${{ secrets.OMNESIS_DESKTOP_NOTARY_PRIVATE_KEY }}
+          OMNESIS_DESKTOP_NOTARY_KEY_ID: ${{ vars.OMNESIS_DESKTOP_NOTARY_KEY_ID }}
+          OMNESIS_DESKTOP_NOTARY_ISSUER_ID: ${{ vars.OMNESIS_DESKTOP_NOTARY_ISSUER_ID }}
+        run: node scripts/desktop/release-build.mjs --mode sign --arch "$DESKTOP_ARCH" --build "$RUNNER_TEMP/desktop-build" --out "$RUNNER_TEMP/desktop-artifacts"
+      - name: Remove only this attempt's signing credentials
+        if: ${{ always() && steps.sign.outcome != 'skipped' && steps.sign.outcome != '' }}
+        run: node scripts/desktop/release-build.mjs --mode cleanup --build "$RUNNER_TEMP/desktop-build"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: desktop-release-${{ matrix.arch }}
+          path: ${{ runner.temp }}/desktop-artifacts/*
+          if-no-files-found: error
+          retention-days: 7
+
   # ------------------------------------------------------------------
   # packages — build, prove the artifact against a local registry, then
   # publish it. The local round-trip runs whether or not publication is
   # armed: it is the check that the staged graph installs and runs.
   # ------------------------------------------------------------------
   packages:
-    needs: verify
+    needs: [verify, desktop]
+    if: ${{ !cancelled() && needs.verify.result == 'success' && (needs.desktop.result == 'success' || (needs.verify.outputs.desktop_armed == 'false' && needs.desktop.result == 'skipped')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -321,6 +409,18 @@ jobs:
           echo "Publication is not armed; the staged graph was packed and verified against a"
           echo "local registry, and nothing was sent to the configured package registry."
 
+      - name: Record this run's desktop release policy
+        env:
+          OMNESIS_DESKTOP_RELEASE: ${{ needs.verify.outputs.desktop_armed == 'true' && '1' || '0' }}
+          RELEASE_SHA: ${{ needs.verify.outputs.sha }}
+        run: |
+          if [ -f scripts/release/desktop-artifacts.mjs ]; then
+            node scripts/release/desktop-artifacts.mjs policy release
+          else
+            # Main's workflow can finish a legacy headless tag without new desktop scripts.
+            [ "$OMNESIS_DESKTOP_RELEASE" = "0" ] || { echo "Enabled desktop release scripts are missing" >&2; exit 1; }
+            node --input-type=module -e 'import { writeFileSync } from "node:fs"; const version = process.env.RELEASE_TAG?.replace(/^v/u, ""), sha = process.env.RELEASE_SHA; if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.test(version) || !/^[a-f0-9]{40}$/u.test(sha)) throw new Error("Invalid legacy release binding"); writeFileSync("release/desktop-release.json", JSON.stringify({format:1, enabled:false, version, sha}) + "\n", {flag:"wx"});'
+          fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release-artifacts
@@ -328,6 +428,7 @@ jobs:
             release/tarballs/*.tgz
             release/artifacts/install.sh
             release/SHA256SUMS.txt
+            release/desktop-release.json
 
       - name: Cleanup
         if: always()
@@ -387,7 +488,11 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
 
       - name: Record content-bound telemetry build provenance
-        run: node scripts/release/telemetry-build.mjs --write-proof
+        run: |
+          # Historical release tags predate the telemetry provenance helper.
+          if [ -f scripts/release/telemetry-build.mjs ]; then
+            node scripts/release/telemetry-build.mjs --write-proof
+          fi
 
       # A hosted runner's free disk varies, and an image built twice (loaded
       # for the boot test, then exported) can exceed it: release 0.7.5's
@@ -567,8 +672,8 @@ jobs:
           fi
 
   github-release:
-    needs: [verify, packages, images, images-manifest]
-    if: ${{ !cancelled() && needs.verify.result == 'success' && needs.packages.result == 'success' && needs.images.result == 'success' && (needs.images-manifest.result == 'success' || needs.images-manifest.result == 'skipped') }}
+    needs: [verify, desktop, packages, images, images-manifest]
+    if: ${{ !cancelled() && needs.verify.result == 'success' && needs.packages.result == 'success' && needs.images.result == 'success' && (needs.images-manifest.result == 'success' || needs.images-manifest.result == 'skipped') && (needs.desktop.result == 'success' || (needs.verify.outputs.desktop_armed == 'false' && needs.desktop.result == 'skipped')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -593,14 +698,33 @@ jobs:
           name: release-artifacts
           path: release
 
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.verify.outputs.desktop_armed == 'true'
+        with:
+          name: desktop-release-arm64
+          path: release/desktop/arm64
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.verify.outputs.desktop_armed == 'true'
+        with:
+          name: desktop-release-x64
+          path: release/desktop/x64
       - name: Compose the release notes
         env:
           PACKAGES_PUBLISHED: ${{ needs.verify.outputs.armed }}
+          RELEASE_SHA: ${{ needs.verify.outputs.sha }}
         # Shared with `npm run release -- github-release`, which finishes a run
         # whose own release step could not create the page.
         run: node scripts/release/github-release.mjs release
 
+      - name: Publish complete verified desktop release from a draft
+        if: needs.verify.outputs.desktop_armed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.verify.outputs.sha }}
+          PACKAGES_PUBLISHED: ${{ needs.verify.outputs.armed }}
+        run: node scripts/release/github-release.mjs release --publish-desktop
       - name: Create the GitHub Release
+        if: needs.verify.outputs.desktop_armed != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY_TOKEN: ${{ github.token }}

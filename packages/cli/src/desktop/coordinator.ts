@@ -1,0 +1,684 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Adrien Conrath
+
+import { ManagedDesktopNearbyCleanupError, assertNever } from "@omnesis/core";
+import { desktopNearbyCleanupRetry } from "./nearby-hints.js";
+import { readDesktopRolePair, persistDesktopRolePair } from "./coordinator-credentials.js";
+import { DesktopProcessAuthorityFailure } from "./process-authority-errors.js";
+import { DesktopFreshInstallFailure } from "./fresh-install-errors.js";
+import { DesktopFreshInstallService } from "./fresh-install.js";
+import {
+  handleDesktopFreshInstall,
+  isDesktopFreshInstallCommand,
+} from "./coordinator-fresh-install.js";
+import { assertDesktopProfileGeneration } from "./generation.js";
+import { DesktopRestoreFailure } from "./restore-errors.js";
+import { openDesktopPortal } from "./coordinator-portal.js";
+import { startCommittedDesktopRestore } from "./restore-start.js";
+import { DesktopBackupRestoreService } from "./restore-service.js";
+import { handleDesktopRestore, isDesktopRestoreCommand } from "./coordinator-restore.js";
+import { handleDesktopRetention, isDesktopRetentionCommand } from "./coordinator-retention.js";
+import { DesktopUpdateController } from "./update-controller.js";
+import { desktopStorageAdmission } from "./desktop-state.js";
+import { desktopRemoteRoute } from "./remote-route.js";
+import type {
+  DesktopState,
+  DesktopStateCommand,
+  DesktopCoordinatorResult,
+} from "./desktop-state.js";
+export type {
+  DesktopState,
+  DesktopStateCommand,
+  DesktopCoordinatorResult,
+} from "./desktop-state.js";
+import { restartDesktopHome } from "./restart.js";
+import { join } from "node:path";
+import { z } from "zod";
+import { handleDesktopRecovery } from "./coordinator-recovery.js";
+import { sameDesktopLibrary as sameLibrary } from "./enrollment.js";
+import {
+  readDesktopLifecycleBlock,
+  resumeKeptDesktopLibrary,
+  desktopStorageProtectionFailure,
+} from "./coordinator-lifecycle.js";
+import { DesktopRecoveryService } from "./recovery.js";
+import {
+  DesktopAccountFailure,
+  desktopAccountSchema,
+  safeBrowserUrl,
+  desktopEnrollmentUI,
+} from "./account-connect.js";
+import {
+  desktopCoordinatorDefaults as defaults,
+  type CoordinatorDependencies,
+  type DesktopSessionTransport,
+} from "./coordinator-runtime.js";
+import type { DesktopRemovalPlan, DesktopRemovalResult } from "./removal.js";
+import type { DesktopProtocolContext, DesktopProtocolRequest } from "./protocol.js";
+import type { DesktopProfile } from "./environment.js";
+import type { DesktopEnrollmentRole, DesktopEnrollmentUI, DesktopPairing } from "./enrollment.js";
+
+import {
+  removalParams,
+  removeParams,
+  prepareParams,
+  discoveryParams,
+  healthSchema,
+  desktopSecretOptions,
+} from "./coordinator-input.js";
+
+/** Native views receive verified state; credentials stay on the private bridge and scoped files. */
+export class DesktopCoordinator {
+  private readonly fresh: DesktopFreshInstallService;
+  private readonly restore: DesktopBackupRestoreService;
+  private readonly recovery: DesktopRecoveryService;
+  private readonly update: DesktopUpdateController;
+  private readonly deps: CoordinatorDependencies;
+  private transport: DesktopSessionTransport | undefined;
+  private transportStartupCleanup?: () => Promise<void>;
+  private transportIdentity: string | undefined;
+  private firstHomeOffered = false;
+  constructor(
+    private readonly profile: DesktopProfile,
+    dependencies: Partial<CoordinatorDependencies> = {},
+  ) {
+    this.deps = { ...defaults, ...dependencies };
+    this.fresh = new DesktopFreshInstallService(profile);
+    this.restore = new DesktopBackupRestoreService(profile);
+    this.recovery = new DesktopRecoveryService(profile);
+    this.update = new DesktopUpdateController(profile, {
+      closeTransport: () => this.closeTransport(),
+      startCurrent: async (signal) => {
+        await this.deps.backgroundHandoff(profile, signal);
+        await this.deps.startDaemon(profile, undefined, signal);
+        if ((await this.deps.readInstall(profile))?.mode === "home") await this.waitForHome(signal);
+      },
+      ready: (signal) => this.status(signal),
+    });
+  }
+
+  handle(
+    request: DesktopProtocolRequest & { command: "removePreview" },
+    context: DesktopProtocolContext,
+  ): Promise<DesktopRemovalPlan>;
+  handle(
+    request: DesktopProtocolRequest & { command: "remove" },
+    context: DesktopProtocolContext,
+  ): Promise<DesktopRemovalResult>;
+  handle(
+    request: DesktopProtocolRequest & { command: DesktopStateCommand },
+    context: DesktopProtocolContext,
+  ): Promise<DesktopState>;
+  handle(
+    request: DesktopProtocolRequest,
+    context: DesktopProtocolContext,
+  ): Promise<DesktopCoordinatorResult>;
+  async handle(
+    request: DesktopProtocolRequest,
+    context: DesktopProtocolContext,
+  ): Promise<DesktopCoordinatorResult> {
+    try {
+      context.signal.throwIfAborted();
+      assertDesktopProfileGeneration(this.profile);
+      if (isDesktopFreshInstallCommand(request.command))
+        return handleDesktopFreshInstall(
+          this.fresh,
+          this.profile,
+          request.command,
+          request.params,
+          context.signal,
+          () => this.close(false),
+        );
+      if (isDesktopRestoreCommand(request.command))
+        return handleDesktopRestore(
+          this.restore,
+          request.command,
+          request.params,
+          context.signal,
+          () => this.closeTransport(),
+        );
+      if (isDesktopRetentionCommand(request.command))
+        return handleDesktopRetention(
+          this.profile,
+          request.command,
+          request.params,
+          context.signal,
+        );
+      switch (request.command) {
+        case "updateStatus":
+        case "updateCheck":
+        case "updateDownload":
+        case "updatePrepareCurrent":
+        case "updateInstall":
+        case "updateResume":
+        case "updateRestore":
+        case "updateFinish":
+        case "updateCleanupPreview":
+        case "updateCleanup":
+          return this.update.handle(request.command, request.params, context);
+        case "recoveryImport":
+        case "recoveryStatus":
+        case "recoveryPrepare":
+        case "recoveryCommit":
+        case "recoveryCancel":
+          return handleDesktopRecovery(
+            this.recovery,
+            request.command,
+            request.params,
+            context.signal,
+          );
+        case "removePreview": {
+          const params = removalParams.parse(request.params ?? {});
+          return this.deps.removalPreview(this.profile, { ...params, signal: context.signal });
+        }
+        case "remove": {
+          const params = removeParams.parse(request.params);
+          await this.closeTransport();
+          context.signal.throwIfAborted();
+          return this.deps.removeInstall(this.profile, { ...params, signal: context.signal });
+        }
+        case "status":
+          return await this.status(context.signal);
+        case "prepare":
+          return await this.prepare(request.params, context);
+        case "connect":
+          return await this.connect(request.params, context);
+        case "openPortal":
+          return await this.openPortal(context);
+        case "restartCollector": {
+          z.object({})
+            .strict()
+            .parse(request.params ?? {});
+          const blocked = await this.currentLifecycleBlock();
+          if (blocked)
+            throw new Error("Finish the pending library operation before restarting collection");
+          const install = await this.deps.readInstall(this.profile);
+          if (!install || install.phase !== "configured")
+            throw new Error("Configure this Mac before restarting collection");
+          return await this.deps.restartCollector(this.profile, context.signal);
+        }
+        case "restart": {
+          z.object({})
+            .strict()
+            .parse(request.params ?? {});
+          return await restartDesktopHome(this.profile, context.signal, {
+            ...this.deps,
+            blocked: () => this.currentLifecycleBlock(),
+            close: () => this.closeTransport(),
+            waitForHome: (signal) => this.waitForHome(signal),
+            status: (signal) => this.status(signal),
+          });
+        }
+        case "stop": {
+          const install = await this.deps.readInstall(this.profile);
+          if (!install) return { phase: "welcome" };
+          if (!(await this.deps.stopDaemon(this.profile, context.signal)))
+            return {
+              phase: "error",
+              mode: install.mode,
+              message: "Omnesis could not confirm that background collection stopped. Try again.",
+            };
+          await this.closeTransport();
+          return {
+            phase: "waiting",
+            mode: install.mode,
+            message: "Background collection has stopped. Choose Look again to start it.",
+          };
+        }
+        case "respond":
+        case "cancel":
+          throw new Error("Interactions are handled by the desktop connection");
+        default:
+          return assertNever(request.command);
+      }
+    } catch (error) {
+      if (
+        error instanceof DesktopFreshInstallFailure ||
+        error instanceof DesktopProcessAuthorityFailure
+      )
+        throw error;
+      if (
+        context.signal.aborted ||
+        request.command === "restartCollector" ||
+        request.command === "remove" ||
+        request.command === "removePreview" ||
+        request.command.startsWith("fresh") ||
+        request.command.startsWith("restore") ||
+        request.command.startsWith("recovery") ||
+        request.command.startsWith("update")
+      )
+        throw error;
+      const protectionFailure = desktopStorageProtectionFailure(error);
+      if (protectionFailure) return protectionFailure;
+      if (error instanceof DesktopRestoreFailure) return { phase: "error", message: error.message };
+      if (error instanceof DesktopAccountFailure) return { phase: "error", message: error.message };
+      const retainedNearbyCleanup =
+        this.transportStartupCleanup !== undefined ||
+        (this.transport !== undefined && this.transportIdentity === undefined);
+      if (
+        error instanceof ManagedDesktopNearbyCleanupError ||
+        (retainedNearbyCleanup && desktopNearbyCleanupRetry(error) !== undefined)
+      )
+        return {
+          phase: "error",
+          message:
+            "Omnesis could not finish checking your connection. Try again to check its status.",
+        };
+      return {
+        phase: "error",
+        message: "Omnesis could not finish this step. Try again to check the current status.",
+      };
+    }
+  }
+
+  async close(discardFresh = true): Promise<void> {
+    if (discardFresh) this.fresh.close();
+    await this.restore.close();
+    this.recovery.close();
+    this.update.close();
+    await this.closeTransport();
+    if (this.transportStartupCleanup) {
+      await this.transportStartupCleanup();
+      this.transportStartupCleanup = undefined;
+    }
+  }
+
+  private async closeTransport(): Promise<void> {
+    const transport = this.transport;
+    // An undefined identity marks this exact retained transport as draining.
+    this.transportIdentity = undefined;
+    await transport?.close();
+    if (this.transport === transport) this.transport = undefined;
+  }
+
+  private async status(signal: AbortSignal): Promise<DesktopState> {
+    const retirement = await this.currentLifecycleBlock();
+    if (retirement) return retirement;
+    const install = await this.deps.readInstall(this.profile);
+    if (!install) return this.firstHomeOffered ? { phase: "chooseHome" } : { phase: "welcome" };
+    if (install.phase !== "configured" || !(await this.deps.protected(this.profile)))
+      return {
+        phase: "error",
+        mode: install.mode,
+        message: "Unlock your Mac's Keychain to protect your Omnesis library.",
+      };
+    signal.throwIfAborted();
+    if (install.mode === "joined") return this.joinedState(signal);
+    try {
+      healthSchema.parse(await this.deps.request(this.profile, "/health", { signal }));
+      let account = desktopAccountSchema.parse(
+        await this.deps.request(this.profile, "/admin/cloud-relay", { signal }),
+      );
+      if (!account.account?.linked) {
+        account = desktopAccountSchema.parse(
+          await this.deps.request(this.profile, "/admin/cloud-relay?signup=1", { signal }),
+        );
+        return {
+          phase: "accountRequired",
+          mode: "home",
+          encrypted: true,
+          ...(account.signup || account.config?.acmeTermsUrl
+            ? {
+                signup: {
+                  ...(account.signup
+                    ? {
+                        policy: account.signup.inviteOnly ? ("invite" as const) : ("open" as const),
+                      }
+                    : {}),
+                  ...(account.config?.acmeTermsUrl
+                    ? { acmeTermsUrl: safeBrowserUrl(account.config.acmeTermsUrl) }
+                    : {}),
+                },
+              }
+            : {}),
+        };
+      }
+      const searchModel = await this.deps.searchModel(this.profile, { signal });
+      if (searchModel.state === "downloading")
+        return {
+          phase: "preparing",
+          mode: "home",
+          encrypted: true,
+          searchModel,
+          message: "Your local search model is downloading.",
+        };
+      if (searchModel.state === "needs-download")
+        return {
+          phase: "error",
+          mode: "home",
+          encrypted: true,
+          searchModel,
+          message: "Local search needs its model. Choose Prepare library to retry the download.",
+        };
+      const connection = await this.deps.connection(this.profile);
+      const collectorDeviceId = await this.deps.localCollectorDeviceId(this.profile);
+      const storageAdmission = await this.deps.request(this.profile, "/status", { signal }).then(
+        (value) => desktopStorageAdmission(value),
+        (error: unknown) => {
+          if (signal.aborted) throw error;
+          return desktopStorageAdmission(undefined);
+        },
+      );
+      const removed = await this.currentLifecycleBlock();
+      if (removed) return removed;
+      signal.throwIfAborted();
+      return {
+        phase: "ready",
+        installationId: this.profile.instance,
+        mode: "home",
+        encrypted: true,
+        storageAdmission,
+        remoteRoute: desktopRemoteRoute(account),
+        connection: {
+          ...connection,
+          collectorDeviceId,
+        },
+      };
+    } catch (error) {
+      if (signal.aborted) throw error;
+      return {
+        phase: "waiting",
+        mode: "home",
+        message: "Your private library is starting. Try again in a moment.",
+      };
+    }
+  }
+
+  private async prepare(params: unknown, context: DesktopProtocolContext): Promise<DesktopState> {
+    const input = prepareParams.parse(params);
+    const blocked = await this.resumeKeptLibrary(context.signal, input.mode);
+    if (blocked) return blocked;
+    const existing = await this.deps.readInstall(this.profile);
+    if (input.mode === "joined" && !existing)
+      return {
+        phase: "waiting",
+        message:
+          "Set up Omnesis on the computer that will keep your library, then choose Find my library.",
+      };
+    await this.deps.prepareInstall(this.profile, {
+      mode: input.mode,
+      totalMemoryBytes: this.deps.memoryBytes(),
+      signal: context.signal,
+    });
+    await this.deps.prepareRuntime(this.profile, context.signal);
+    await this.deps.backgroundHandoff(this.profile, context.signal);
+    await this.deps.startDaemon(this.profile, undefined, context.signal);
+    if (input.mode === "home") {
+      await this.waitForHome(context.signal);
+      await this.deps.searchModel(this.profile, { start: true, signal: context.signal });
+    }
+    return this.status(context.signal);
+  }
+
+  private async waitForHome(parentSignal: AbortSignal): Promise<void> {
+    const signal = AbortSignal.any([parentSignal, AbortSignal.timeout(180_000)]);
+    for (;;) {
+      signal.throwIfAborted();
+      try {
+        healthSchema.parse(await this.deps.request(this.profile, "/health", { signal }));
+        return;
+      } catch {
+        signal.throwIfAborted();
+        await this.deps.sleep(signal);
+      }
+    }
+  }
+
+  private async connect(params: unknown, context: DesktopProtocolContext): Promise<DesktopState> {
+    discoveryParams.parse(params ?? {});
+    if ((await this.deps.readInstall(this.profile))?.phase === "configured") {
+      const handoff = await this.deps.backgroundHandoff(this.profile, context.signal);
+      if (handoff) {
+        await this.deps.startDaemon(this.profile, undefined, context.signal);
+        if (handoff.mode === "home") await this.waitForHome(context.signal);
+        return this.status(context.signal);
+      }
+    }
+    if (await startCommittedDesktopRestore(this.profile, context.signal, this.deps))
+      return this.status(context.signal);
+    const blocked = await this.resumeKeptLibrary(context.signal);
+    if (blocked) return blocked;
+    const install = await this.deps.readInstall(this.profile);
+    if (install?.mode === "home") {
+      if (!(await this.deps.protected(this.profile)))
+        return {
+          phase: "error",
+          mode: "home",
+          message: "Unlock your Mac's Keychain before connecting your account.",
+        };
+      await this.deps.startDaemon(this.profile, undefined, context.signal);
+      await this.waitForHome(context.signal);
+      const state = await this.status(context.signal);
+      if (state.phase !== "accountRequired" || params === undefined) return state;
+      await this.deps.connectAccount(this.profile, params, context, { request: this.deps.request });
+      return this.status(context.signal);
+    }
+    if (install) {
+      await this.deps.prepareInstall(this.profile, {
+        mode: "joined",
+        totalMemoryBytes: this.deps.memoryBytes(),
+        signal: context.signal,
+      });
+      if (!(await this.deps.protected(this.profile)))
+        return {
+          phase: "error",
+          mode: "joined",
+          message: "Unlock your Mac's Keychain before connecting this Mac.",
+        };
+    }
+    const relayUrl = this.deps.relayUrl();
+    if (!relayUrl) throw new Error("Account sign-in is not configured");
+    const ui = desktopEnrollmentUI(context);
+    if (!install) {
+      const homes = await this.deps.discover({
+        relayUrl,
+        name: this.deps.name(),
+        signal: context.signal,
+        ui,
+      });
+      if (homes.kind === "no-home") {
+        this.firstHomeOffered = true;
+        return {
+          phase: "chooseHome",
+          message: "Choose the computer that will keep your Omnesis library.",
+        };
+      }
+      await this.deps.prepareInstall(this.profile, {
+        mode: "joined",
+        totalMemoryBytes: this.deps.memoryBytes(),
+        signal: context.signal,
+      });
+      await this.deps.prepareRuntime(this.profile, context.signal);
+      await this.deps.backgroundHandoff(this.profile, context.signal);
+    }
+    let interactive = await this.savedPair("interactive");
+    if (!interactive) interactive = await this.enroll("interactive", relayUrl, ui, context);
+    let collector = await this.savedPair("collector");
+    if (!collector) {
+      collector = await this.deps.enroll({
+        role: "collector",
+        expectedGateway: {
+          gatewayUrl: interactive.gatewayUrl,
+          gatewayFingerprint: interactive.gatewayFingerprint,
+          ...(interactive.tlsSpkiFingerprint === undefined
+            ? {}
+            : { tlsSpkiFingerprint: interactive.tlsSpkiFingerprint }),
+        },
+        relayUrl,
+        name: this.deps.name(),
+        deviceKeyFile: join(this.profile.configDir, "cloud-relay", "collector.key"),
+        signal: context.signal,
+        deviceKeySecretOptions: desktopSecretOptions(this.profile),
+        deviceKeyPublication: (work) => this.deps.publish(this.profile, context.signal, work),
+        ui,
+        onEvent: () => {},
+      });
+      if (!sameLibrary(collector, interactive))
+        throw new Error("Choose the same library for this Mac's two permissions");
+      await this.persist("collector", collector, context.signal);
+    }
+    if (!sameLibrary(collector, interactive)) throw new Error("The paired library changed");
+    await this.persist("interactive", interactive, context.signal);
+    await this.persist("collector", collector, context.signal);
+    const admitted = await this.joinedState(context.signal);
+    if (admitted.phase !== "ready") return admitted;
+    await this.deps.startDaemon(this.profile, undefined, context.signal);
+    return this.joinedState(context.signal);
+  }
+
+  private async savedPair(role: DesktopEnrollmentRole): Promise<DesktopPairing | null> {
+    return readDesktopRolePair(this.profile, role, this.deps);
+  }
+
+  private async enroll(
+    role: DesktopEnrollmentRole,
+    relayUrl: string,
+    ui: DesktopEnrollmentUI,
+    context: DesktopProtocolContext,
+  ): Promise<DesktopPairing> {
+    const pairing = await this.deps.enroll({
+      role,
+      relayUrl,
+      name: this.deps.name(),
+      deviceKeyFile: join(
+        this.profile.configDir,
+        "cloud-relay",
+        `${role === "interactive" ? "cli" : "collector"}.key`,
+      ),
+      signal: context.signal,
+      deviceKeySecretOptions: desktopSecretOptions(this.profile),
+      deviceKeyPublication: (work) => this.deps.publish(this.profile, context.signal, work),
+      ui,
+      onEvent: () => {},
+    });
+    await this.persist(role, pairing, context.signal);
+    return pairing;
+  }
+
+  private async persist(
+    role: DesktopEnrollmentRole,
+    pairing: DesktopPairing,
+    signal: AbortSignal,
+  ): Promise<void> {
+    return persistDesktopRolePair(this.profile, role, pairing, signal, this.deps);
+  }
+
+  private async joinedState(signal: AbortSignal): Promise<DesktopState> {
+    if (!(await this.deps.protected(this.profile)))
+      return {
+        phase: "error",
+        mode: "joined",
+        message: "Unlock your Mac's Keychain to protect this Mac's information.",
+      };
+    const pairing = await this.savedPair("interactive"),
+      collector = await this.savedPair("collector");
+    if (!pairing || !collector || !sameLibrary(pairing, collector))
+      return {
+        phase: "waiting",
+        mode: "joined",
+        ...(pairing?.homeName ? { homeName: pairing.homeName } : {}),
+        message: "Sign in to finish connecting this Mac to your library.",
+      };
+    if (!pairing.scopes.includes("admin") || !pairing.scopes.includes("read"))
+      throw new Error("Interactive permissions are incomplete");
+    if (!collector.scopes.includes("read") || !collector.scopes.includes("write:*"))
+      throw new Error("Collection permissions are incomplete");
+    const token = await this.deps.readToken(
+      join(this.profile.configDir, "token"),
+      desktopSecretOptions(this.profile),
+    );
+    if (token?.trim() !== pairing.token) throw new Error("The interactive credential needs repair");
+    const identity = `${pairing.deviceId}:${pairing.token}`;
+    if (this.transportIdentity !== identity) {
+      if (this.transportStartupCleanup) {
+        await this.transportStartupCleanup();
+        this.transportStartupCleanup = undefined;
+      }
+      await this.closeTransport();
+      try {
+        this.transport = await this.deps.startTransport(this.profile);
+        this.transportIdentity = identity;
+      } catch (error) {
+        this.transportStartupCleanup = desktopNearbyCleanupRetry(error);
+        throw error;
+      }
+    }
+    try {
+      await this.transport?.refreshNearby?.(signal);
+    } catch (error) {
+      if (error instanceof ManagedDesktopNearbyCleanupError) {
+        // The exact transport remains retained, but cannot be treated as reusable or replaced.
+        this.transportIdentity = undefined;
+        throw error;
+      }
+      signal.throwIfAborted();
+    }
+    const nearby = this.transport?.nearbyState?.();
+    try {
+      await this.deps.verifyTransport(this.transport!, pairing, signal);
+    } catch (error) {
+      await this.closeTransport();
+      if (signal.aborted) throw error;
+      return {
+        phase: "waiting",
+        mode: "joined",
+        ...(nearby ? { nearby } : {}),
+        ...(pairing.homeName ? { homeName: pairing.homeName } : {}),
+        message:
+          "Check that Omnesis is running on the computer that keeps your library, then try again.",
+      };
+    }
+    const protection = await this.deps.remoteProtection(this.transport!, pairing, signal);
+    if (protection !== "encrypted") {
+      await this.closeTransport();
+      await this.deps.stopDaemon(this.profile, signal);
+      return {
+        phase: "error",
+        mode: "joined",
+        ...(pairing.homeName ? { homeName: pairing.homeName } : {}),
+        encrypted: false,
+        message:
+          protection === "unprotected"
+            ? "Protect the library's storage on its home computer before connecting this Mac."
+            : "The home computer could not prove its storage is protected. Open or update Omnesis there, then try again.",
+      };
+    }
+    const removed = await this.currentLifecycleBlock();
+    if (removed) return { ...removed, ...(pairing.homeName ? { homeName: pairing.homeName } : {}) };
+    signal.throwIfAborted();
+    return {
+      phase: "ready",
+      installationId: this.profile.instance,
+      mode: "joined",
+      ...(nearby ? { nearby } : {}),
+      ...(pairing.homeName ? { homeName: pairing.homeName } : {}),
+      encrypted: true,
+      connection: {
+        url: this.transport!.url,
+        token: pairing.token,
+        deviceId: pairing.deviceId,
+        collectorDeviceId: collector.deviceId,
+        certificatePEM: pairing.gatewayCertificate,
+      },
+    };
+  }
+  private currentLifecycleBlock(): Promise<DesktopState | null> {
+    return readDesktopLifecycleBlock(this.profile, this.deps, () => this.closeTransport());
+  }
+  private resumeKeptLibrary(
+    signal: AbortSignal,
+    expectedMode?: "home" | "joined",
+  ): Promise<DesktopState | null> {
+    return resumeKeptDesktopLibrary(this.profile, { signal, expectedMode }, this.deps, () =>
+      this.closeTransport(),
+    );
+  }
+
+  private async openPortal(context: DesktopProtocolContext): Promise<DesktopState> {
+    await openDesktopPortal(this.profile, context, {
+      ...this.deps,
+      readPair: () => this.savedPair("interactive"),
+    });
+    return this.status(context.signal);
+  }
+}

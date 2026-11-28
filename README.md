@@ -19,7 +19,9 @@
 
 <p align="center"><strong>Index, search, and reason about your entire digital life.<br>On machines you own, with the models you choose.</strong></p>
 
-Omnesis syncs your email, messages, notes, calendars, tasks, contacts, files, health data, finances, meetings, photos, browsing and phone activity — more than 40 sources — into one search index on a machine you own. Search is hybrid: keyword and semantic ranking over the same index, with structured filters and SQL over the numeric data. No Omnesis service stores your data, and no account is required.
+Omnesis syncs your email, messages, notes, calendars, tasks, contacts, files, health data, finances, meetings, photos, browsing and phone activity — more than 40 sources — into one search index on a machine you own. Search is hybrid: keyword and semantic ranking over the same index, with structured filters and SQL over the numeric data. No Omnesis service stores your data. An account is optional for source and Docker installations.
+
+The [native macOS app source](macos/README.md) manages an encrypted library or joins an existing compatible gateway. Its setup uses an Omnesis account. See the build guide for native checks and distribution requirements.
 
 Omnesis also connects what it indexes. A **people graph** resolves every email address, phone number and display name across your sources into one person, so searching for someone finds every conversation with them, on every platform. A **reference graph** links threads, attachments and cited documents, so search ranks well-referenced documents higher and the agent can follow an email to its attachment and on to the meeting notes that cite it.
 
@@ -70,7 +72,7 @@ On top sits a built-in **agent**, in the web portal and the iOS and Android apps
 
 ## Quick start
 
-The installer supports **macOS** and **Linux**. The **Windows x64** runtime runs [manually from source](https://omnesis.dev/docs/install#windows-source); Windows installers and background-service management are outside that path, and Windows ARM support remains pending. Install Omnesis on the machine that will hold your data, usually an always-on computer:
+The installer supports **macOS** and **Linux**. The **Windows x64** runtime runs [manually from source](https://omnesis.dev/docs/install#windows-source); Windows installers and background-service management are outside that path, and Windows ARM support remains pending. Install Omnesis on the machine that will hold your data, usually an always-on computer. A Mac gateway needs its [sleep settings configured](https://omnesis.dev/docs/install#mac-server); its display can still turn off and lock:
 
 ```bash
 curl -fsSL https://omnesis.dev/install.sh | sh
@@ -186,6 +188,8 @@ npm run typecheck
 ```
 
 A development checkout is for working on Omnesis; to use it, install with the command in [Quick start](#quick-start). Tests use `vitest` and sit next to the code as `*.test.ts`, and every feature or fix comes with tests. [`CONTRIBUTING.md`](CONTRIBUTING.md) covers setup, conventions and the pull-request process, and [`ARCHITECTURE.md`](ARCHITECTURE.md) the big picture.
+
+Native macOS development lives in [`macos/`](macos/README.md). The managed runtime and packaging boundaries are described in [`docs/desktop.md`](docs/desktop.md); the desktop app keeps its state and services separate from headless installations.
 
 Building a new source? The contract is on [Building sources](https://omnesis.dev/docs/building-sources), and the repository ships a shared `source-review` skill for Codex (`$source-review`) and Claude Code (`/source-review`) (`.agents/skills/source-review/SKILL.md`) that checks a source against it before you open the pull request.
 

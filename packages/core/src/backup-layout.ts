@@ -81,6 +81,8 @@ export const backupManifestSchema = z.object({
     .optional(),
   encryptedManifest: z.string().optional(),
   includeIndex: z.boolean(),
+  /** Older backups omitted filesystem-backed chats; absent means preserve target history. */
+  includesConversationHistory: z.literal(true).optional(),
   /** Optional so backups written before purpose tracking remain listable. */
   purpose: z.enum(["operator", "pre-update"]).optional(),
   note: z.string().optional(),
@@ -186,6 +188,7 @@ const ACCOUNT_CREDENTIAL_FILE = /^[^/]+\/[^/]+\/credentials\.json$/;
 export const MACHINE_ENV_KEYS = [
   "OMNESIS_IMAGE_TAG",
   "OMNESIS_SECRET_STORE",
+  "OMNESIS_SECRET_SERVICE",
   "OMNESIS_KEYRING_PASSPHRASE",
   "OMNESIS_KEYRING_PASSPHRASE_FILE",
   "OMNESIS_GATEWAY_PORT",
@@ -219,6 +222,8 @@ const STORE_FILE_NAMES = new Set<string>(
  */
 export function backupScopeEntryFor(rel: string): BackupScopeEntry | null {
   if (STORE_FILE_NAMES.has(rel)) return { name: rel, kind: "store" };
+  if (rel === "conversations" || /^conversations\/[A-Za-z0-9_:-]{1,128}\.json$/u.test(rel))
+    return { name: rel, kind: "config" };
   if (DERIVED_INDEX_FILE_PATTERN.test(rel)) return { name: rel, kind: "derived" };
   for (const name of [...CONFIG_COPY_NAMES, ...CONFIG_COPY_TREES]) {
     if (rel === name || rel.startsWith(`${name}/`)) return { name, kind: "config" };
@@ -275,6 +280,19 @@ export function backupConfigCopyNames(configDir: string): string[] {
     // An unreadable config dir has nothing extra to copy.
   }
   for (const name of CONFIG_COPY_TREES) add(name);
+  try {
+    const conversationDir = join(configDir, "conversations");
+    if (!lstatSync(conversationDir).isDirectory())
+      throw new Error(
+        "Conversation history must be an owned directory, not a link or special file",
+      );
+    for (const entry of readdirSync(conversationDir, { withFileTypes: true })) {
+      if (entry.isFile() && /^[A-Za-z0-9_:-]{1,128}\.json$/u.test(entry.name))
+        add(`conversations/${entry.name}`);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
   return names;
 }
 
@@ -499,6 +517,7 @@ export function writeOfflineBackup(opts: OfflineBackupOptions): OfflineBackupRes
       finishedAt: now().toISOString(),
       files,
       includeIndex: opts.includeIndex,
+      includesConversationHistory: true,
       purpose: opts.purpose,
       ...(opts.note ? { note: opts.note } : {}),
     };

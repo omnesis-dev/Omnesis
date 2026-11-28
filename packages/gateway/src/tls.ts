@@ -28,7 +28,8 @@
  * for all of it.
  */
 
-import { X509Certificate, createHash, createPrivateKey } from "node:crypto";
+import { X509Certificate, createHash, createPrivateKey, generateKeyPair } from "node:crypto";
+import { promisify } from "node:util";
 import {
   chmodSync,
   existsSync,
@@ -48,6 +49,7 @@ import {
   isCertificateIpAddress,
   localMdnsHostname,
   safeNetworkInterfaces,
+  runOpenSslWithPrivateInput,
 } from "@omnesis/core";
 
 import { tlsIssuerCleanupFailure } from "./tls-lifecycle/issuer-cleanup.js";
@@ -312,49 +314,73 @@ subjectAltName = ${sanList}
     // -days 3650 ≈ 10 years. -newkey rsa:2048 generates the keypair.
     // -nodes leaves the key unencrypted (we set 0600 on disk anyway).
     // -x509 emits a self-signed cert directly. -keyout/-out write PEMs.
-    const run = await processLauncher().run(
-      "openssl",
-      [
-        "req",
-        "-x509",
-        "-newkey",
-        "rsa:2048",
-        "-keyout",
-        keyPath,
-        "-out",
-        certPath,
-        "-days",
-        "3650",
-        "-nodes",
-        "-config",
-        cnfPath,
-      ],
-      {
-        timeoutMs: OPENSSL_TIMEOUT_MS,
-        captureStdout: false,
-        ...(opts.signal ? { signal: opts.signal } : {}),
-      },
-    );
-    const cleanup = tlsIssuerCleanupFailure(run, tmpDir);
-    if (cleanup) throw cleanup;
-    if (run.failure || run.exitCode !== 0) {
-      const why =
-        run.failure === "spawn"
-          ? `could not be started${run.failureMessage ? ` (${run.failureMessage})` : ""}`
-          : run.failure === "timeout"
-            ? `did not finish within ${OPENSSL_TIMEOUT_MS / 1000}s`
-            : run.failure === "aborted"
-              ? "was aborted"
-              : run.signal
-                ? `was killed by ${run.signal}`
-                : `exited with code ${run.exitCode}`;
-      const stderr = run.stderr.trim();
-      throw new Error(
-        `openssl could not generate the self-signed certificate: it ${why}${stderr ? `: ${stderr}` : ""}`,
+    let managedKey: string | undefined;
+    if (process.env.OMNESIS_DESKTOP_MANAGED === "1") {
+      opts.signal?.throwIfAborted();
+      const generated = await promisify(generateKeyPair)("rsa", { modulusLength: 2048 });
+      managedKey = generated.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+      await runOpenSslWithPrivateInput(
+        [
+          "req",
+          "-x509",
+          "-new",
+          "-key",
+          "/dev/stdin",
+          "-out",
+          certPath,
+          "-days",
+          "3650",
+          "-config",
+          cnfPath,
+        ],
+        Buffer.from(managedKey),
+        { signal: opts.signal, timeoutMs: OPENSSL_TIMEOUT_MS },
       );
+    } else {
+      const run = await processLauncher().run(
+        "openssl",
+        [
+          "req",
+          "-x509",
+          "-newkey",
+          "rsa:2048",
+          "-keyout",
+          keyPath,
+          "-out",
+          certPath,
+          "-days",
+          "3650",
+          "-nodes",
+          "-config",
+          cnfPath,
+        ],
+        {
+          timeoutMs: OPENSSL_TIMEOUT_MS,
+          captureStdout: false,
+          ...(opts.signal ? { signal: opts.signal } : {}),
+        },
+      );
+      const cleanup = tlsIssuerCleanupFailure(run, tmpDir);
+      if (cleanup) throw cleanup;
+      if (run.failure || run.exitCode !== 0) {
+        const why =
+          run.failure === "spawn"
+            ? `could not be started${run.failureMessage ? ` (${run.failureMessage})` : ""}`
+            : run.failure === "timeout"
+              ? `did not finish within ${OPENSSL_TIMEOUT_MS / 1000}s`
+              : run.failure === "aborted"
+                ? "was aborted"
+                : run.signal
+                  ? `was killed by ${run.signal}`
+                  : `exited with code ${run.exitCode}`;
+        const stderr = run.stderr.trim();
+        throw new Error(
+          `openssl could not generate the self-signed certificate: it ${why}${stderr ? `: ${stderr}` : ""}`,
+        );
+      }
     }
 
-    let keyPem = await readTlsPrivateKey(keyPath, tmpDir);
+    let keyPem = managedKey ?? (await readTlsPrivateKey(keyPath, tmpDir));
     const certPem = readFileSync(certPath, "utf8");
 
     // Normalize the key to PKCS#8 PEM. Older openssl emits "BEGIN PRIVATE

@@ -9,13 +9,7 @@
  * authenticated binary envelope and streams ciphertext to disk.
  */
 
-import {
-  createCipheriv,
-  createDecipheriv,
-  hkdfSync,
-  randomBytes,
-  timingSafeEqual,
-} from "node:crypto";
+import { createCipheriv, createDecipheriv, randomBytes, timingSafeEqual } from "node:crypto";
 import {
   createReadStream,
   existsSync,
@@ -28,34 +22,28 @@ import {
   linkSync,
 } from "node:fs";
 import { open, readFile } from "node:fs/promises";
-import { PassThrough, Readable, Transform, type TransformCallback } from "node:stream";
+import { PassThrough, Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import {
-  installRootKeyBytes,
-  readInstallRootKey,
-  type CreateSecretStoreOptions,
-} from "./secret-store.js";
+import { readInstallRootKey, type CreateSecretStoreOptions } from "./secret-store.js";
 import { secretFileEncryptionRequired } from "./secret-file.js";
 import { ensurePrivateFileSync } from "./security-files.js";
 import { writeWindowsPrivateFileAtomicStream } from "./windows-private-file.js";
 
-const MAGIC = Buffer.from("omnesis.encrypted-artifact.v1\n", "utf8");
-const TAG_BYTES = 16;
-const ALG = "aes-256-gcm";
-const KDF = "hkdf-sha256";
-const ENVELOPE_MARKER = "omnesis.encrypted-artifact";
+import {
+  MAGIC,
+  TAG_BYTES,
+  ALG,
+  KDF,
+  ENVELOPE_MARKER,
+  MAX_ARTIFACT_HEADER_BYTES,
+  AppendArtifactEnvelopeTransform,
+  parseArtifactHeader,
+  headerLengthBytes,
+  deriveArtifactKey,
+  type EncryptedArtifactHeaderV1,
+} from "./artifact-envelope.js";
 
 export const ENCRYPTED_ARTIFACT_SUFFIX = ".enc";
-
-interface EncryptedArtifactHeaderV1 {
-  omnesis: typeof ENVELOPE_MARKER;
-  version: 1;
-  alg: typeof ALG;
-  kdf: typeof KDF;
-  scope: string;
-  salt: string;
-  iv: string;
-}
 
 export interface EncryptArtifactFileOptions extends CreateSecretStoreOptions {
   /** Stable logical scope for associated data and key derivation. */
@@ -68,6 +56,11 @@ export interface EncryptArtifactFileResult {
   path: string;
   bytes: number;
 }
+
+export {
+  produceEncryptedArtifact,
+  type ProduceEncryptedArtifactOptions,
+} from "./artifact-producer.js";
 
 export interface DecryptArtifactFileToFileOptions extends CreateSecretStoreOptions {
   force?: boolean;
@@ -82,39 +75,6 @@ export interface DecryptArtifactFileToFileResult {
   decrypted: boolean;
   path: string;
   bytes: number;
-}
-
-class AppendArtifactEnvelopeTransform extends Transform {
-  private headerWritten = false;
-
-  constructor(
-    private readonly prefix: Buffer,
-    private readonly getAuthTag: () => Buffer,
-  ) {
-    super();
-  }
-
-  override _transform(chunk: Buffer, _encoding: BufferEncoding, callback: TransformCallback): void {
-    if (!this.headerWritten) {
-      this.push(this.prefix);
-      this.headerWritten = true;
-    }
-    this.push(chunk);
-    callback();
-  }
-
-  override _flush(callback: TransformCallback): void {
-    try {
-      if (!this.headerWritten) {
-        this.push(this.prefix);
-        this.headerWritten = true;
-      }
-      this.push(this.getAuthTag());
-      callback();
-    } catch (err) {
-      callback(err instanceof Error ? err : new Error(String(err)));
-    }
-  }
 }
 
 async function publishWindowsArtifact(
@@ -180,6 +140,7 @@ export async function encryptArtifactFileInPlace(
     iv: iv.toString("base64url"),
   };
   const headerBytes = Buffer.from(JSON.stringify(header), "utf8");
+  parseArtifactHeader(headerBytes);
   const prefix = Buffer.concat([MAGIC, headerLengthBytes(headerBytes), headerBytes]);
   const key = deriveArtifactKey(rootKey, salt, opts.scope);
   const cipher = createCipheriv(ALG, key, iv);
@@ -374,7 +335,11 @@ function parseArtifactEnvelope(raw: Buffer): {
   const headerLength = raw.readUInt32BE(headerLengthOffset);
   const headerStart = headerLengthOffset + 4;
   const headerEnd = headerStart + headerLength;
-  if (headerEnd + TAG_BYTES > raw.length) {
+  if (
+    headerLength === 0 ||
+    headerLength > MAX_ARTIFACT_HEADER_BYTES ||
+    headerEnd + TAG_BYTES > raw.length
+  ) {
     throw new Error("Encrypted artifact envelope is truncated");
   }
   const headerBytes = raw.subarray(headerStart, headerEnd);
@@ -409,7 +374,11 @@ async function parseArtifactEnvelopeFromFile(path: string): Promise<{
     const headerLength = headerLen.readUInt32BE(0);
     const headerStart = MAGIC.length + 4;
     const headerEnd = headerStart + headerLength;
-    if (headerEnd + TAG_BYTES > st.size) {
+    if (
+      headerLength === 0 ||
+      headerLength > MAX_ARTIFACT_HEADER_BYTES ||
+      headerEnd + TAG_BYTES > st.size
+    ) {
       throw new Error("Encrypted artifact envelope is truncated");
     }
 
@@ -445,32 +414,4 @@ async function readExact(
     if (bytesRead === 0) throw new Error("Encrypted artifact envelope is truncated");
     offset += bytesRead;
   }
-}
-
-function parseArtifactHeader(headerBytes: Buffer): EncryptedArtifactHeaderV1 {
-  const parsed = JSON.parse(headerBytes.toString("utf8")) as Partial<EncryptedArtifactHeaderV1>;
-  if (
-    parsed.omnesis !== ENVELOPE_MARKER ||
-    parsed.version !== 1 ||
-    parsed.alg !== ALG ||
-    parsed.kdf !== KDF ||
-    typeof parsed.scope !== "string" ||
-    typeof parsed.salt !== "string" ||
-    typeof parsed.iv !== "string"
-  ) {
-    throw new Error("Encrypted artifact envelope has an unsupported header");
-  }
-  return parsed as EncryptedArtifactHeaderV1;
-}
-
-function headerLengthBytes(headerBytes: Buffer): Buffer {
-  const out = Buffer.alloc(4);
-  out.writeUInt32BE(headerBytes.length);
-  return out;
-}
-
-function deriveArtifactKey(rootKey: string, salt: Buffer, scope: string): Buffer {
-  return Buffer.from(
-    hkdfSync("sha256", installRootKeyBytes(rootKey), salt, `omnesis-artifact:${scope}`, 32),
-  );
 }

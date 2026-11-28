@@ -6,7 +6,8 @@
  * `recordings.speakers`: `off` (the default), `local` (sherpa-onnx on this
  * machine), or `replay` (tests). In `local` mode the two pinned models are
  * downloaded into the models directory the first time; until they are on
- * disk, recordings are transcribed without speakers.
+ * disk, transcription waits for preparation. If preparation is unavailable, transcription
+ * can continue without speakers while existing voice vectors remain pending.
  */
 
 import { existsSync, statSync } from "node:fs";
@@ -17,6 +18,7 @@ import { createLogger } from "@omnesis/core";
 import { startDownload } from "../../models/downloader.js";
 import { LocalVoiceSeparator, type VoiceModelPaths } from "./local-voice-separator.js";
 import { ReplayVoiceSeparator } from "./replay-voice-separator.js";
+import type { ConfigStore } from "../../config-store.js";
 import type { VoiceSeparator } from "./voices.js";
 
 const log = createLogger("gateway:recordings:voices");
@@ -66,65 +68,173 @@ export async function sherpaAvailable(): Promise<boolean> {
   }
 }
 
+export interface VoiceSeparatorPolicy {
+  mode: SpeakerSeparationMode;
+  reviewRequired: boolean;
+  /** Feature availability never masquerades as an explicit off choice. */
+  enabled?: boolean;
+}
+export type VoiceSeparatorReadiness = "ready" | "off" | "unavailable" | "superseded";
 export interface VoiceSeparatorSource {
-  /** The separator, or null while it is off or not ready yet. */
   current(): VoiceSeparator | null;
+  /** Reconcile the current choice without waiting; all old ownership is joined before new preparation. */
+  refresh(): void;
+  revision(): number;
+  settled(): Promise<VoiceSeparatorReadiness>;
   dispose(): Promise<void>;
+}
+/** Observe every committed policy before an asynchronous listener can miss an off/on transition. */
+export function bindVoiceSeparatorPolicy(
+  configStore: Pick<ConfigStore, "onCommit">,
+  source: Pick<VoiceSeparatorSource, "refresh">,
+): () => void {
+  return configStore.onCommit(() => source.refresh());
 }
 
 export interface VoiceSeparatorSourceOptions {
-  mode: SpeakerSeparationMode;
+  mode?: SpeakerSeparationMode;
+  policy?: () => VoiceSeparatorPolicy;
   modelsDir: string;
-  /** Test seams. */
+  /** Test seams operate only on the fixed pinned model descriptors. */
   available?: () => Promise<boolean>;
-  download?: (model: typeof SEGMENTATION_MODEL, modelsDir: string) => Promise<void>;
-  create?: (models: VoiceModelPaths) => VoiceSeparator;
+  download?: (
+    model: typeof SEGMENTATION_MODEL,
+    modelsDir: string,
+    signal: AbortSignal,
+  ) => Promise<void>;
+  create?: (models: VoiceModelPaths) => VoiceSeparator | Promise<VoiceSeparator>;
 }
 
-/** Prepare the configured separator in the background; `current()` is null until it is ready. */
+/** Own every preparation generation, including disposal and interrupted downloads. */
 export function createVoiceSeparatorSource(
   opts: VoiceSeparatorSourceOptions,
 ): VoiceSeparatorSource {
-  let separator: VoiceSeparator | null = opts.mode === "replay" ? new ReplayVoiceSeparator() : null;
-  let disposed = false;
-
-  if (opts.mode === "local") {
-    const available = opts.available ?? sherpaAvailable;
-    const download = opts.download ?? downloadModel;
-    const create =
-      opts.create ?? ((models) => new LocalVoiceSeparator({ models, model: EMBEDDING_MODEL_ID }));
-    void (async () => {
-      if (!(await available())) {
+  let separator: VoiceSeparator | null = null;
+  let disposed = false,
+    revision = 0;
+  let policy: VoiceSeparatorPolicy | undefined;
+  let controller = new AbortController();
+  let task: Promise<void> = Promise.resolve();
+  let state: VoiceSeparatorReadiness = "off";
+  const readPolicy = (): VoiceSeparatorPolicy => {
+    try {
+      const value: VoiceSeparatorPolicy = opts.policy?.() ?? {
+        mode: opts.mode ?? "off",
+        reviewRequired: false,
+      };
+      return { ...value, enabled: value.enabled !== false };
+    } catch {
+      return { mode: "off", reviewRequired: true };
+    }
+  };
+  const matches = (wanted: VoiceSeparatorPolicy) => {
+    const current = readPolicy();
+    return (
+      current.mode === wanted.mode &&
+      current.reviewRequired === wanted.reviewRequired &&
+      current.enabled === wanted.enabled
+    );
+  };
+  const refresh = () => {
+    if (disposed) return;
+    const next = readPolicy();
+    if (
+      policy?.mode === next.mode &&
+      policy.reviewRequired === next.reviewRequired &&
+      policy.enabled === next.enabled
+    )
+      return;
+    policy = { ...next };
+    const ownRevision = ++revision;
+    controller.abort();
+    const ownController = new AbortController();
+    controller = ownController;
+    const previous = task,
+      retired = separator;
+    separator = null;
+    state = next.reviewRequired ? "superseded" : next.mode === "off" ? "off" : "unavailable";
+    const current = () =>
+      !disposed && ownRevision === revision && !ownController.signal.aborted && matches(next);
+    task = (async () => {
+      await previous;
+      await retired?.dispose();
+      if (!current() || next.reviewRequired || next.mode === "off" || next.enabled === false)
+        return;
+      let created: VoiceSeparator | undefined;
+      try {
+        if (next.mode === "replay") created = new ReplayVoiceSeparator();
+        else {
+          if (!(await (opts.available ?? sherpaAvailable)()) || !current()) return;
+          for (const model of [SEGMENTATION_MODEL, EMBEDDING_MODEL]) {
+            if (!current()) return;
+            if (hasModel(opts.modelsDir, model)) continue;
+            await (opts.download ?? downloadModel)(model, opts.modelsDir, ownController.signal);
+            if (!current()) return;
+          }
+          if (!current()) return;
+          created = await (
+            opts.create ??
+            ((models) => new LocalVoiceSeparator({ models, model: EMBEDDING_MODEL_ID }))
+          )({
+            segmentation: join(opts.modelsDir, SEGMENTATION_MODEL.filename),
+            embedding: join(opts.modelsDir, EMBEDDING_MODEL.filename),
+          });
+        }
+        if (!current()) {
+          await created.dispose();
+          return;
+        }
+        separator = created;
+        state = "ready";
+      } catch {
+        if (created && created !== separator) await created.dispose();
+        if (current()) state = "unavailable";
         log.warn(
-          "Telling speakers apart needs the sherpa-onnx-node package; recordings are transcribed without speakers",
+          "Voice model preparation did not complete; recording voice history remains pending",
         );
+      }
+    })();
+    // Disposal errors stay owned by task/settled/dispose, never become detached rejections.
+    void task.catch(() => undefined);
+  };
+  refresh();
+  return {
+    refresh,
+    current: () => {
+      refresh();
+      return disposed || policy?.reviewRequired || policy?.enabled === false ? null : separator;
+    },
+    revision: () => {
+      refresh();
+      return revision;
+    },
+    settled: async () => {
+      refresh();
+      const ownRevision = revision;
+      try {
+        await task;
+      } catch {
+        return "unavailable";
+      }
+      refresh();
+      return disposed || ownRevision !== revision || policy?.reviewRequired ? "superseded" : state;
+    },
+    dispose: async () => {
+      if (disposed) {
+        await task;
         return;
       }
-      for (const model of [SEGMENTATION_MODEL, EMBEDDING_MODEL]) {
-        if (hasModel(opts.modelsDir, model)) continue;
-        log.info(`Downloading voice model ${model.filename}`);
-        await download(model, opts.modelsDir);
-      }
-      if (disposed) return;
-      separator = create({
-        segmentation: join(opts.modelsDir, SEGMENTATION_MODEL.filename),
-        embedding: join(opts.modelsDir, EMBEDDING_MODEL.filename),
-      });
-      log.info("Recordings will tell speakers apart");
-    })().catch((err: unknown) => {
-      log.warn(
-        `Voice models unavailable; recordings are transcribed without speakers: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    });
-  }
-
-  return {
-    current: () => separator,
-    dispose: async () => {
       disposed = true;
-      const s = separator;
+      revision++;
+      controller.abort();
+      const retired = separator;
       separator = null;
-      await s?.dispose();
+      const previous = task;
+      task = (async () => {
+        await previous;
+        await retired?.dispose();
+      })();
+      await task;
     },
   };
 }
@@ -134,6 +244,19 @@ function hasModel(modelsDir: string, model: typeof SEGMENTATION_MODEL): boolean 
   return existsSync(path) && statSync(path).size === model.sizeBytes;
 }
 
-async function downloadModel(model: typeof SEGMENTATION_MODEL, modelsDir: string): Promise<void> {
-  await startDownload(model, { modelsDir, onProgress: () => {} }).done;
+async function downloadModel(
+  model: typeof SEGMENTATION_MODEL,
+  modelsDir: string,
+  signal: AbortSignal,
+): Promise<void> {
+  signal.throwIfAborted();
+  const handle = startDownload(model, { modelsDir, onProgress: () => {} });
+  const abort = () => handle.abort();
+  signal.addEventListener("abort", abort, { once: true });
+  try {
+    if (signal.aborted) abort();
+    await handle.done;
+  } finally {
+    signal.removeEventListener("abort", abort);
+  }
 }

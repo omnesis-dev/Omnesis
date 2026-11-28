@@ -123,6 +123,21 @@ describe("getDevice / listDevices", () => {
 });
 
 describe("updateDeviceCapabilities + touchDevice", () => {
+  test("encrypted storage opt-in survives capability refreshes from older clients", () => {
+    const device = createDevice(db, {
+      name: "Protected desktop",
+      kind: "collector",
+      capabilities: { requiresEncryptedStorage: true, hostname: "fictional-original" },
+    });
+    updateDeviceCapabilities(db, device.id, { hostname: "fictional-new" });
+    expect(getDevice(db, device.id)?.capabilities).toEqual({
+      requiresEncryptedStorage: true,
+      hostname: "fictional-new",
+    });
+    updateDeviceCapabilities(db, device.id, {});
+    expect(getDevice(db, device.id)?.capabilities.requiresEncryptedStorage).toBe(true);
+  });
+
   test("updates capabilities and last_seen_at", () => {
     const d = createDevice(db, { name: "d", kind: "collector" });
     updateDeviceCapabilities(db, d.id, { hostname: "new-host", platform: "macos" });

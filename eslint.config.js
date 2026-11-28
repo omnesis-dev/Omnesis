@@ -46,6 +46,20 @@ export default tseslint.config(
       // Swift / iOS — handled by SwiftLint + SwiftFormat
       "ios/**",
 
+      // Generated macOS builds and integrity-checked runtime fixtures. Keep the
+      // handwritten JavaScript under macos/ in the lint surface.
+      "macos/.build/**",
+      "macos/.swiftpm/**",
+      "macos/build/**",
+      "macos/DerivedData/**",
+      "macos/OmnesisDesktop.xcodeproj/**",
+      "macos/.node-fixture/**",
+      "macos/.codex-keychain-fixture/**",
+      "macos/.codex-backend-fixture/**",
+      "macos/.analytics-build-fixture/**",
+      "macos/.package-build-fixture/**",
+      "evidence/**",
+
       // Kotlin / Android — handled by the Gradle toolchain; build dirs contain
       // generated JS (test/Roborazzi HTML reports) that must never be linted.
       "android/**",

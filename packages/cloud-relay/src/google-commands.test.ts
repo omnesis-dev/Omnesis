@@ -596,3 +596,55 @@ test("the installed account command uses account pairing and the explicitly conf
   await runAccountDevicePairing({ ...env, OMNESIS_CLOUD_RELAY_TARGET_GATEWAY_ID: result.deviceId });
   expect(pair).toHaveBeenCalledOnce();
 });
+
+test("account repair preserves encrypted credential storage and scoped signing keys", async () => {
+  const configDir = env.OMNESIS_CONFIG_DIR!;
+  const scope = {
+    configDir,
+    backend: "file" as const,
+    service: "dev.omnesis.desktop.command-fixture",
+  };
+  await core.ensureInstallRootKey(scope);
+  const result = {
+    gatewayUrl: vectors.gateway.publicOrigin,
+    gatewayFingerprint: "a".repeat(64),
+    gatewayCertificate: vectors.gateway.certificate,
+    token: "omn_test",
+    kind: "collector" as const,
+    deviceId: vectors.gateway.gatewayId,
+    scopes: ["read:all"],
+  };
+  const pair = vi.fn(async () => result);
+  await runAccountDevicePairing(
+    {
+      ...env,
+      OMNESIS_SECRET_STORE: scope.backend,
+      OMNESIS_SECRET_SERVICE: scope.service,
+      OMNESIS_CLOUD_RELAY_DEVICE_KIND: "collector",
+    },
+    { pair },
+  );
+  const stored = join(configDir, "cloud-relay/collector-device.json");
+  const raw = await readFile(stored, "utf8");
+  expect(core.isEncryptedSecretFile(raw)).toBe(true);
+  expect(raw).not.toContain(result.token);
+  const tokenPath = join(configDir, "collector-token");
+  expect(core.isEncryptedSecretFile(await readFile(tokenPath, "utf8"))).toBe(true);
+  expect(await core.readSecretTextFile(tokenPath, scope)).toBe(result.token);
+  expect(pair).toHaveBeenCalledWith(expect.objectContaining({ deviceKeySecretOptions: scope }));
+  await core.createSecretStore(scope).delete("install-root-key-v1");
+  pair.mockClear();
+  await expect(
+    runAccountDevicePairing(
+      {
+        ...env,
+        OMNESIS_SECRET_STORE: scope.backend,
+        OMNESIS_SECRET_SERVICE: scope.service,
+        OMNESIS_CLOUD_RELAY_DEVICE_KIND: "collector",
+      },
+      { pair },
+    ),
+  ).rejects.toThrow(/key must be unlocked/);
+  expect(pair).not.toHaveBeenCalled();
+  expect(await readFile(stored, "utf8")).toBe(raw);
+});

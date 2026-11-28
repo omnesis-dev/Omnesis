@@ -18,6 +18,7 @@
 
 import { readFileSync } from "node:fs";
 import { defineCommand } from "citty";
+import { macServerGuidance } from "./mac-server-guidance.js";
 
 export function gatewayRuntimeMode(entryUrl: string, explicitMode?: string): string {
   if (explicitMode !== undefined) return explicitMode;
@@ -49,6 +50,10 @@ export const gatewayCommand = defineCommand({
         description: "Start the gateway daemon (foreground; supervise with `omnesis service`)",
       },
       run: async () => {
+        if (process.stdout.isTTY === true) {
+          const guidance = macServerGuidance(process.platform, true);
+          if (guidance) process.stdout.write(`\n${guidance}\n\n`);
+        }
         // The gateway boots on import (module top-level) and registers its
         // own SIGINT/SIGTERM graceful-shutdown handlers.
         // Raw source/dev entrypoints have no production capability. Preserve an

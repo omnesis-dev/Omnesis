@@ -8,31 +8,44 @@ import {
 } from "./device-pairing.js";
 import { authorizeAccountDesktop } from "./account-desktop-client.js";
 import { readOrCreateDeviceKey } from "./device-key-file.js";
-import { selectAccountGateway } from "./gateway-choice-client.js";
+import {
+  selectAccountGateway,
+  snapshotExpectedAccountGateway,
+  type ExpectedAccountGateway,
+} from "./gateway-choice-client.js";
 import { relayOrigin } from "./network.js";
+import type { SecretFileOptions } from "@omnesis/core";
 import type { GatewayChoice } from "./gateway-directory.js";
 
 /** Browser sign-in only requests enrollment. Trusted gateway approval and code comparison issue the data credential. */
 export async function pairAccountDevice(
   options: CloudDevicePairingOptions & {
     relayUrl: string;
+    expectedGateway?: ExpectedAccountGateway;
     deviceKeyFile: string;
+    deviceKeySecretOptions?: SecretFileOptions;
     selectGateway(choices: readonly GatewayChoice[], signal: AbortSignal): Promise<string>;
     /** Shown beside the browser launch so a machine without one can finish on another device. */
     onConnectCode?(value: { connectUrl: string; connectShortUrl?: string; code: string }): void;
   },
   dependencies: {
+    readDeviceKey?: typeof readOrCreateDeviceKey;
     authorize?: typeof authorizeAccountDesktop;
     fetch?: typeof fetch;
     gatewayJson?: typeof pinnedGatewayJson;
     wait?: (signal: AbortSignal) => Promise<void>;
   } = {},
 ) {
+  const expectedGateway = snapshotExpectedAccountGateway(options.expectedGateway);
   const relay = relayOrigin(options.relayUrl);
-  return pairCloudDevice(options, {
+  let homeName: string | undefined;
+  const paired = await pairCloudDevice(options, {
     gatewayJson: dependencies.gatewayJson,
     wait: dependencies.wait,
-    deviceKey: await readOrCreateDeviceKey(options.deviceKeyFile),
+    deviceKey: await (dependencies.readDeviceKey ?? readOrCreateDeviceKey)(
+      options.deviceKeyFile,
+      options.deviceKeySecretOptions,
+    ),
     discover: async (request, signal) => {
       const discovery = await (dependencies.authorize ?? authorizeAccountDesktop)(
         {
@@ -53,8 +66,10 @@ export async function pairAccountDevice(
         expiresAt: discovery.expiresAt,
         signal,
         select: options.selectGateway,
+        expectedGateway,
         fetch: dependencies.fetch,
       });
+      homeName = result.displayName;
       return {
         candidate: result.binding,
         identityToken: result.identityToken,
@@ -63,4 +78,5 @@ export async function pairAccountDevice(
       };
     },
   });
+  return { ...paired, ...(homeName ? { homeName } : {}) };
 }

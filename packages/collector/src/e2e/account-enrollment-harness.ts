@@ -53,7 +53,7 @@ import {
   type Page,
 } from "playwright";
 import { createWindowsPrivateFile, ownedProcessCleanupReceipt } from "@omnesis/core";
-import { E2EHarness } from "./harness.js";
+import { E2EHarness, type HarnessOptions } from "./harness.js";
 import { writeNoBrowserPreload } from "./enrollment-browser-fixture.js";
 import { e2eGatewayEnv, e2eTsxCommand, gatewayBootBudgetMs } from "./gateway-env.js";
 import { killSubprocessGroup, registerSubprocessGroup } from "./subprocess-reaper.js";
@@ -877,7 +877,12 @@ export class EnrollmentGateway {
   static async start(
     world: EnrollmentWorld,
     name: string,
-    options: { sct?: boolean; extraEnv?: NodeJS.ProcessEnv } = {},
+    options: {
+      sct?: boolean;
+      extraEnv?: NodeJS.ProcessEnv;
+      prepareGateway?: (harness: E2EHarness) => Promise<void>;
+      readGatewayToken?: HarnessOptions["readGatewayToken"];
+    } = {},
   ): Promise<EnrollmentGateway> {
     const directory = join(world.directory, `gateway-${name}`);
     await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -940,6 +945,7 @@ export class EnrollmentGateway {
           : Object.assign(failure, { cleanupFailure: receipt.failure });
       }
       gateway.harness = new EnrollmentHarness({
+        readGatewayToken: options.readGatewayToken,
         extraGatewayEnv: {
           ...world.clientEnv(),
           ...relayEnv,
@@ -955,6 +961,7 @@ export class EnrollmentGateway {
         providerType: "mock-relay",
         accountId: "fictional",
       });
+      await options.prepareGateway?.(gateway.harness);
       await gateway.harness.start();
       await waitFor(
         async () => (await gateway.status()).tunnel.state === "online",

@@ -73,6 +73,7 @@ export const LUNCHFLOW_ACCOUNTS_SOURCE_ID = "lunchflow-accounts";
 
 export default defineProvider<LunchflowContext>({
   provider: { id: "lunchflow", name: "Lunch Flow" },
+  permissionRequirements: [],
   authType: "api-key",
   credentials: lunchflowCredentialsSpec,
 

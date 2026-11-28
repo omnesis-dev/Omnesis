@@ -1,0 +1,353 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Adrien Conrath
+name: macOS desktop
+on:
+  workflow_call:
+    inputs:
+      target_sha:
+        type: string
+        required: true
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: macos-desktop-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  native-desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            os: macos-26
+          - arch: x64
+            os: macos-26-intel
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.target_sha || github.sha }}
+      - name: Keep tests off production services
+        id: production-network
+        run: scripts/ci/production-network.sh isolate
+      - name: Show native toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+      - name: Read pinned runtime version
+        id: runtime
+        run: |
+          echo "node=$(python3 -c 'import json; print(json.load(open("scripts/desktop/node-runtime.json"))["version"])')" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ steps.runtime.outputs.node }}
+          cache: npm
+      - name: Verify runner architecture
+        env:
+          EXPECTED_NODE_ARCH: ${{ matrix.arch }}
+        run: |
+          actual_arch=$(node -p process.arch)
+          if [ "$actual_arch" != "$EXPECTED_NODE_ARCH" ]; then
+            printf 'Expected Node architecture %s, observed %s\n' "$EXPECTED_NODE_ARCH" "$actual_arch" >&2
+            exit 1
+          fi
+      - name: Install build dependencies
+        run: scripts/ci/npm-ci.sh
+      - name: Prepare verified Node process fixture
+        run: node scripts/desktop/prepare-node-test-fixture.mjs --arch "$(node -p process.arch)" --out macos/.node-fixture --cache "$RUNNER_TEMP/desktop-node-cache"
+      - name: Prepare pinned Codex Keychain process fixture
+        run: node scripts/desktop/prepare-codex-keychain-test-fixture.mjs --arch "$(node -p process.arch)" --out macos/.codex-keychain-fixture --cache "$RUNNER_TEMP/desktop-codex-cache"
+      - name: Prepare production backend composition fixture
+        run: node scripts/desktop/codex-backend-test-fixture.mjs --out macos/.codex-backend-fixture
+      - name: Restore SwiftPM packages
+        id: swiftpm-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            macos/.build/repositories
+            macos/.build/checkouts
+            macos/.build/workspace-state.json
+            macos/Package.resolved
+          key: desktop-swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('macos/Package.swift') }}
+          restore-keys: desktop-swiftpm-${{ runner.os }}-${{ runner.arch }}-
+      - name: Resolve SwiftPM packages
+        run: scripts/ci/resolve-swift-packages.sh macos
+      - name: Save SwiftPM packages
+        if: ${{ github.ref == 'refs/heads/main' && steps.swiftpm-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            macos/.build/repositories
+            macos/.build/checkouts
+            macos/.build/workspace-state.json
+            macos/Package.resolved
+          key: ${{ steps.swiftpm-cache.outputs.cache-primary-key }}
+      - name: Test portable native models
+        id: core
+        continue-on-error: true
+        working-directory: macos
+        run: swift test --disable-automatic-resolution
+      - name: Upload partial Core lifecycle observations
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: macos-desktop-core-lifecycle-${{ matrix.arch }}
+          path: evidence/readiness-diagnostics/fixture-phase-*/latest.json
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate native project
+        working-directory: macos
+        run: xcodegen generate
+      - name: Build and exercise native application
+        working-directory: macos
+        run: |
+          desktop_xcodebuild() {
+            xcodebuild \
+            -project OmnesisDesktop.xcodeproj \
+            -scheme OmnesisDesktop \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath build \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM='' \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGNING_REQUIRED=YES \
+            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGN_INJECT_BASE_ENTITLEMENTS=YES \
+            "$@"
+          }
+          collect_runner_signature() {
+            status=$?
+            trap - EXIT
+            node Tests/Support/normalize-test-runner-signature.mjs --inspect-products "$PWD/build/Build/Products/Debug" > build/test-runner-signature-after.json || true
+            cat build/test-runner-signature-after.json
+            exit "$status"
+          }
+          trap collect_runner_signature EXIT
+          desktop_xcodebuild build-for-testing
+          python3 Tests/Support/capture-generated-test-schema.py --products build/Build/Products --evidence ../evidence/readiness-diagnostics >/dev/null 2>&1 || true
+          node Tests/Support/normalize-test-runner-signature.mjs --products "$PWD/build/Build/Products/Debug"
+          desktop_xcodebuild -resultBundlePath build/DesktopTests.xcresult test-without-building
+      - name: Require successful portable native models
+        if: ${{ !cancelled() }}
+        env:
+          CORE_OUTCOME: ${{ steps.core.outcome }}
+        run: |
+          if [ "$CORE_OUTCOME" != "success" ]; then
+            printf 'Portable native models did not pass (outcome: %s)\n' "$CORE_OUTCOME" >&2
+            exit 1
+          fi
+      - name: Assemble complete unsigned app and exercise bundled runtime
+        run: |
+          xcodebuild -project macos/OmnesisDesktop.xcodeproj -scheme OmnesisDesktop -configuration Release -destination 'platform=macOS' -derivedDataPath macos/build CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO build
+          node scripts/desktop/prepare-runtime.mjs --out "$RUNNER_TEMP/desktop-runtime" --cache "$RUNNER_TEMP/desktop-node-cache" --runtime-exec macos/build/Build/Products/Release/OmnesisRuntimeExec
+          node scripts/desktop/smoke-runtime.mjs --runtime "$RUNNER_TEMP/desktop-runtime"
+          node scripts/desktop/assemble-app.mjs --runtime "$RUNNER_TEMP/desktop-runtime" --shell-app macos/build/Build/Products/Release/Omnesis.app --out "$RUNNER_TEMP/Omnesis.app" --arch "$(node -p process.arch)" --version "$(node -p 'JSON.parse(require("fs").readFileSync("packages/core/package.json")).version')"
+          ditto -c -k --keepParent "$RUNNER_TEMP/Omnesis.app" "$RUNNER_TEMP/Omnesis-unsigned.zip"
+      - name: Upload unsigned app for isolated QA
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: macos-desktop-unsigned-${{ matrix.arch }}
+          path: ${{ runner.temp }}/Omnesis-unsigned.zip
+          retention-days: 7
+      - name: Upload native renders and test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: macos-desktop-evidence-${{ matrix.arch }}
+          path: |
+            /tmp/omnesis-macos-snapshots/
+            macos/build/DesktopTests.xcresult
+            macos/build/test-runner-signature-after.json
+            evidence/readiness-diagnostics/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Verify production network isolation
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: scripts/ci/production-network.sh verify
+  external-ax-control:
+    name: External AX control diagnostic (Intel; not the full native gate)
+    runs-on: macos-26-intel
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.target_sha || github.sha }}
+      - name: Initialize diagnostic scope receipt
+        run: |
+          install -d -m 700 evidence/external-ax-control
+          printf '%s\n' '{"format":1,"scope":"external-ax-control-diagnostic-only","execution":"not-observed"}' > evidence/external-ax-control/scope.json
+      - name: Keep tests off production services
+        id: production-network
+        run: scripts/ci/production-network.sh isolate
+      - name: Show native toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+      - name: Read pinned runtime version
+        id: runtime
+        run: |
+          echo "node=$(python3 -c 'import json; print(json.load(open("scripts/desktop/node-runtime.json"))["version"])')" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ steps.runtime.outputs.node }}
+          cache: npm
+      - name: Verify runner architecture
+        env:
+          EXPECTED_NODE_ARCH: x64
+        run: |
+          actual_arch=$(node -p process.arch)
+          if [ "$actual_arch" != "$EXPECTED_NODE_ARCH" ]; then
+            printf 'Expected Node architecture %s, observed %s\n' "$EXPECTED_NODE_ARCH" "$actual_arch" >&2
+            exit 1
+          fi
+      - name: Install build dependencies
+        run: scripts/ci/npm-ci.sh
+      - name: Resolve SwiftPM packages
+        run: scripts/ci/resolve-swift-packages.sh macos
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate native project
+        working-directory: macos
+        run: xcodegen generate
+      - name: Require generated testing-only control graph
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, pathlib, subprocess, xml.etree.ElementTree as ET
+          evidence = pathlib.Path('evidence/external-ax-control')
+          evidence.mkdir(mode=0o700, parents=True, exist_ok=True)
+          (evidence / 'generated-control-graph.json').write_text(json.dumps({'format': 1, 'scope': 'external-ax-control-diagnostic-only', 'qualified': False, 'reason': 'generated-graph-not-qualified'}) + '\n')
+          project = pathlib.Path('macos/OmnesisDesktop.xcodeproj/project.pbxproj')
+          scheme = pathlib.Path('macos/OmnesisDesktop.xcodeproj/xcshareddata/xcschemes/OmnesisDesktop.xcscheme')
+          if not project.is_file() or project.is_symlink() or project.stat().st_size > 2 * 1024 * 1024:
+              raise SystemExit('The generated diagnostic project is unavailable or unbounded')
+          if not scheme.is_file() or scheme.is_symlink() or scheme.stat().st_size > 256 * 1024:
+              raise SystemExit('The generated diagnostic scheme is unavailable or unbounded')
+          raw = subprocess.run(['/usr/bin/plutil', '-convert', 'json', '-o', '-', str(project)], check=True, capture_output=True, timeout=30).stdout
+          if len(raw) > 8 * 1024 * 1024:
+              raise SystemExit('The generated diagnostic project projection is unbounded')
+          objects = json.loads(raw)['objects']
+          native = {key: value for key, value in objects.items() if value.get('isa') == 'PBXNativeTarget'}
+          fixture = [key for key, value in native.items() if value.get('name') == 'OmnesisAXControlFixture']
+          if len(fixture) != 1:
+              raise SystemExit('The generated control target must be unique')
+          fixture = fixture[0]
+          def closure(roots):
+              seen, pending = set(), list(roots)
+              while pending:
+                  key = pending.pop()
+                  if key in seen:
+                      continue
+                  seen.add(key)
+                  for dependency in objects[key].get('dependencies', []):
+                      target = objects.get(dependency, {}).get('target')
+                      if target in native:
+                          pending.append(target)
+              return seen
+          root = ET.fromstring(scheme.read_bytes())
+          entries = root.findall('./BuildAction/BuildActionEntries/BuildActionEntry')
+          selected = [entry for entry in entries if entry.find('BuildableReference').get('BlueprintIdentifier') == fixture]
+          if len(selected) != 1 or selected[0].get('buildForTesting') != 'YES' or any(selected[0].get(key) != 'NO' for key in ['buildForRunning', 'buildForProfiling', 'buildForAnalyzing', 'buildForArchiving']):
+              raise SystemExit('The generated control target must be testing-only')
+          non_testing = set()
+          for action in ['buildForRunning', 'buildForProfiling', 'buildForAnalyzing', 'buildForArchiving']:
+              roots = [entry.find('BuildableReference').get('BlueprintIdentifier') for entry in entries if entry.get(action) == 'YES']
+              reachable = closure(roots)
+              if fixture in reachable:
+                  raise SystemExit('The control is reachable from a non-testing action')
+              non_testing.update(reachable)
+          product = objects[fixture]['productReference']
+          for target in non_testing:
+              for phase in objects[target].get('buildPhases', []):
+                  for build_file in objects[phase].get('files', []):
+                      if objects[build_file].get('fileRef') == product:
+                          raise SystemExit('A non-testing target embeds the control product')
+          if objects[fixture].get('dependencies'):
+              raise SystemExit('The control must have no target dependencies')
+          receipt = {'format': 1, 'scope': 'external-ax-control-diagnostic-only', 'qualified': True, 'testingOnly': True, 'nonTestingGraphExcludesControl': True, 'nonTestingGraphDoesNotEmbedControl': True,
+                     'projectSha256': hashlib.sha256(project.read_bytes()).hexdigest(), 'schemeSha256': hashlib.sha256(scheme.read_bytes()).hexdigest()}
+          (evidence / 'generated-control-graph.json').write_text(json.dumps(receipt) + '\n')
+          (evidence / 'generated-scheme.xcscheme').write_bytes(scheme.read_bytes())
+          PY
+      - name: Build diagnostic test products
+        id: control-build
+        working-directory: macos
+        run: |
+          xcodebuild -project OmnesisDesktop.xcodeproj -scheme OmnesisDesktop \
+            -configuration Debug -destination 'platform=macOS' -derivedDataPath build \
+            -parallel-testing-enabled NO CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM='' \
+            CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=YES CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGN_INJECT_BASE_ENTITLEMENTS=YES build-for-testing
+          node Tests/Support/normalize-test-runner-signature.mjs --products "$PWD/build/Build/Products/Debug" \
+            > ../evidence/external-ax-control/test-runner-signature-before.json
+      - name: Run only the opted-in external AX comparison
+        id: control-test
+        working-directory: macos
+        env:
+          TEST_RUNNER_OMNESIS_EXTERNAL_AX_CONTROL_DIAGNOSTIC: "1"
+        run: |
+          collect_runner_signature() {
+            status=$?
+            trap - EXIT
+            node Tests/Support/normalize-test-runner-signature.mjs --inspect-products "$PWD/build/Build/Products/Debug" \
+              > ../evidence/external-ax-control/test-runner-signature-after.json || true
+            exit "$status"
+          }
+          trap collect_runner_signature EXIT
+          xcodebuild -project OmnesisDesktop.xcodeproj -scheme OmnesisDesktop \
+            -configuration Debug -destination 'platform=macOS' -derivedDataPath build \
+            -parallel-testing-enabled NO CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM='' \
+            CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=YES CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGN_INJECT_BASE_ENTITLEMENTS=YES \
+            -only-testing:OmnesisDesktopUITests/DesktopExternalAXControlUITests/testStandardAppKitThenOwnedOmnesisCanBeQueriedInOneRunnerMethod \
+            -resultBundlePath build/ExternalAXControl.xcresult test-without-building
+      - name: Require exactly one passed diagnostic and no skip
+        if: ${{ always() && steps.control-build.outcome == 'success' }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { spawnSync } from 'node:child_process';
+          import { mkdirSync, writeFileSync } from 'node:fs';
+          const directory = 'evidence/external-ax-control';
+          mkdirSync(directory, { recursive: true, mode: 0o700 });
+          const receipt = { format: 1, scope: 'external-ax-control-diagnostic-only', qualified: false, reason: 'summary-tool-failed' };
+          const tool = spawnSync('xcrun', ['xcresulttool', 'get', 'test-results', 'summary', '--path', 'macos/build/ExternalAXControl.xcresult'], {
+            stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 1024 * 1024, timeout: 30000,
+          });
+          if (tool.stdout?.length) writeFileSync(directory + '/summary.json', tool.stdout.subarray(0, 1024 * 1024), { mode: 0o600, flag: 'wx' });
+          if (!tool.error && tool.status === 0 && tool.stdout.length <= 1024 * 1024) {
+            receipt.reason = 'invalid-summary';
+            try {
+              const summary = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(tool.stdout));
+              const keys = ['totalTestCount', 'passedTests', 'failedTests', 'skippedTests'];
+              if (summary && typeof summary === 'object' && !Array.isArray(summary) && keys.every(key => Object.hasOwn(summary, key) && Number.isSafeInteger(summary[key]) && summary[key] >= 0 && summary[key] <= 1000000)) {
+                const [total, passed, failed, skipped] = keys.map(key => summary[key]);
+                receipt.counts = { total, passed, failed, skipped };
+                receipt.qualified = total === 1 && passed === 1 && failed === 0 && skipped === 0;
+                receipt.reason = receipt.qualified ? 'single-diagnostic-passed' : 'not-exactly-one-pass-zero-fail-zero-skip';
+              }
+            } catch { /* Malformed tool output remains unavailable qualification. */ }
+          }
+          writeFileSync(directory + '/qualification.json', JSON.stringify(receipt) + '\n', { mode: 0o600, flag: 'wx' });
+          if (!receipt.qualified) {
+            process.stderr.write('External AX diagnostic qualification failed: ' + receipt.reason + '\n');
+            process.exitCode = 1;
+          }
+          NODE
+      - name: Upload bounded diagnostic receipts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: macos-desktop-external-ax-control-intel
+          path: evidence/external-ax-control/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Verify production network isolation
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: scripts/ci/production-network.sh verify

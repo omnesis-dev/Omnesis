@@ -34,6 +34,7 @@
 
 import { lstatSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { isReadAccessDenied } from "@omnesis/source-sdk";
 import picomatch from "picomatch";
 import { fullDiskAccessRemediation } from "@omnesis/core";
 import { SyncError } from "@omnesis/types";
@@ -170,6 +171,7 @@ interface MessageFile {
 }
 
 export interface MaildirWalk {
+  permissionDenied?: true;
   mailboxes: Mailbox[];
   files: MessageFile[];
   /**
@@ -428,6 +430,7 @@ export function walkMaildir(
 
   const mailboxes: Mailbox[] = [];
   const gaps: MaildirWalk["gaps"] = [];
+  let permissionDenied = false;
   let mboxFolderSeen = false;
   let thunderbirdIndexSeen = false;
 
@@ -436,6 +439,7 @@ export function walkMaildir(
     try {
       entries = listDir(dir);
     } catch (err) {
+      if (isReadAccessDenied(err)) permissionDenied = true;
       if (depth === 0) throw readError(err, dir);
       // A subfolder that will not list may be a mailbox or may hold some.
       // Either way its mail is missing from this walk — unless it is one the
@@ -488,6 +492,7 @@ export function walkMaildir(
               .map((e) => e.name),
           );
         } catch (err) {
+          if (isReadAccessDenied(err)) permissionDenied = true;
           const name = mailboxName([...nameSegments, decodeSegment(entry.name)]);
           if (!isLeftOut(name)) {
             gaps.push({
@@ -529,6 +534,7 @@ export function walkMaildir(
       try {
         entries = listDir(join(mailbox.dir, sub));
       } catch (err) {
+        if (isReadAccessDenied(err)) permissionDenied = true;
         unreadable = String((err as Error).message);
         break;
       }
@@ -544,6 +550,7 @@ export function walkMaildir(
             const stat = lstatSync(join(mailbox.dir, relPath), { bigint: true });
             version = `${stat.mtimeNs}:${stat.ctimeNs}:${stat.size}:${stat.ino}`;
           } catch (err) {
+            if (isReadAccessDenied(err)) permissionDenied = true;
             // Gone since the listing: the message was deleted or moved, and
             // is simply not in this walk. Anything else is a file the walk
             // cannot vouch for.
@@ -583,5 +590,10 @@ export function walkMaildir(
       }
     }
   }
-  return { mailboxes, files, gaps };
+  return {
+    mailboxes,
+    files,
+    gaps,
+    ...(permissionDenied ? { permissionDenied: true as const } : {}),
+  };
 }

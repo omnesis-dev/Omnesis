@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { defineProvider, defineSource } from "@omnesis/source-sdk";
 import { AccountId, SourceType, ProviderType } from "@omnesis/types";
+import { sourcePermissionScopeDigest, type SourceConfig } from "@omnesis/core";
 import {
   setupSources,
   warnAboutUnreachableConfiguredSources,
@@ -14,7 +15,6 @@ import {
   type SourceInstantiatorContext,
 } from "./source-instantiator.js";
 import { buildSourceToProviderMap } from "./source-config-reconciler.js";
-import type { SourceConfig } from "@omnesis/core";
 import type {
   SourceDescriptor,
   SourceOrProviderDefinition,
@@ -331,6 +331,11 @@ describe("setupSources — per-instance label override", () => {
     expect(
       registered.flatMap((entry) => entry.sources.map((source) => String(source.id))).sort(),
     ).toEqual(["fixture-child:local", "fixture-single:local"]);
+    expect(
+      registered
+        .flatMap((provider) => provider.sources)
+        .find((source) => String(source.id) === "fixture-child:local")?.permissionScopeDigest,
+    ).toBe(sourcePermissionScopeDigest("fixture-child", "local", {}));
   });
 
   it("a provider account reads whether the broker holds its credential, at the time it is asked", async () => {
@@ -1032,6 +1037,9 @@ describe("setupSources — an instantiation failure is reported, not swallowed",
 
     expect(failures).toEqual([]);
     expect(registered[0]?.sources[0]?.id).toBe("desktop-notes:new@example.com");
+    expect(registered[0]?.sources[0]?.permissionScopeDigest).toBe(
+      sourcePermissionScopeDigest("desktop-notes", "new@example.com", {}),
+    );
   });
 
   let consoleWarnSpy: ReturnType<typeof vi.spyOn>;

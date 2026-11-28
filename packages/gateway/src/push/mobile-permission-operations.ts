@@ -25,10 +25,12 @@ import {
   listSourceMembers,
   markSourceRemoved,
   removeSourceMember,
+  setSourceMemberConfigOverride,
   updateSource,
   type RemoveSourceMemberResult,
   type SourceRecord,
 } from "../data/repositories/SourceRepository.js";
+import { sourceSettingsRevision } from "../data/repositories/source-settings-revision.js";
 import {
   deleteMobilePermissionHealth,
   deleteMobilePermissionHealthForDevice,
@@ -170,6 +172,7 @@ export function moveSourceWithPermissionInvalidation(
     enabled?: boolean;
     deviceId?: DeviceId;
     expectDeviceId?: DeviceId;
+    expectedRevision?: string;
     memberScopedParams?: readonly string[];
   },
   now = Date.now(),
@@ -179,11 +182,22 @@ export function moveSourceWithPermissionInvalidation(
   displacedDeviceIds: DeviceId[];
   streamCleanups: SourceStreamCleanupJob[];
 } | null {
-  const { expectDeviceId, memberScopedParams, ...fields } = patch;
+  const { expectDeviceId, expectedRevision, memberScopedParams, memberConfigOverride, ...fields } =
+    patch;
   return db
     .transaction(() => {
       const before = getSource(db, id);
       if (!before) return null;
+      if (expectedRevision !== undefined && sourceSettingsRevision(before) !== expectedRevision)
+        return null;
+      if (
+        memberConfigOverride !== undefined &&
+        (before.multiDeviceMode !== "exclusive" ||
+          fields.deviceId === undefined ||
+          fields.deviceId === before.deviceId ||
+          isSourceMember(db, id, fields.deviceId))
+      )
+        return null;
       if (expectDeviceId !== undefined && before.deviceId !== expectDeviceId) {
         return {
           record: before,
@@ -226,6 +240,11 @@ export function moveSourceWithPermissionInvalidation(
           : [];
       const updated = updateSource(db, id, fields);
       if (!updated) return null;
+      if (
+        memberConfigOverride !== undefined &&
+        !setSourceMemberConfigOverride(db, id, updated.deviceId, memberConfigOverride)
+      )
+        throw new Error("The source's target member changed during its move");
       if (updated.enabled === false || updated.deviceId !== before.deviceId)
         invalidateMobilePermissionHealth(db, id, now);
       const streamCleanups =
@@ -283,11 +302,16 @@ export function removeSourceWithPermissionInvalidation(
   db: Db,
   id: SourceId,
   now = Date.now(),
+  expectedRevision?: string,
 ): RemovedSource | null {
   return db
     .transaction(() => {
       const source = getSource(db, id);
-      if (!source) return null;
+      if (
+        !source ||
+        (expectedRevision !== undefined && sourceSettingsRevision(source) !== expectedRevision)
+      )
+        return null;
       // Membership capture and cascade share the writer transaction: a join
       // either belongs to this cohort or encounters the removal tombstone.
       const memberDeviceIds = [

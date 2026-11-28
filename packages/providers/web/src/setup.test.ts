@@ -102,3 +102,24 @@ describe("page_visits analytics schema", () => {
     ).not.toThrow();
   });
 });
+
+describe("provider-owned companion installation guide", () => {
+  test("retains the old marker and declares content without credential or scope authority", () => {
+    expect(definition.setupGuide).toBe("browser-extension");
+    const guide = definition.setupGuideContent!;
+    expect(guide.version).toBe(1);
+    expect(guide.title).toBe("Install the browser extension");
+    expect(guide.paragraphs.join(" ")).toContain("extension’s settings");
+    expect(guide.note).toContain("own scoped device credential");
+    expect(guide.pairing).toEqual({ deviceKind: "browser", label: "Already installed? Pair it" });
+    expect(guide.links).toHaveLength(1);
+    const install = new URL(guide.links[0].url);
+    expect(install.protocol).toBe("https:");
+    expect(install.hostname).toBe("chromewebstore.google.com");
+    expect(install.username).toBe("");
+    expect(guide).not.toHaveProperty("scopes");
+    expect(guide).not.toHaveProperty("credentials");
+    expect(guide).not.toHaveProperty("commands");
+    expect(definition.execution).toBe("external");
+  });
+});

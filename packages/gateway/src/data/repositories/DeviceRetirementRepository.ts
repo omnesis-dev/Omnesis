@@ -2,13 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createHash } from "node:crypto";
-import type { SourceId } from "@omnesis/types";
-import {
-  DeviceId,
-  hasPerDeviceCursor,
-  type DeviceKind,
-  type MultiDeviceMode,
-} from "@omnesis/types";
+import { DeviceId, hasPerDeviceCursor } from "@omnesis/types";
 import { agentDeviceRevocationImpact } from "../../access/agent-device-authorization.js";
 import { getDevice } from "./DeviceRepository.js";
 import {
@@ -21,6 +15,7 @@ import {
   removeSourceMember,
 } from "./SourceRepository.js";
 import { bumpWipeEpoch } from "./SyncStateRepository.js";
+import type { SourceId, DeviceKind, MultiDeviceMode } from "@omnesis/types";
 import type { SourceStreamCleanupJob } from "./SourceStreamCleanupRepository.js";
 import type { Db } from "../types.js";
 

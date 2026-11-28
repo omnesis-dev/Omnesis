@@ -10,6 +10,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -68,6 +69,18 @@ function stoppedGateway(): string {
 }
 
 describe("writeOfflineBackup", () => {
+  test.skipIf(process.platform === "win32")(
+    "refuses a conversation directory link before reading external history",
+    () => {
+      const configDir = tmp();
+      const external = tmp();
+      writeFileSync(join(external, "example-chat.json"), "Invented external conversation");
+      symlinkSync(external, join(configDir, "conversations"), "dir");
+      expect(() => backupConfigCopyNames(configDir)).toThrow("owned directory");
+      expect(readdirSync(external)).toEqual(["example-chat.json"]);
+    },
+  );
+
   test("copies the stores with their companions and the same config material as an online backup", () => {
     const configDir = stoppedGateway();
     const { path, files } = writeOfflineBackup({
@@ -353,5 +366,26 @@ describe("what a backup owns", () => {
     expect(restoredDotEnv(null, null)).toBeNull();
     // A machine key only the backup has does not come back.
     expect(restoredDotEnv("OMNESIS_SECRET_STORE=passphrase\n", null)).toBeNull();
+    expect(restoredDotEnv("OMNESIS_SECRET_SERVICE=dev.omnesis.desktop.old\n", null)).toBeNull();
+    expect(
+      restoredDotEnv(
+        "OMNESIS_SECRET_SERVICE=dev.omnesis.desktop.old\n",
+        "OMNESIS_SECRET_SERVICE=dev.omnesis.desktop.current\n",
+      ),
+    ).toBe("OMNESIS_SECRET_SERVICE=dev.omnesis.desktop.current\n");
   });
+});
+
+test("backs up conversation records individually while excluding derived summaries and partial publications", () => {
+  const configDir = tmp();
+  mkdirSync(join(configDir, "conversations"));
+  for (const name of ["s_fixture.json", ".summary-index.v4", "s_fixture.json.tmp-123", "notes.txt"])
+    writeFileSync(join(configDir, "conversations", name), "invented history content");
+  expect(backupConfigCopyNames(configDir)).toEqual(["conversations/s_fixture.json"]);
+  expect(backupScopeEntryFor("conversations/s_fixture.json")).toEqual({
+    name: "conversations/s_fixture.json",
+    kind: "config",
+  });
+  expect(backupScopeEntryFor("conversations/.summary-index.v4")).toBeNull();
+  expect(backupScopeEntryFor("conversations/../token")).toBeNull();
 });

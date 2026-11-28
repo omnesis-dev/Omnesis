@@ -130,6 +130,7 @@ export function waitForChild(
     killGraceMs = KILL_GRACE_MS,
     groupIsAlive = childGroupIsAlive,
     windowsTree = null,
+    onJoined,
   } = {},
 ) {
   return new Promise((resolve, reject) => {
@@ -231,6 +232,9 @@ export function waitForChild(
       if (refreshWork) await refreshWork;
       await Promise.all([...signalWork]);
       cleanup();
+      // Root exit alone is insufficient: observers receive this only after the owned tree drains.
+      // Callback failure rejects the operation without changing the completed physical join.
+      onJoined?.();
       if (forwardedSignal) {
         reject(new Error(`Check terminated after ${forwardedSignal}`));
       } else if (signal) {

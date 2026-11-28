@@ -314,6 +314,10 @@ export type SourceMemberBody = z.infer<typeof sourceMemberBody>;
 
 // PATCH /admin/sources/:id/members/:deviceId
 export const sourceMemberConfigBody = z.object({
+  expectedRevision: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
   configOverride: z.record(z.string(), z.unknown()),
 });
 export type SourceMemberConfigBody = z.infer<typeof sourceMemberConfigBody>;
@@ -336,6 +340,11 @@ export type SourceLegacyRowsBody = z.infer<typeof sourceLegacyRowsBody>;
 
 // PATCH /admin/sources/:id
 export const patchSourceBody = z.object({
+  expectedRevision: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
+  memberConfig: z.record(z.string(), z.unknown()).optional(),
   config: z.record(z.string(), z.unknown()).optional(),
   enabled: z.boolean().optional(),
   deviceId: z.string().optional(),

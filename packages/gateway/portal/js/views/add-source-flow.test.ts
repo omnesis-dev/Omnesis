@@ -204,7 +204,7 @@ describe("AddSourceModal single-instance account routing", () => {
     );
   });
 
-  test.each([false, true])("an external source with a browser install guide opens the shared extension card (pushBased=%s)", async (pushBased) => {
+  test.each([false, true])("an external source renders its declared companion guide (pushBased=%s)", async (pushBased) => {
     render(null, host);
     api.getSourceDescriptorsUnion.mockResolvedValue({ items: [{
       ...descriptor,
@@ -212,7 +212,10 @@ describe("AddSourceModal single-instance account routing", () => {
       name: "Captured pages",
       execution: "external",
       pushBased,
-      setupGuide: "browser-extension",
+      setupGuide: "invented-companion",
+      setupGuideContent: { version: 1, title: "Install the invented companion", paragraphs: ["Install, then connect it."],
+        links: [{ label: "Install companion", url: "https://companion.example.com/install" }],
+        pairing: { deviceKind: "browser", label: "Pair companion" } },
       devices: [],
     }] });
     api.getAdminSources.mockResolvedValue({ items: [] });
@@ -222,15 +225,50 @@ describe("AddSourceModal single-instance account routing", () => {
     const tile = [...host.querySelectorAll("button")].find((button) => button.textContent?.includes("Captured pages")) as HTMLButtonElement;
     expect(tile).toBeTruthy();
     await act(async () => tile.click());
-    expect(host.textContent).toContain("Install the Chrome extension");
+    expect(host.textContent).toContain("Install the invented companion");
     expect(host.textContent).not.toContain("No online collector");
-    const learnMore = host.querySelector(".ext-promo-open") as HTMLButtonElement;
-    await act(async () => learnMore.click());
-    expect(host.querySelector("a.ext-promo-install")?.getAttribute("href")).toContain("chromewebstore.google.com");
-    expect(host.querySelector("a.ext-promo-pair")).toBeTruthy();
+    expect(host.querySelector("a[data-setup-install]")?.getAttribute("href")).toBe("https://companion.example.com/install");
+    expect(host.querySelector("a[data-setup-pairing]")?.getAttribute("href")).toBe("/portal/settings/devices?pair=browser");
     expect(api.getSourcesSnapshot).not.toHaveBeenCalled();
     expect(api.addSource).not.toHaveBeenCalled();
     expect(api.startAuthFlow).not.toHaveBeenCalled();
   });
+
+  test.each([undefined, { version: 2 }, { version: 1, title: 42 }])("legacy or unsupported guide content never enters collector setup: %j", async (content) => {
+    render(null, host);
+    api.getSourceDescriptorsUnion.mockResolvedValue({ items: [{ ...descriptor, id: "other-companion", name: "Other companion",
+      execution: "external", setupGuide: "unknown-companion", setupGuideContent: content, devices: [] }] });
+    api.getAdminSources.mockResolvedValue({ items: [] });
+    api.listDevices.mockResolvedValue({ items: [] });
+    await act(async () => render(h(AddSourceModal, { onClose: vi.fn(), onAdded }), host));
+    await settleEffects();
+    const tile = [...host.querySelectorAll("button")].find((button) => button.textContent?.includes("Other companion")) as HTMLButtonElement;
+    await act(async () => tile.click());
+    expect(host.querySelector('[data-setup-guide="unavailable"]')).toBeTruthy();
+    expect(host.querySelector("a[data-setup-install]")).toBeNull();
+    expect(api.addSource).not.toHaveBeenCalled();
+    expect(api.startAuthFlow).not.toHaveBeenCalled();
+    expect(api.getSourcesSnapshot).not.toHaveBeenCalled();
+    expect(onAdded).not.toHaveBeenCalled();
+  });
+
+  test.each([{ setupGuide: null }, { setupGuideContent: null }, { setupGuideContent: "malformed" },
+    { setupGuideContent: { version: 1, title: "Install companion", paragraphs: ["Use companion setup."], links: [] } }])(
+    "declared null/content-only guide cannot fall through collector setup: %j", async (declaration) => {
+      render(null, host);
+      api.getSourceDescriptorsUnion.mockResolvedValue({ items: [{ ...descriptor, id: "declared-companion", name: "Declared companion",
+        execution: "external", devices: [], ...declaration }] });
+      api.getAdminSources.mockResolvedValue({ items: [] });
+      api.listDevices.mockResolvedValue({ items: [] });
+      await act(async () => render(h(AddSourceModal, { onClose: vi.fn(), onAdded }), host));
+      await settleEffects();
+      const tile = [...host.querySelectorAll("button")].find((button) => button.textContent?.includes("Declared companion")) as HTMLButtonElement;
+      await act(async () => tile.click());
+      expect(host.querySelector('[data-setup-guide="unavailable"]')).toBeTruthy();
+      expect(api.getSourcesSnapshot).not.toHaveBeenCalled();
+      expect(api.startAuthFlow).not.toHaveBeenCalled();
+      expect(api.addSource).not.toHaveBeenCalled();
+      expect(onAdded).not.toHaveBeenCalled();
+    });
 
 });

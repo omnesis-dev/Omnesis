@@ -17,7 +17,9 @@ import picomatch from "picomatch";
 import { createLogger, computeContentHash } from "@omnesis/core";
 import {
   defineSource,
+  isReadAccessDenied,
   probeTreeReadAccess,
+  probeRootReadAccess,
   syncPage,
   SnapshotEnumeration,
   config as configSchema,
@@ -75,6 +77,23 @@ export default defineSource({
   description: "Notes from your Obsidian vault",
   provider: { id: "obsidian", name: "Obsidian" },
   authType: "local",
+  permissionRequirements: [
+    {
+      id: "selected-vault",
+      kind: "selected-folder",
+      summary: "Allow access to the selected notes folder",
+      scope: "Selected notes source root",
+      blocking: true,
+      actions: [{ kind: "choose-folder" }, { kind: "retry-access" }],
+    },
+  ],
+  async probePermissionAccess({ params, signal }) {
+    if (!params.vaultPath) return { status: "unavailable" };
+    return probeRootReadAccess({
+      roots: [{ path: expandHostPath(params.vaultPath) }],
+      signal,
+    });
+  },
   resolveAccountId(params, existing) {
     const vaultPath = params.vaultPath;
     if (!vaultPath) throw new Error("Vault path is required to resolve its identity");
@@ -209,6 +228,7 @@ export default defineSource({
      * downstream from the vault having gone empty. Only the root call sets
      * `isRoot`, and it throws rather than returning a gap, because there is
      * no partial answer to give. */
+    let readPermissionDenied = false;
     function walkDir(
       dir: string,
       files: FileEntry[],
@@ -221,6 +241,7 @@ export default defineSource({
       try {
         entries = readdirSync(dir, { withFileTypes: true });
       } catch (err) {
+        if (isReadAccessDenied(err)) readPermissionDenied = true;
         if (isRoot) throw vaultReadError(err, dir);
         unreadable.push(relative(vaultPath, dir) || dir);
         return;
@@ -252,6 +273,7 @@ export default defineSource({
               continue;
             }
           } catch (err) {
+            if (isReadAccessDenied(err)) readPermissionDenied = true;
             log.debug(
               `Skipping unresolvable symlink ${relPath}: ${err instanceof Error ? err.message : String(err)}`,
             );
@@ -275,7 +297,8 @@ export default defineSource({
           let resolved: string;
           try {
             resolved = realpathSync(fullPath);
-          } catch {
+          } catch (error) {
+            if (isReadAccessDenied(error)) readPermissionDenied = true;
             resolved = fullPath;
           }
           if (visited.has(resolved)) {
@@ -313,7 +336,8 @@ export default defineSource({
               device: stat.dev,
               fileIdentity: exactNoteIdentity(exactStat),
             });
-          } catch {
+          } catch (error) {
+            if (isReadAccessDenied(error)) readPermissionDenied = true;
             // A note that will not stat is missing from the walk for the same
             // reason a folder that will not open is, and costs the same thing:
             // it would be read as deleted. One file rather than a subtree, and
@@ -340,6 +364,7 @@ export default defineSource({
       try {
         currentRoot = realpathSync(vaultPath);
       } catch (error) {
+        if (isReadAccessDenied(error)) readPermissionDenied = true;
         throw vaultReadError(error, vaultPath);
       }
       if (!sameCanonicalPath(canonicalVaultPath, currentRoot, "directory"))
@@ -492,6 +517,8 @@ export default defineSource({
     }
 
     return {
+      probePermissionAccess: ({ signal }) =>
+        probeRootReadAccess({ signal, roots: [{ path: canonicalVaultPath }] }),
       probeReadAccess: ({ signal }) =>
         probeTreeReadAccess({
           signal,
@@ -505,6 +532,7 @@ export default defineSource({
       watchFileExtensions: [".md"],
 
       async sync(cursor) {
+        readPermissionDenied = false;
         // Always the current shape: the state declaration resolved and, where
         // needed, migrated the stored value before this ran.
         const previousFileMap: Record<string, ObsidianFileState> = cursor?.fileMap ?? {};
@@ -704,6 +732,7 @@ export default defineSource({
             documents.push(doc);
             newFileMap[file.relativePath] = fileState;
           } catch (err) {
+            if (isReadAccessDenied(err)) readPermissionDenied = true;
             // A legacy path ID must survive until its replacement was read.
             // Discovery alone does not establish that the re-key completed.
             withholding = true;
@@ -794,6 +823,7 @@ export default defineSource({
         );
 
         return syncPage(documents, updatedCursor, {
+          ...(readPermissionDenied ? { permissionDenied: true as const } : {}),
           hasMore,
           deletedExternalIds: finalDeletions,
           progress,

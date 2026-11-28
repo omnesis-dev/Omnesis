@@ -83,9 +83,17 @@ async function spawned(count) {
 const tickets = () => readdirSync(launcher.E2E_HOST_LOCK_DIR);
 
 describe("E2E lifecycle status artifact", () => {
-  test.each([0, 7])(
-    "persists all phase progress and final exit %i, then releases its isolated ticket",
-    async (firstExit) => {
+  test.each(
+    [0, 7].flatMap((initial) =>
+      [0, 9].flatMap((account) =>
+        [0, 11].flatMap((collector) =>
+          [0, 13].map((gateway) => [initial, account, collector, gateway]),
+        ),
+      ),
+    ),
+  )(
+    "persists five phases and first failure (initial=%i, account=%i, collector=%i, gateway=%i), then releases its ticket",
+    async (firstExit, accountExit, releasedExit, gatewayExit) => {
       const result = start();
       await spawned(1);
       expect(readStatus()).toMatchObject({
@@ -101,10 +109,35 @@ describe("E2E lifecycle status artifact", () => {
         phase: "resource-sensitive E2E files (serial)",
       });
       children[1].emit("exit", 0, null);
-      await expect(result).resolves.toBe(firstExit);
+      await spawned(3);
       expect(readStatus()).toMatchObject({
-        state: firstExit === 0 ? "passed" : "failed",
-        exitCode: firstExit,
+        state: "running",
+        phase: "isolated desktop account onboarding",
+      });
+      expect(tickets()).toEqual([`${process.pid}.json`]);
+      expect(children[2].listenerCount("exit")).toBe(1);
+      children[2].emit("exit", accountExit, null);
+      await spawned(4);
+      expect(readStatus()).toMatchObject({
+        state: "running",
+        phase: "isolated released collector compatibility",
+      });
+      expect(tickets()).toEqual([`${process.pid}.json`]);
+      expect(children[3].listenerCount("exit")).toBe(1);
+      children[3].emit("exit", releasedExit, null);
+      await spawned(5);
+      expect(readStatus()).toMatchObject({
+        state: "running",
+        phase: "isolated released gateway compatibility",
+      });
+      expect(tickets()).toEqual([`${process.pid}.json`]);
+      expect(children[4].listenerCount("exit")).toBe(1);
+      children[4].emit("exit", gatewayExit, null);
+      const expectedExit = firstExit || accountExit || releasedExit || gatewayExit;
+      await expect(result).resolves.toBe(expectedExit);
+      expect(readStatus()).toMatchObject({
+        state: expectedExit === 0 ? "passed" : "failed",
+        exitCode: expectedExit,
       });
       expect(readStatus().finishedAt).toBeGreaterThanOrEqual(readStatus().startedAt);
       expect(tickets()).toEqual([]);
@@ -113,7 +146,7 @@ describe("E2E lifecycle status artifact", () => {
     },
   );
 
-  test("an unwritable heartbeat warns once and keeps supervising until both children exit", async () => {
+  test("an unwritable heartbeat warns once and keeps supervising until all five children exit", async () => {
     const result = start();
     let settled = false;
     result.finally(() => {
@@ -138,6 +171,32 @@ describe("E2E lifecycle status artifact", () => {
     children[0].emit("exit", 0, null);
     await spawned(2);
     children[1].emit("exit", 0, null);
+    await spawned(3);
+    expect(settled).toBe(false);
+    expect(readStatus()).toMatchObject({
+      state: "running",
+      phase: "isolated desktop account onboarding",
+    });
+    expect(tickets()).toEqual([`${process.pid}.json`]);
+    children[2].emit("exit", 0, null);
+    await spawned(4);
+    expect(settled).toBe(false);
+    expect(readStatus()).toMatchObject({
+      state: "running",
+      phase: "isolated released collector compatibility",
+    });
+    expect(tickets()).toEqual([`${process.pid}.json`]);
+    expect(children[3].listenerCount("exit")).toBe(1);
+    children[3].emit("exit", 0, null);
+    await spawned(5);
+    expect(settled).toBe(false);
+    expect(readStatus()).toMatchObject({
+      state: "running",
+      phase: "isolated released gateway compatibility",
+    });
+    expect(tickets()).toEqual([`${process.pid}.json`]);
+    expect(children[4].listenerCount("exit")).toBe(1);
+    children[4].emit("exit", 0, null);
     await expect(result).resolves.toBe(0);
     expect(readStatus().state).toBe("passed");
     expect(tickets()).toEqual([]);

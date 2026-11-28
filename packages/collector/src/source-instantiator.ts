@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import {
+  sourcePermissionScopeDigest,
   createLogger,
   DEFAULT_CONFIG_DIR,
   getSourceCutoffDate,
@@ -711,6 +712,12 @@ async function setupSourceDefinition(
             selfIdentity: def.selfIdentity,
             unitName: def.unitName,
             instance,
+            permissionRequirements: def.permissionRequirements,
+            permissionScopeDigest: sourcePermissionScopeDigest(
+              def.id,
+              String(accountId),
+              sourceConfig?.params,
+            ),
             pushBased: def.pushBased,
             contentRetention: def.contentRetention,
             documentTemporalProjections: def.documentTemporalProjections,
@@ -1008,6 +1015,12 @@ async function setupProviderDefinition(
           selfIdentity: sourceDef.selfIdentity,
           unitName: sourceDef.unitName,
           instance,
+          permissionRequirements: sourceDef.permissionRequirements ?? def.permissionRequirements,
+          permissionScopeDigest: sourcePermissionScopeDigest(
+            sourceDef.id,
+            String(accountId),
+            sourceConfig?.params,
+          ),
           pushBased: sourceDef.pushBased,
           contentRetention: sourceDef.contentRetention,
           documentTemporalProjections: sourceDef.documentTemporalProjections,

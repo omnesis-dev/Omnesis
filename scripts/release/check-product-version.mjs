@@ -103,6 +103,14 @@ export function checkProductVersion(root = defaultRoot, expectedTag) {
     mismatches.push(`invalid iOS build ${iosBuild}`);
   if (iosVersion !== productVersion) mismatches.push(`ios/project.yml: ${iosVersion}`);
 
+  const macos = readFileSync(join(root, "macos/project.yml"), "utf8");
+  const macosVersion = capture(
+    macos,
+    /MARKETING_VERSION:\s*["']?([^"'\s]+)/,
+    "macOS marketing version",
+  );
+  if (macosVersion !== productVersion) mismatches.push(`macos/project.yml: ${macosVersion}`);
+
   const android = readFileSync(join(root, "android/app/build.gradle.kts"), "utf8");
   const androidVersion = capture(android, /versionName\s*=\s*"([^"]+)"/, "Android version name");
   const androidCode = capture(android, /versionCode\s*=\s*(\d+)/, "Android version code");

@@ -102,6 +102,8 @@ function brokeredReauthHint(sourceId: string, providerId?: string): string {
 
 /** A registered source combining definition metadata with a live instance. */
 export interface RegisteredSource {
+  permissionScopeDigest?: string;
+  permissionRequirements?: import("@omnesis/source-sdk").SourcePermissionRequirement[];
   id: SourceId;
   account?: AccountDescriptor;
   name: string;

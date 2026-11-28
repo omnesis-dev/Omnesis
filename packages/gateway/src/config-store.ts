@@ -23,6 +23,20 @@ import {
 
 const log = createLogger("gateway:config");
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+/** Preserve omitted raw input before parsing, so the schema still supplies every required default. */
+function preserveRecordingReview(candidate: unknown, required: boolean): unknown {
+  if (!required || !isRecord(candidate)) return candidate;
+  const inference = candidate.inference;
+  if (inference !== undefined && !isRecord(inference)) return candidate;
+  const recordings = inference?.recordings;
+  if (recordings !== undefined && !isRecord(recordings)) return candidate;
+  if (recordings?.restoreReviewRequired !== undefined) return candidate;
+  return applyMergePatch(candidate, { inference: { recordings: { restoreReviewRequired: true } } });
+}
+
 function mergeLegacyStorageBindings(
   pending: readonly LegacyStorageRetentionBinding[],
   incoming: readonly LegacyStorageRetentionBinding[],
@@ -347,7 +361,12 @@ export class ConfigStore {
   }
 
   private async validateAndCommit(candidate: unknown): Promise<ConfigMutationResult> {
-    const validation = validateConfig(candidate);
+    const validation = validateConfig(
+      preserveRecordingReview(
+        candidate,
+        this.current.inference?.recordings?.restoreReviewRequired === true,
+      ),
+    );
     if (!validation.ok) {
       return { ok: false, errors: validation.errors };
     }

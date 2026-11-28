@@ -1,12 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { isDesktopNativeContract } from "./desktop-native-inputs.mjs";
+
 const e2eRoot = "packages/collector/src/e2e";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import picomatch from "picomatch";
 
 export const bundles = {
+  "desktop-account": { kind: "e2e", tests: ["desktop-account.e2e.test.ts"] },
+  "desktop-runtime": {
+    kind: "e2e",
+    tests: [
+      "desktop-runtime.e2e.test.ts",
+      "desktop-restore.e2e.test.ts",
+      "released-collector-current-gateway.e2e.test.ts",
+      "released-gateway-current-collector.e2e.test.ts",
+    ],
+  },
   "source-lifecycle": {
     kind: "e2e",
     tests: [
@@ -158,6 +170,9 @@ export const bundles = {
     ],
   },
   "ios-logic": { kind: "native", nativeKind: "ios-logic" },
+  "macos-logic": { kind: "native", nativeKind: "macos-logic" },
+  "macos-test": { kind: "native", nativeKind: "macos-test" },
+  "macos-build": { kind: "native", nativeKind: "macos-build" },
   "ios-snapshot": { kind: "native", nativeKind: "ios-snapshot" },
   "android-logic": { kind: "native", nativeKind: "android-logic" },
   "android-render": { kind: "native", nativeKind: "android-render" },
@@ -200,6 +215,8 @@ export function uncoveredE2ETests() {
 }
 
 const nativeBridgeBundles = new Map([
+  ["scripts/macos-logic.sh", "macos-logic"],
+  ["scripts/macos-test.sh", "macos-test"],
   ["scripts/ios-logic.sh", "ios-logic"],
   ["scripts/ios-snapshot.sh", "ios-snapshot"],
   ["scripts/run-ios-e2e.sh", "ios-e2e"],
@@ -265,6 +282,41 @@ function isTailscaleEmbed(path) {
   );
 }
 
+// Exact desktop runtime factory inputs; unrelated tooling does not reserve a Mac.
+const desktopRuntimeBuildInputs = new Set(
+  [
+    "analytics-build.json",
+    "analytics-native-fixture.mjs",
+    "analytics-notices.mjs",
+    "analytics-sources.mjs",
+    "arguments.mjs",
+    "assemble-app.mjs",
+    "build-analytics.mjs",
+    "codex-notices.mjs",
+    "distribute.mjs",
+    "native-dependency-assets.mjs",
+    "native-check.mjs",
+    "native-inventory.mjs",
+    "native-package.mjs",
+    "node-entitlements.plist",
+    "node-runtime.json",
+    "node-runtime.mjs",
+    "package-fixture-extract.mjs",
+    "package-fixture.mjs",
+    "pinned-extensions.mjs",
+    "prepare-runtime.mjs",
+    "qualify-analytics.mjs",
+    "release-application.mjs",
+    "release-build.mjs",
+    "runtime-assets.mjs",
+    "smoke-runtime.mjs",
+    "stage-analytics.mjs",
+    "update-metadata.mjs",
+    "licenses/codex/LICENSE",
+    "licenses/codex/NOTICE",
+  ].map((path) => `scripts/desktop/${path}`),
+);
+
 const areas = [
   { test: (p) => p.startsWith("packages/cloud-relay/"), bundles: ["security-notifications"] },
   { test: isTailscaleEmbed, bundles: ["tailscale-embed"] },
@@ -280,6 +332,38 @@ const areas = [
     bundles: ["gateway-core"],
   },
   { test: (p) => p.startsWith("ios/"), bundles: ["ios-logic"] },
+  {
+    test: (p) =>
+      p.startsWith("packages/cli/src/desktop/") ||
+      p === "packages/cli/src/commands/desktop.ts" ||
+      p.startsWith("packages/collector/src/e2e/desktop-runtime") ||
+      p.startsWith("packages/collector/src/e2e/desktop-restore") ||
+      p.startsWith("packages/collector/src/e2e/desktop-account") ||
+      p.startsWith("scripts/desktop/test-account") ||
+      p === "scripts/desktop/account-test.Dockerfile",
+    bundles: ["desktop-runtime", "desktop-account"],
+  },
+  {
+    test: (p) =>
+      p.startsWith("scripts/desktop/test-released-peer-container") ||
+      p === "packages/collector/src/e2e/released-peer-fixture.ts" ||
+      p === "packages/collector/src/e2e/released-collector-current-gateway.e2e.test.ts" ||
+      p === "packages/collector/src/e2e/released-gateway-current-collector.e2e.test.ts",
+    bundles: ["desktop-runtime"],
+  },
+  { test: (p) => p.startsWith("macos/"), bundles: ["macos-logic", "macos-test"] },
+  { test: isDesktopNativeContract, bundles: ["macos-logic", "macos-test"] },
+  {
+    test: (p) =>
+      /^scripts\/desktop\/(?:native-check(?:\.test)?|prepare-node-test-fixture|node-test-fixture\.test)\.mjs$/.test(
+        p,
+      ),
+    bundles: ["macos-logic", "macos-test"],
+  },
+  {
+    test: (p) => desktopRuntimeBuildInputs.has(p),
+    bundles: ["macos-build"],
+  },
   {
     test: (p) => p.startsWith("ios/") && /(?:UI|View|Screen|Snapshot|Preview)/.test(p),
     bundles: ["ios-snapshot"],

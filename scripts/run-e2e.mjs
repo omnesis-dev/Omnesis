@@ -442,6 +442,97 @@ export function buildE2EPhases(vitestEntry, args, workerArgs) {
   ];
 }
 
+/** Account onboarding owns DNS/trust only inside its admitted isolated container. */
+export function accountContainerPhases(phases, args, env = process.env) {
+  if (env.OMNESIS_DESKTOP_ACCOUNT_CONTAINER_NONCE || requestsVitestInformation(args)) return phases;
+  const file = "packages/collector/src/e2e/desktop-account.e2e.test.ts";
+  const filters = parseCLI(["vitest", "run", ...args]).filter;
+  const selected = filters.length === 0 || filters.some((filter) => file.includes(filter));
+  const onlyAccount =
+    filters.length > 0 &&
+    filters.every((filter) => filter.includes("desktop-account") && file.includes(filter));
+  const regular = onlyAccount
+    ? []
+    : phases.flatMap((phase) => {
+        const filtered = phase.args.filter((arg) => arg !== file);
+        if (phase.args.includes(file) && !filtered.some((arg) => arg.endsWith(".e2e.test.ts")))
+          return [];
+        return [{ ...phase, args: appendBeforeDoubleDash(filtered, `--exclude=${file}`) }];
+      });
+  return [
+    ...regular,
+    ...(selected
+      ? [
+          {
+            label: "isolated desktop account onboarding",
+            container: true,
+            args: [
+              join(dirname(fileURLToPath(import.meta.url)), "desktop/test-account-container.mjs"),
+            ],
+          },
+        ]
+      : []),
+  ];
+}
+
+/** Published peers need their pinned image, not a host-side Vitest invocation. */
+export function releasedPeerContainerPhases(phases, args, env = process.env) {
+  if (env.OMNESIS_E2E_RELEASED_PEER || requestsVitestInformation(args)) return phases;
+  const cohorts = [
+    {
+      file: "packages/collector/src/e2e/released-collector-current-gateway.e2e.test.ts",
+      label: "isolated released collector compatibility",
+      arguments: [],
+    },
+    {
+      file: "packages/collector/src/e2e/released-gateway-current-collector.e2e.test.ts",
+      label: "isolated released gateway compatibility",
+      arguments: ["--direction=released-gateway"],
+    },
+  ];
+  const filters = parseCLI(["vitest", "run", ...args]).filter;
+  const selected = cohorts.filter(
+    ({ file }) => filters.length === 0 || filters.some((filter) => file.includes(filter)),
+  );
+  const onlyReleased =
+    filters.length > 0 &&
+    filters.every(
+      (filter) => filter.includes("released-") && cohorts.some(({ file }) => file.includes(filter)),
+    );
+  const regular = phases.flatMap((phase) => {
+    // An earlier isolated phase owns its own arguments and preparation.
+    if (phase.container) return [phase];
+    if (onlyReleased) return [];
+    const filtered = phase.args.filter((arg) => !cohorts.some(({ file }) => arg === file));
+    if (
+      cohorts.some(({ file }) => phase.args.includes(file)) &&
+      !filtered.some((arg) => !arg.startsWith("-") && arg.endsWith(".e2e.test.ts"))
+    )
+      return [];
+    return [
+      {
+        ...phase,
+        args: appendBeforeDoubleDash(filtered, ...cohorts.map(({ file }) => `--exclude=${file}`)),
+      },
+    ];
+  });
+  return [
+    ...regular,
+    ...selected.map((cohort) => ({
+      label: cohort.label,
+      container: true,
+      args: [
+        join(dirname(fileURLToPath(import.meta.url)), "desktop/test-released-peer-container.mjs"),
+        ...cohort.arguments,
+      ],
+    })),
+  ];
+}
+
+export function isolatedE2EPhases(phases, args, env = process.env) {
+  return releasedPeerContainerPhases(accountContainerPhases(phases, args, env), args, env);
+}
+
 async function runVitest(vitestArgs, env) {
   return await runCheckCommand(process.execPath, vitestArgs, {
     cwd: join(dirname(fileURLToPath(import.meta.url)), ".."),
@@ -574,10 +665,10 @@ export async function runE2E(args = process.argv.slice(2), env = process.env) {
       cpuCount: availableParallelism(),
     });
     const explicitWorkerArg = hasSafeExplicitWorkerArg(args);
-    const phases = buildE2EPhases(
-      vitestEntry,
+    const phases = isolatedE2EPhases(
+      buildE2EPhases(vitestEntry, args, explicitWorkerArg ? [] : [`--maxWorkers=${workers}`]),
       args,
-      explicitWorkerArg ? [] : [`--maxWorkers=${workers}`],
+      env,
     );
     process.stderr.write(
       `E2E file workers: ${explicitWorkerArg ? "explicit CLI override" : workers} (effective memory ${Math.floor(memory.availableBytes / GIB)} GiB available / ${Math.floor(memory.totalBytes / GIB)} GiB total)\n`,
@@ -602,10 +693,13 @@ export async function runE2E(args = process.argv.slice(2), env = process.env) {
       update({ state: "running", phase: phase.label, phaseStartedAt: Date.now() });
       process.stderr.write(`Running ${phase.label}\n`);
       const [entry, command, ...testArgs] = phase.args;
-      const phaseExitCode = await runVitest([entry, command, ...progressArgs(testArgs)], {
-        ...progressEnv,
-        OMNESIS_CHECK_PHASE: phase.label,
-      });
+      const phaseExitCode = await runVitest(
+        phase.container ? phase.args : [entry, command, ...progressArgs(testArgs)],
+        {
+          ...progressEnv,
+          OMNESIS_CHECK_PHASE: phase.label,
+        },
+      );
       if (exitCode === 0 && phaseExitCode !== 0) exitCode = phaseExitCode;
     }
     update({ state: exitCode === 0 ? "passed" : "failed", exitCode, finishedAt: Date.now() });

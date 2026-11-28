@@ -1,0 +1,141 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (c) 2026 Adrien Conrath
+name: OmnesisDesktop
+options:
+  bundleIdPrefix: dev.omnesis.desktop
+  deploymentTarget:
+    macOS: "14.0"
+  xcodeVersion: "26.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    SWIFT_STRICT_CONCURRENCY: targeted
+    CODE_SIGN_STYLE: Automatic
+    MARKETING_VERSION: "0.8.1"
+    CURRENT_PROJECT_VERSION: "1"
+    GENERATE_INFOPLIST_FILE: NO
+    ENABLE_HARDENED_RUNTIME: YES
+packages:
+  DesktopCore:
+    path: .
+  Omnesis:
+    path: ../ios
+targets:
+  OmnesisDesktop:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/OmnesisDesktop
+      - path: Resources
+    dependencies:
+      - package: DesktopCore
+        product: DesktopCore
+      - package: Omnesis
+        product: Omnesis
+      - target: OmnesisBackground
+        embed: false
+      - target: OmnesisRuntimeExec
+        embed: false
+    settings:
+      base:
+        PRODUCT_NAME: Omnesis
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        PRODUCT_MODULE_NAME: OmnesisDesktop
+        PRODUCT_BUNDLE_IDENTIFIER: dev.omnesis.desktop
+        INFOPLIST_FILE: Info.plist
+        CODE_SIGN_ENTITLEMENTS: OmnesisDesktop.entitlements
+        COMBINE_HIDPI_IMAGES: YES
+    postBuildScripts:
+      - name: Embed background login item
+        script: |
+          set -eu
+          mkdir -p "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Library/LoginItems"
+          ditto "$BUILT_PRODUCTS_DIR/OmnesisBackground.app" "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Library/LoginItems/OmnesisBackground.app"
+          mkdir -p "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Resources"
+          ditto "$BUILT_PRODUCTS_DIR/OmnesisRuntimeExec" "$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Resources/runtime-exec"
+        inputFiles:
+          - $(BUILT_PRODUCTS_DIR)/OmnesisBackground.app
+          - $(BUILT_PRODUCTS_DIR)/OmnesisRuntimeExec
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Library/LoginItems/OmnesisBackground.app
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/runtime-exec
+  OmnesisRuntimeExec:
+    type: tool
+    platform: macOS
+    sources:
+      - path: Sources/OmnesisRuntimeExec
+    dependencies:
+      - package: DesktopCore
+        product: DesktopCore
+    settings:
+      base:
+        PRODUCT_NAME: OmnesisRuntimeExec
+        PRODUCT_BUNDLE_IDENTIFIER: dev.omnesis.desktop.runtime-exec
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
+  OmnesisBackground:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/OmnesisBackground
+    dependencies:
+      - package: DesktopCore
+        product: DesktopCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.omnesis.desktop.background
+        PRODUCT_NAME: OmnesisBackground
+        INFOPLIST_FILE: Background-Info.plist
+        SKIP_INSTALL: YES
+  OmnesisAXControlFixture:
+    type: application
+    platform: macOS
+    sources:
+      - path: Tests/Fixtures/ExternalAXControlApp.swift
+    settings:
+      base:
+        PRODUCT_NAME: OmnesisAXControlFixture
+        PRODUCT_BUNDLE_IDENTIFIER: dev.omnesis.desktop.ax-control-fixture
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
+  OmnesisDesktopTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/OmnesisDesktopTests
+      - path: Tests/TestSupport
+    dependencies:
+      - target: OmnesisDesktop
+      - package: DesktopCore
+        product: DesktopCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.omnesis.desktop.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Omnesis.app/Contents/MacOS/Omnesis
+        BUNDLE_LOADER: $(TEST_HOST)
+  OmnesisDesktopUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - path: UITests
+    dependencies:
+      - target: OmnesisDesktop
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.omnesis.desktop.uitests
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  OmnesisDesktop:
+    build:
+      targets:
+        OmnesisDesktop: all
+        OmnesisBackground: all
+        OmnesisAXControlFixture: [test]
+    test:
+      targets:
+        - name: OmnesisDesktopTests
+          parallelizable: false
+        - name: OmnesisDesktopUITests
+          parallelizable: false

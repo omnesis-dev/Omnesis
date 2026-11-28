@@ -543,6 +543,28 @@ export function deriveDisplayStatus(
     state = "paused";
   } else if (inMem?.state === "syncing") {
     state = "syncing";
+    // Retrying is not recovery. Only carry the typed, member-scoped access
+    // refusal; unrelated old errors/remedies still clear when a new run starts.
+    const retained =
+      inMem.remediation?.access?.status === "denied"
+        ? inMem.remediation
+        : typeof inMem.deviceId === "string" &&
+            inMem.deviceId.length > 0 &&
+            persistedError &&
+            persistedErroredAt &&
+            persisted &&
+            (persisted.device_id === inMem.deviceId ||
+              (persisted.device_id === "" && persisted.last_error_device_id === inMem.deviceId)) &&
+            persisted.last_error_remediation
+          ? syncErrorRemediationCodec.parseWithFallback(persisted.last_error_remediation, {
+              rowId: `${sourceId}/${persisted.device_id}`,
+            })
+          : undefined;
+    if (retained?.access?.status === "denied") {
+      remediation = retained;
+      errorMessage = "Collection access is blocked on this computer";
+      erroredAt = retained.access.checkedAt;
+    }
   } else if (inMem?.state === "needs-auth") {
     state = "needs-auth";
     errorMessage = inMem.errorMessage;

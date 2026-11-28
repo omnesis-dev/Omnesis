@@ -3,7 +3,7 @@
 
 import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { isIP } from "node:net";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -13,7 +13,29 @@ import {
   calculateJwkThumbprint,
   type JWK,
 } from "jose";
+import { ownedProcessCleanupReceipt } from "@omnesis/core";
+import {
+  runFixtureOpenSsl,
+  type FixtureOpenSslOptions,
+} from "../../../scripts/desktop/fixture-openssl.mjs";
 import { listen, closeServer } from "./support.js";
+
+/** Extension data stays one validated literal, never an OpenSSL configuration section. */
+export function fixtureSubjectAlternativeName(value: string): string {
+  if (typeof value !== "string" || !value || value.length > 253 || /[\r\n\s\0]/u.test(value))
+    throw new Error("Invalid fixture certificate hostname");
+  const bracketed = value.startsWith("[") || value.endsWith("]");
+  const host = value.startsWith("[") && value.endsWith("]") ? value.slice(1, -1) : value;
+  if (bracketed && isIP(host) !== 6) throw new Error("Invalid fixture certificate hostname");
+  if (isIP(host)) return `IP:${host}`;
+  if (
+    !/^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/u.test(
+      host,
+    )
+  )
+    throw new Error("Invalid fixture certificate hostname");
+  return `DNS:${host}`;
+}
 
 /**
  * Isolated RFC8555 fixture: verifies real JWS signatures/nonces/CSR possession, then signs through a local CA.
@@ -24,13 +46,37 @@ export async function localAcmeAuthority(
   directory: string,
   name: string | (() => string),
   dns: Map<string, string>,
-  options: { leafExtensions?: readonly string[] } = {},
+  options: {
+    leafExtensions?: readonly string[];
+    beforeFinalize?: () => Promise<void>;
+  } & FixtureOpenSslOptions = {},
 ) {
-  const host = () => (typeof name === "function" ? name() : name);
+  const controller = new AbortController();
+  const signal = options.signal
+    ? AbortSignal.any([options.signal, controller.signal])
+    : controller.signal;
+  const execution = { signal, timeoutMs: options.timeoutMs };
+  if (typeof name === "string") fixtureSubjectAlternativeName(name);
+  const extras = [...(options.leafExtensions ?? [])];
+  if (
+    extras.length > 16 ||
+    extras.some(
+      (line) =>
+        typeof line !== "string" ||
+        line.length > 4096 ||
+        !/^[a-zA-Z0-9][a-zA-Z0-9.]*=[^\r\n\0[\]\\]+$/u.test(line) ||
+        /^subjectAltName=/iu.test(line),
+    )
+  )
+    throw new Error("Invalid fixture certificate extensions");
+  const host = () => {
+    const value = typeof name === "function" ? name() : name;
+    fixtureSubjectAlternativeName(value);
+    return value.startsWith("[") && value.endsWith("]") ? value.slice(1, -1) : value;
+  };
   const caKey = join(directory, "ca.key"),
     caCert = join(directory, "ca.crt");
-  execFileSync(
-    "openssl",
+  await runFixtureOpenSsl(
     [
       "req",
       "-x509",
@@ -48,7 +94,7 @@ export async function localAcmeAuthority(
       "-addext",
       "basicConstraints=critical,CA:TRUE",
     ],
-    { stdio: "ignore" },
+    execution,
   );
   const nonces = new Set<string>();
   const requests: string[] = [];
@@ -57,8 +103,12 @@ export async function localAcmeAuthority(
     authorized = false,
     certificate: string | undefined;
   let identifier: string | undefined;
+  let finalizing = false;
+  let orderedHost: string | undefined;
+  const pending = new Set<Promise<void>>();
+  const cleanupFailures: unknown[] = [];
   const server = createServer((req, res) => {
-    void (async () => {
+    const task = (async () => {
       const nonce = randomBytes(24).toString("base64url");
       nonces.add(nonce);
       res.setHeader("replay-nonce", nonce);
@@ -108,8 +158,12 @@ export async function localAcmeAuthority(
         return send(201, { status: "valid" });
       }
       if (req.url === "/new-order") {
-        if (JSON.stringify(value.identifiers) !== JSON.stringify([{ type: "dns", value: host() }]))
+        const expected = host();
+        if (
+          JSON.stringify(value.identifiers) !== JSON.stringify([{ type: "dns", value: expected }])
+        )
           throw new Error("Wrong ACME order identifiers");
+        orderedHost = expected;
         res.setHeader("location", `${base}/order`);
         return send(201, order());
       }
@@ -144,41 +198,54 @@ export async function localAcmeAuthority(
       }
       if (req.url === "/finalize") {
         if (!authorized) throw new Error("Finalize before DNS authorization");
-        const csr = join(directory, "request.der"),
-          leaf = join(directory, "issued.crt"),
-          extensionsFile = join(directory, "issued.ext");
-        if (options.leafExtensions?.length)
-          await writeFile(extensionsFile, options.leafExtensions.join("\n") + "\n");
-        await writeFile(csr, Buffer.from(value.csr, "base64url"));
-        execFileSync("openssl", ["req", "-inform", "DER", "-in", csr, "-verify", "-noout"], {
-          stdio: "ignore",
-        });
-        execFileSync(
-          "openssl",
-          [
-            "x509",
-            "-req",
-            "-inform",
-            "DER",
-            "-in",
-            csr,
-            "-CA",
-            caCert,
-            "-CAkey",
-            caKey,
-            "-CAcreateserial",
-            "-out",
-            leaf,
-            "-days",
-            "90",
-            "-copy_extensions",
-            "copy",
-            ...(options.leafExtensions?.length ? ["-extfile", extensionsFile] : []),
-          ],
-          { stdio: "ignore" },
-        );
-        certificate = (await readFile(leaf, "utf8")) + (await readFile(caCert, "utf8"));
-        return send(200, order());
+        if (finalizing) return send(409, { type: "urn:ietf:params:acme:error:orderNotReady" });
+        if (certificate) return send(200, order());
+        finalizing = true;
+        try {
+          await options.beforeFinalize?.();
+          signal.throwIfAborted();
+          const csr = join(directory, "request.der"),
+            leaf = join(directory, "issued.crt"),
+            extensionsFile = join(directory, "issued.ext");
+          const expected = host();
+          if (expected !== orderedHost) throw new Error("ACME expected recipient changed");
+          await writeFile(
+            extensionsFile,
+            [`subjectAltName=${fixtureSubjectAlternativeName(expected)}`, ...extras].join("\n") +
+              "\n",
+          );
+          await writeFile(csr, Buffer.from(value.csr, "base64url"));
+          await runFixtureOpenSsl(
+            ["req", "-inform", "DER", "-in", csr, "-verify", "-noout"],
+            execution,
+          );
+          await runFixtureOpenSsl(
+            [
+              "x509",
+              "-req",
+              "-inform",
+              "DER",
+              "-in",
+              csr,
+              "-CA",
+              caCert,
+              "-CAkey",
+              caKey,
+              "-CAcreateserial",
+              "-out",
+              leaf,
+              "-days",
+              "90",
+              "-extfile",
+              extensionsFile,
+            ],
+            execution,
+          );
+          certificate = (await readFile(leaf, "utf8")) + (await readFile(caCert, "utf8"));
+          return send(200, order());
+        } finally {
+          finalizing = false;
+        }
       }
       if (req.url === "/certificate") {
         res.setHeader("content-type", "application/pem-certificate-chain");
@@ -186,12 +253,19 @@ export async function localAcmeAuthority(
         return;
       }
       send(404, {});
-    })().catch(() => {
+    })().catch((error: unknown) => {
+      if (ownedProcessCleanupReceipt(error)) cleanupFailures.push(error);
       res.statusCode = 400;
       res.end('{"type":"urn:ietf:params:acme:error:malformed"}');
     });
+    pending.add(task);
+    void task.then(
+      () => pending.delete(task),
+      () => pending.delete(task),
+    );
   });
   const base = await listen(server);
+  let closing: Promise<void> | undefined;
   return {
     directoryUrl: `${base}/directory`,
     root: await readFile(caCert, "utf8"),
@@ -200,8 +274,23 @@ export async function localAcmeAuthority(
     setIdentifier(value: string) {
       identifier = value;
     },
-    async close() {
-      await closeServer(server);
+    close() {
+      return (closing ??= (async () => {
+        controller.abort();
+        try {
+          await closeServer(server);
+        } catch (error) {
+          cleanupFailures.push(error);
+        }
+        const stopped = await Promise.allSettled(pending);
+        for (const result of stopped)
+          if (result.status === "rejected") cleanupFailures.push(result.reason);
+        if (cleanupFailures.length)
+          throw Object.assign(
+            new AggregateError(cleanupFailures, "ACME fixture cleanup is unconfirmed"),
+            { cleanupFailure: "qa-acme" },
+          );
+      })());
     },
   };
 }

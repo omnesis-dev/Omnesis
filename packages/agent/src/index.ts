@@ -110,6 +110,13 @@ export {
 } from "./openai-responses-backend.js";
 
 export { HttpAgentBackend, type HttpAgentBackendOptions } from "./http-agent-backend.js";
+export {
+  managedCodexAuth,
+  managedCodexArgs,
+  assertNoManagedCodexAuthFile,
+  managedCodexPoolAuthFiles,
+  removeManagedCodexPoolAuth,
+} from "./codex-managed-auth.js";
 
 export {
   CodexAppServerBackend,
@@ -350,3 +357,7 @@ export { CitationReads } from "./tools/citation-reads.js";
 
 export { invokeToolHandle } from "./invoke-tool.js";
 export { markActivity, setActivityMarker, type ActivityMarker } from "./activity.js";
+
+export { resolveManagedCodexNativeCommand } from "./codex-managed-native-command.js";
+
+export { MANAGED_CODEX_CONVERSATION_REFUSAL } from "./codex-managed-process.js";

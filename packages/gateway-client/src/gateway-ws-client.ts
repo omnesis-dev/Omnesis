@@ -65,6 +65,7 @@ export class GatewayWsClient {
   private pending = new Map<WsCorrelationId, PendingOutbound>();
   private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly onAuthenticated: ((identity: WsResponsePayload<"hello">) => void) | undefined;
   private readonly onSocketError: ((error: unknown) => void) | undefined;
 
   constructor(
@@ -80,11 +81,14 @@ export class GatewayWsClient {
        * the gateway's certificate when a handshake stops verifying.
        */
       onSocketError?: (error: unknown) => void;
+      /** Called only after a validated authenticated hello, including reconnects. */
+      onAuthenticated?: (identity: WsResponsePayload<"hello">) => void;
     },
   ) {
     this.wsUrl = gatewayUrl.replace(/^http/, "ws") + "/device/ws";
     this.apiKey = apiKey;
     this.onSocketError = opts?.onSocketError;
+    this.onAuthenticated = opts?.onAuthenticated;
     this.capabilities = opts?.capabilities ?? {};
     this.initialReconnectDelay = opts?.reconnectDelay ?? 1000;
     this.reconnectDelay = this.initialReconnectDelay;
@@ -279,6 +283,7 @@ export class GatewayWsClient {
         }
         this.identity = parsed.value;
         this.authenticated = true;
+        this.onAuthenticated?.(parsed.value);
         log.info("WebSocket authenticated with gateway");
       },
       reject: (err) => {

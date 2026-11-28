@@ -2,9 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import Database from "better-sqlite3";
-import { installConversationEvidence } from "./sources/omnesis-chat/evidence-projection.js";
 type Db = Database.Database;
-import { installTemporalDocumentEpochs } from "./brain/knowledge/temporal-document-epochs.js";
+import { runPostMigrationSchemaSetup } from "./data/post-migration-schema.js";
 import { runSchemaSetup } from "./data/schema.js";
 import {
   runDowngradeCompatCheck,
@@ -254,8 +253,7 @@ export function createDatabase(path: string, opts: GatewayDatabaseOptions = {}):
   runMigrations(db, { onProgress: opts.onMigrationProgress });
   // Cross-table triggers must follow historical table rebuilds, whose renames
   // would otherwise rewrite their references to temporary migration tables.
-  db.transaction(() => installTemporalDocumentEpochs(db))();
-  db.transaction(() => installConversationEvidence(db))();
+  runPostMigrationSchemaSetup(db);
 
   return db;
 }

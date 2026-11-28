@@ -104,6 +104,11 @@ function stateEntryName(kind: SecureMarkerKind, configDir?: string): string {
   return `${MARKER_META[kind].stateName}:${discriminator}`;
 }
 
+/** The scoped OS account name contains only marker metadata, never a secret. */
+export function secureMarkerStateKeyName(kind: SecureMarkerKind, configDir?: string): string {
+  return stateEntryName(kind, configDir);
+}
+
 export interface SecureMarkerOptions extends CreateSecretStoreOptions {
   configDir?: string;
   /**

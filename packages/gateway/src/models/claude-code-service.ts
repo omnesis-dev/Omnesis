@@ -19,6 +19,10 @@ import {
   type ClaudeCodeBackendStatus,
   type ClaudeCodeModelStatus,
 } from "@omnesis/core";
+import {
+  DESKTOP_CLAUDE_CODE_UNAVAILABLE,
+  isManagedDesktopRuntime,
+} from "./managed-desktop-policy.js";
 import { setupAgentAssignment, type AgentSetupResult } from "./agent-assignment-setup.js";
 import type { ConfigStore } from "../config-store.js";
 
@@ -72,6 +76,7 @@ interface ToolScope {
  */
 export class ClaudeCodeService {
   private readonly runtime: ClaudeCodeRuntime;
+  private readonly desktopManaged: boolean;
   private readonly refreshTimeoutMs: number;
   private readonly lanes: Record<ClaudeCodeLane, Semaphore>;
   /** Capacity for turns started from a running turn's tool, one lane per depth. */
@@ -90,6 +95,9 @@ export class ClaudeCodeService {
   };
 
   constructor(opts: ClaudeCodeServiceOptions) {
+    this.desktopManaged = isManagedDesktopRuntime(opts.env);
+    if (this.desktopManaged)
+      this.status = { ...this.status, reason: DESKTOP_CLAUDE_CODE_UNAVAILABLE };
     this.runtime = new ClaudeCodeRuntime({
       workspaceDir: join(opts.configDir, CLAUDE_CODE_WORKSPACE_DIR),
       command: opts.command,
@@ -113,6 +121,8 @@ export class ClaudeCodeService {
   }
 
   refresh(): Promise<ClaudeCodeBackendStatus> {
+    // Never probe the host executable or read its global subscription credentials in the app.
+    if (this.desktopManaged) return Promise.resolve(this.status);
     if (this.refreshInFlight) return this.refreshInFlight;
     this.status = { ...this.status, status: "probing", reason: undefined };
     const promise = this.computeStatus()
@@ -142,6 +152,7 @@ export class ClaudeCodeService {
     maxToolIterations?: number;
     lane?: ClaudeCodeLane;
   }): ClaudeCodeBackend {
+    if (this.desktopManaged) throw new Error(DESKTOP_CLAUDE_CODE_UNAVAILABLE);
     const lane = opts.lane ?? "interactive";
     return new ClaudeCodeBackend({
       model: opts.model,

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Mobile apps — Omnesis Docs</title>
+    <title>Apps — Omnesis Docs</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" href="/favicon-32.png" sizes="32x32" />
     <link rel="icon" type="image/png" href="/favicon-16.png" sizes="16x16" />
@@ -30,13 +30,13 @@
 
     <meta
       name="description"
-      content="The iOS and Android apps: getting the iOS app through TestFlight and the Android app through Google Play closed testing, or building either app yourself, pairing, Tasks, phone-only sources such as Apple Health and Health Connect, voice and quick capture, and fixing phone data that does not arrive."
+      content="The Mac, iOS and Android apps: account setup, sources, chat and search, phone pairing, phone-only data, voice and quick capture, privacy, and troubleshooting."
     />
     <link rel="canonical" href="https://omnesis.dev/docs/apps" />
-    <meta property="og:title" content="Mobile apps — Omnesis Docs" />
+    <meta property="og:title" content="Apps — Omnesis Docs" />
     <meta
       property="og:description"
-      content="The iOS and Android apps: getting the iOS app through TestFlight and the Android app through Google Play closed testing, or building either app yourself, pairing, Tasks, phone-only sources such as Apple Health and Health Connect, voice and quick capture, and fixing phone data that does not arrive."
+      content="The Mac, iOS and Android apps: account setup, sources, chat and search, phone pairing, phone-only data, voice and quick capture, privacy, and troubleshooting."
     />
     <meta property="og:image" content="https://omnesis.dev/og-image.png" />
     <meta property="og:type" content="website" />
@@ -129,9 +129,10 @@
             <li><a href="agent">The agent</a></li>
             <li><a href="connect">Agents &amp; MCP</a></li>
             <li>
-              <a href="apps" aria-current="page">Mobile apps</a>
+              <a href="apps" aria-current="page">Apps</a>
               <ul class="side-sub">
-                <li><a href="#getting-the-apps">Getting the apps</a></li>
+                <li><a href="#mac">Mac application</a></li>
+                <li><a href="#getting-the-apps">Phone apps</a></li>
                 <li><a href="#pairing">Pairing</a></li>
                 <li><a href="#one-design-two-platforms">Finding your way around</a></li>
                 <li><a href="#tasks">Tasks</a></li>
@@ -156,16 +157,93 @@
 
       <main id="main" class="docs-content">
         <p class="docs-kicker">Use</p>
-        <h1>Mobile apps</h1>
+        <h1>Apps</h1>
         <p class="docs-lead">
-          Omnesis has native iOS and Android apps. Each is two things at once: a full client for
-          your gateway — chat, search, tasks, people, devices — and the runtime for sources whose
-          data only exists on the phone. This page covers getting an app onto your phone, pairing
-          it, Tasks, the phone-only sources, voice and quick capture, and what to do when phone data
-          does not arrive. It assumes a running gateway (see <a href="install">Install</a>).
+          The Mac app can keep your library on this computer or join an existing library, including
+          one hosted by a compatible source-installed Linux gateway. The iOS and Android apps
+          provide chat, search and management, and collect sources that exist on your phone. The
+          command-line and Docker installation paths remain available; see
+          <a href="install">Install</a>.
         </p>
 
-        <h2 id="getting-the-apps">Getting the apps</h2>
+        <h2 id="mac">Mac application</h2>
+        <p>
+          Install the signed Omnesis app from its disk image by dragging it into Applications, then
+          open it. Sign in to your Omnesis account, or create one with an invitation where required.
+          For a new library, choose the Mac that will keep it. A desktop Mac that stays powered on
+          is a useful choice; follow the
+          <a href="install#mac-server">Mac sleep settings steps</a> so your other devices can use it
+          while its display is off. To join a library already on another computer, choose that
+          existing library once. Background collection uses that same library. If it is offline, the
+          app does not switch to another library in your account. Its gateway must be linked to your
+          account, use encrypted storage and support the app's connection protocol. The account
+          picker does not discover an unlinked gateway just because it is nearby. Nearby addresses
+          are connection hints; the app verifies the library's identity before using them and can
+          reconnect through the account's encrypted connection.
+        </p>
+        <p>
+          Setup remains incomplete until automatic startup and the permissions needed by your chosen
+          sources are verified. On the Mac storing the library, its system sleep settings must also
+          be configured, storage must have room for new information, and its encrypted remote
+          connection must be available. The app explains each required step and checks again after
+          changes; opening System Settings does not count as granting access. If a prerequisite is
+          lost, the app shows the repair steps again and keeps your indexed information.
+        </p>
+        <p>
+          Setup protects the app's local storage with a separate macOS Keychain key before
+          collection begins, and prepares a local search model when this Mac hosts the library. Add
+          sources through the setup checklist or Sources. Folder permissions, browser sign-in and
+          other authorization steps depend on the source. Account passwords and library credentials
+          are not copied into the setup instructions.
+        </p>
+        <p>
+          Ask is the main window. The menu bar menu opens it without requiring you to keep the
+          window visible. The setup checklist also offers phone pairing and connecting an assistant.
+          When using a phone scan code, finish connecting in the phone app. The Mac lists connected
+          phones, but does not identify which phone used that code. Closing the scan-code window
+          withdraws its unused code. These steps use your library's confirmed public address.
+          Setting up a chat provider is optional: Settings → AI explains what the provider receives
+          and offers the authentication methods your library supports. A ChatGPT sign-in is offered
+          only when its supported runtime is available. Search does not require a cloud chat
+          provider.
+        </p>
+        <p>
+          Assistant setup distinguishes saved permission, sign-in and a connection that has reached
+          Omnesis. A recorded connection does not mean an answer succeeded or the assistant is
+          online. Return to Setup or Assistants to check progress; denying a request grants no
+          access.
+        </p>
+        <p>
+          The Mac app keeps its ChatGPT sign-in in its own Keychain entries. Sign out in Settings →
+          AI to remove that sign-in and its model assignments. Your separate Codex app or terminal
+          sign-in is unchanged.
+        </p>
+        <p>
+          Settings includes storage, backups, memory and recovery protection. Appearance follows
+          macOS by default; Settings → General offers System, Light and Dark and applies changes to
+          open windows. For an app-hosted library, a memory-budget change takes effect after
+          restarting its home Mac. A source-installed gateway keeps its ordinary service, backup and
+          recovery workflows. Closing a window leaves Omnesis open. Collection still requires source
+          access and a working background connection. Automatic startup requires macOS approval;
+          setup stays incomplete until that approval is confirmed. Stop Omnesis pauses this Mac's
+          background operation. Remove Omnesis first reviews what will be kept: preserving the
+          library is the default, and erasing it requires a separate confirmation. Keep a backup and
+          recovery protection before erasing a library you need.
+        </p>
+        <p>
+          After restoring the app from Trash, open Omnesis and choose Retry if its background
+          connection needs to restart. Restoring the app keeps the library; it does not reverse an
+          explicit request to erase data.
+        </p>
+        <p>
+          The app owns a separate installation. Installing it does not adopt or restart a
+          command-line or Docker installation, and removing it does not remove those installations.
+          Advanced settings opens the existing portal. Personal documents are not donated to the
+          operating system's Spotlight index; the app's system actions open or prepare an Ask
+          conversation.
+        </p>
+
+        <h2 id="getting-the-apps">Phone apps</h2>
         <p>
           An <strong>official build</strong> is signed by the Omnesis maintainer under the published
           app identities; its notifications work without any setup on your gateway. A
