@@ -621,6 +621,7 @@ private final class IntentHarness {
     func waitForQuestion(_ expected: String, sendEnabled: Bool = true) async throws {
         retirementObservation?.questionReadiness = .notObserved
         try await wait {
+            @MainActor
             func blocked(_ clause: RetirementObservation.QuestionReadiness) -> Bool {
                 self.retirementObservation?.questionReadiness = clause
                 return false

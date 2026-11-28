@@ -146,6 +146,7 @@ final class RecoveryCopiesTests: XCTestCase {
                 DesktopRecoveryCopyConfirmation(flow: flow, preview: preview),
                 name: "recovery-copy-confirmation-\(name)", size: CGSize(width: 620, height: 560)
             ) { hosting in
+                @MainActor
                 func descendants(_ view: NSView) -> [NSView] {
                     [view] + view.subviews.flatMap(descendants)
                 }
@@ -235,6 +236,7 @@ final class RecoveryCopiesTests: XCTestCase {
     }
 
     func testProductionRecoveryCopySheetFitsAndDismissesWithoutRemovalForCompactAndLongDetails() async throws {
+        @MainActor
         func wait(_ condition: () throws -> Bool) async throws {
             let deadline = ContinuousClock.now + .seconds(3)
             while ContinuousClock.now < deadline {
@@ -245,6 +247,7 @@ final class RecoveryCopiesTests: XCTestCase {
             }
             throw URLError(.timedOut)
         }
+        @MainActor
         func descendants(_ view: NSView) -> [NSView] {
             [view] + view.subviews.flatMap(descendants)
         }
