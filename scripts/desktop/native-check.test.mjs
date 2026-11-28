@@ -135,7 +135,14 @@ test("hosted filters accept one bounded class or test method only with hosted-on
     expect(() => nativeCheckOptions(["test", ...flags], env)).toThrow(/Usage/);
 });
 
-function hostedShellFixture({ hostedOnly = true, filter, summary, summaryStatus = 0 }) {
+function hostedShellFixture({
+  hostedOnly = true,
+  filter,
+  summary,
+  summaryStatus = 0,
+  schemaStatus = 0,
+  testStatus = 0,
+}) {
   const { root, options } = fixture();
   const calls = [],
     mock = runner(calls);
@@ -166,8 +173,8 @@ exit "$FIXTURE_SUMMARY_STATUS"
       execution = spawnSync("bash", ["-c", args[1]], {
         input:
           `xcodegen() { return 0; }
-xcodebuild() { printf '%s\\0' "$@" >> "$FIXTURE_CAPTURE"; printf '\\0' >> "$FIXTURE_CAPTURE"; }
-python3() { cat >/dev/null; }
+xcodebuild() { printf '%s\\0' "$@" >> "$FIXTURE_CAPTURE"; printf '\\0' >> "$FIXTURE_CAPTURE"; printf '%s\\n' "\${@: -1}" >> "$FIXTURE_CAPTURE.phases"; if [ "\${@: -1}" = test-without-building ]; then return "$FIXTURE_TEST_STATUS"; fi; }
+python3() { if [ "\${1-}" = Tests/Support/capture-generated-test-schema.py ]; then printf 'schema\\n' >> "$FIXTURE_CAPTURE.phases"; return "$FIXTURE_SCHEMA_STATUS"; fi; cat >/dev/null; }
 ` + config.input,
         encoding: "utf8",
         timeout: 10000,
@@ -178,6 +185,8 @@ python3() { cat >/dev/null; }
           FIXTURE_XCRUN_CAPTURE: xcrunCapture,
           FIXTURE_SUMMARY: summaryPath,
           FIXTURE_SUMMARY_STATUS: String(summaryStatus),
+          FIXTURE_SCHEMA_STATUS: String(schemaStatus),
+          FIXTURE_TEST_STATUS: String(testStatus),
         },
       });
       return execution;
@@ -639,5 +648,21 @@ esac
     expect(commands[1]).toContain("-configuration Release");
     expect(commands[1]).toContain(" build");
     expect(commands.slice(2)).toEqual([packageMode ? "package" : "analytics"]);
+  },
+);
+
+posixTest.each([0, 23])(
+  "generated-schema diagnostic failure preserves actual native test status (%s)",
+  (testStatus) => {
+    const fixture = hostedShellFixture({ hostedOnly: false, schemaStatus: 77, testStatus });
+    const run = () => fixture.execute();
+    if (testStatus === 0) expect(run).not.toThrow();
+    else expect(run).toThrow();
+    expect(fixture.execution().status).toBe(testStatus);
+    expect(
+      readFileSync(fixture.capture + ".phases", "utf8")
+        .trim()
+        .split("\n"),
+    ).toEqual(["build-for-testing", "schema", "test-without-building"]);
   },
 );

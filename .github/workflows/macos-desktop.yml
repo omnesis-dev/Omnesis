@@ -90,6 +90,15 @@ jobs:
         continue-on-error: true
         working-directory: macos
         run: swift test --disable-automatic-resolution
+      - name: Upload partial Core lifecycle observations
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: macos-desktop-core-lifecycle-${{ matrix.arch }}
+          path: evidence/readiness-diagnostics/fixture-phase-*/latest.json
+          if-no-files-found: warn
+          retention-days: 7
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Generate native project
@@ -122,6 +131,7 @@ jobs:
           }
           trap collect_runner_signature EXIT
           desktop_xcodebuild build-for-testing
+          python3 Tests/Support/capture-generated-test-schema.py --products build/Build/Products --evidence ../evidence/readiness-diagnostics >/dev/null 2>&1 || true
           node Tests/Support/normalize-test-runner-signature.mjs --products "$PWD/build/Build/Products/Debug"
           desktop_xcodebuild -resultBundlePath build/DesktopTests.xcresult test-without-building
       - name: Require successful portable native models

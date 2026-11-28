@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { spawnSync } from "node:child_process";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -76,17 +76,28 @@ test("architecture is checked with configured Node before any dependency or nati
 
 test("each architecture retains distinct unsigned app and complete native evidence artifacts", () => {
   const uploads = job.steps.filter((step) => step.uses?.startsWith("actions/upload-artifact@"));
-  expect(uploads).toHaveLength(2);
+  expect(uploads).toHaveLength(3);
   const names = matrix.flatMap(({ arch }) =>
     uploads.map((step) => {
       expect(step.with.name).toContain("${{ matrix.arch }}");
       return step.with.name.replaceAll("${{ matrix.arch }}", arch);
     }),
   );
-  expect(new Set(names).size).toBe(4);
-  expect(uploads[0].with.path).toBe("${{ runner.temp }}/Omnesis-unsigned.zip");
-  expect(uploads[1].if).toBe("always()");
-  expect(uploads[1].with.path.trim().split("\n")).toEqual([
+  expect(new Set(names).size).toBe(6);
+  const coreEvidence = uploads.find(
+    (step) => step.name === "Upload partial Core lifecycle observations",
+  );
+  expect(coreEvidence).toMatchObject({ if: "always()", "continue-on-error": true });
+  expect(coreEvidence.with.path).toBe("evidence/readiness-diagnostics/fixture-phase-*/latest.json");
+  const coreIndex = job.steps.findIndex((step) => step.id === "core");
+  expect(job.steps[coreIndex + 1]).toBe(coreEvidence);
+  const unsigned = uploads.find((step) => step.name === "Upload unsigned app for isolated QA");
+  expect(unsigned.with.path).toBe("${{ runner.temp }}/Omnesis-unsigned.zip");
+  const renderedEvidence = uploads.find(
+    (step) => step.name === "Upload native renders and test results",
+  );
+  expect(renderedEvidence.if).toBe("always()");
+  expect(renderedEvidence.with.path.trim().split("\n")).toEqual([
     "/tmp/omnesis-macos-snapshots/",
     "macos/build/DesktopTests.xcresult",
     "macos/build/test-runner-signature-after.json",
@@ -208,3 +219,56 @@ test.skipIf(process.platform === "win32").each([
   expect(result.status).toBe(status);
   if (status !== 0) expect(result.stderr).toContain("Portable native models did not pass");
 });
+
+test.skipIf(process.platform === "win32").each([
+  { build: 0, testExit: 0, expected: 0 },
+  { build: 0, testExit: 23, expected: 23 },
+  { build: 19, testExit: 0, expected: 19 },
+])(
+  "actual CI build/schema/test chain preserves failure precedence (%j)",
+  async ({ build, testExit, expected }) => {
+    const root = await mkdtemp(join(tmpdir(), "omnesis-schema-ci-"));
+    try {
+      await mkdir(join(root, "build"));
+      const script = job.steps.find(
+        (step) => step.name === "Build and exercise native application",
+      ).run;
+      const result = spawnSync(
+        "/bin/bash",
+        [
+          "--noprofile",
+          "--norc",
+          "-e",
+          "-o",
+          "pipefail",
+          "-c",
+          `
+xcodebuild() { printf '%s\\n' "\${@: -1}" >> "$RECEIPT"; if [ "\${@: -1}" = build-for-testing ]; then return "$BUILD_EXIT"; fi; return "$TEST_EXIT"; }
+python3() { printf 'schema\\n' >> "$RECEIPT"; return 77; }
+node() { printf '{}\\n'; }
+` + script,
+        ],
+        {
+          cwd: root,
+          env: {
+            PATH: "/usr/bin:/bin",
+            RECEIPT: join(root, "steps"),
+            BUILD_EXIT: String(build),
+            TEST_EXIT: String(testExit),
+          },
+          encoding: "utf8",
+          timeout: 3000,
+        },
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(expected);
+      expect((await readFile(join(root, "steps"), "utf8")).trim().split("\n")).toEqual(
+        build === 0
+          ? ["build-for-testing", "schema", "test-without-building"]
+          : ["build-for-testing"],
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);

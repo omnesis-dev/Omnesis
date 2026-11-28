@@ -131,6 +131,17 @@ application windows and process-local test adapters. Keychain component fixtures
 restore their process-local interaction setting and remove only their own items.
 CI retains application-test evidence after a completed Core-test failure. The
 actual Core outcome still fails the job and blocks unsigned package assembly.
+
+Core tests keep a partial lifecycle receipt after the background-observer suite
+prepares an XCTest listener. It records only delivered callbacks; the latest
+record does not identify one exclusively active test or prove suite completion.
+CI attempts an early upload even when Core fails, but a hard runner/job deadline
+can prevent artifact retrieval.
+
+Native builds also retain a bounded, redacted projection of generated test-plist
+structure. It excludes environment and argument values and is diagnostic metadata,
+not executable test configuration, process ownership or accessibility readiness.
+
 Window captures use ScreenCaptureKit's current-process-only API, without requesting
 Screen Recording access or capturing another application's windows.
 The Codex fixture is the integrity-checked pinned distribution. Its Keychain test

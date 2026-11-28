@@ -212,6 +212,7 @@ PYSCREEN
     fi
   else
     desktop_xcodebuild build-for-testing
+    python3 Tests/Support/capture-generated-test-schema.py --products build/Build/Products --evidence ../evidence/readiness-diagnostics >/dev/null 2>&1 || true
     .node-fixture/node Tests/Support/normalize-test-runner-signature.mjs --products "$PWD/build/Build/Products/Debug"
     if [ "$4" = yes ]; then
       if [ -n "\${6-}" ]; then

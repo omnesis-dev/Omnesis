@@ -6,6 +6,11 @@ import Foundation
 import XCTest
 
 final class BackgroundObserverTests: XCTestCase {
+    override class func setUp() {
+        super.setUp()
+        DesktopCoreLifecycleObserver.registerAfterBackgroundObserverSetup()
+    }
+
     @MainActor
     func testStartupRepairHasTypedApprovalAndUnavailableStates() {
         XCTAssertEqual(DesktopBackgroundObserver.startupBlock(approvalRequired: true), .approvalRequired)

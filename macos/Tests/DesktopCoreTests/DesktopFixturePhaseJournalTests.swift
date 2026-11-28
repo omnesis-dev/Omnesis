@@ -9,6 +9,7 @@ import XCTest
 /// Latest fixed phase only; an I/O failure disables observation, never fixture cleanup.
 final class DesktopFixturePhaseJournal: @unchecked Sendable {
     enum Phase: String, Codable {
+        case coreLifecycle = "core-lifecycle"
         case setupEnter = "setup-enter", setupReturned = "setup-returned", teardownEnter = "teardown-enter"
         case catalogJoined = "catalog-joined", processJoinEnter = "process-join-enter", processJoinReturned = "process-join-returned"
         case readersRetired = "readers-retired", readerEOF = "reader-eof", readerDisarmed = "reader-disarmed"
@@ -28,6 +29,7 @@ final class DesktopFixturePhaseJournal: @unchecked Sendable {
         let sequence: Int
         let elapsedMs: Int
         let mainThread: Bool
+        let lifecycle: DesktopCoreLifecycleMetadata?
     }
 
     private enum Failure: Error { case refused }
@@ -39,6 +41,7 @@ final class DesktopFixturePhaseJournal: @unchecked Sendable {
     private var sequence = 0
     private var disabled = false
     private var published: stat?
+    private var lifecyclePreparationOrdinal: Int?
     private static let temporaryName = "phase.next"
     private static let recordName = "latest.json"
 
@@ -92,7 +95,7 @@ final class DesktopFixturePhaseJournal: @unchecked Sendable {
     }
 
     @discardableResult
-    func record(_ phase: Phase) -> Bool {
+    func record(_ phase: Phase, lifecycle: DesktopCoreLifecycleMetadata? = nil) -> Bool {
         // A fork may inherit this lock while another parent thread held it.
         // Reject before locking or accessing any Foundation/file state.
         guard getpid() == owner else { return false }
@@ -102,6 +105,13 @@ final class DesktopFixturePhaseJournal: @unchecked Sendable {
         var succeeded = false
         defer { if !succeeded { disabled = true } }
         guard getpid() == owner, sequence < 65535, directories.allSatisfy(Self.valid), let target = directories.last else { return false }
+        if let lifecycle {
+            guard phase == .coreLifecycle, lifecycle.isValid,
+                  lifecycle.event == .registrationPrepared ? sequence == 0 : lifecyclePreparationOrdinal == lifecycle.preparationOrdinal
+            else {
+                return false
+            }
+        }
         var current = stat()
         let exists = fstatat(target.fd, Self.recordName, &current, AT_SYMLINK_NOFOLLOW)
         if let published {
@@ -123,7 +133,8 @@ final class DesktopFixturePhaseJournal: @unchecked Sendable {
             phase: phase,
             sequence: sequence,
             elapsedMs: milliseconds,
-            mainThread: Thread.isMainThread
+            mainThread: Thread.isMainThread,
+            lifecycle: lifecycle
         )),
             bytes.count <= 1024 else { return false }
         let fd = openat(target.fd, Self.temporaryName, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
@@ -151,6 +162,7 @@ final class DesktopFixturePhaseJournal: @unchecked Sendable {
               result.st_dev == original.st_dev, result.st_ino == original.st_ino, result.st_size == bytes.count,
               directories.allSatisfy(Self.valid) else { return false }
         published = result
+        if lifecycle?.event == .registrationPrepared { lifecyclePreparationOrdinal = sequence }
         succeeded = true
         return true
     }
