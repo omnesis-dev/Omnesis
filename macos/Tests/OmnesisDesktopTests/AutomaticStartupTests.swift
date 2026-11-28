@@ -290,6 +290,63 @@ final class AutomaticStartupTests: XCTestCase {
         )
     }
 
+    func testRepairCopyTracksObservedStartupReadinessAndRetryNeverRegistersInBothAppearances() async throws {
+        let pendingCopy = "Automatic startup is required and has not been enabled or approved. Review it in macOS, then retry the background connection. These controls do not create or replace a library."
+        let readyCopy = "Automatic startup is enabled. Retry the background connection to continue. These controls do not create or replace a library."
+        let scenarios: [(name: String, status: DesktopAutomaticStartup.Status, approvalAction: String?)] = [
+            ("approval", .approvalRequired, "startup-approve"),
+            ("disabled", .disabled, "startup-enable"),
+            ("checking", .needsCheck, nil),
+            ("unavailable", .unavailable, nil),
+            ("ready", .enabled, nil),
+        ]
+        for scenario in scenarios {
+            var registrations = 0, retries = 0, settingsOpens = 0, completedAppearances = 0
+            let flow = DesktopAutomaticStartup(read: { scenario.status }, register: { registrations += 1 })
+            flow.refresh()
+            let expectedReady = scenario.status == .enabled
+            try await DesktopSnapshotRenderer.render(
+                DesktopStartupRepairView(flow: flow, retry: { retries += 1 }, openSettings: { settingsOpens += 1 }).padding(28),
+                name: "startup-repair-hierarchy-\(scenario.name)",
+                size: CGSize(width: 680, height: 520)
+            ) { host in
+                XCTAssertEqual(retries, completedAppearances, "Mounting an appearance must not retry the background connection")
+                XCTAssertEqual(registrations, 0)
+                XCTAssertEqual(settingsOpens, 0)
+                let explanation = try DesktopAccessibilityDriver.element("startup-repair-explanation", in: host)
+                XCTAssertEqual(
+                    explanation.accessibilityTextValue() ?? explanation.accessibilityLabel(),
+                    expectedReady ? readyCopy : pendingCopy
+                )
+                XCTAssertFalse(try DesktopAccessibilityDriver.contains(expectedReady ? pendingCopy : readyCopy, in: host))
+                let retry = try DesktopAccessibilityDriver.element("startup-runtime-retry", in: host)
+                XCTAssertEqual(retry.accessibilityRole(), .button)
+                XCTAssertEqual(retry.accessibilityLabel() ?? retry.accessibilityTextValue(), "Retry background connection")
+                XCTAssertTrue(retry.isAccessibilityEnabled(), "Repair retry remains permitted without registration or approval")
+                let window = try XCTUnwrap(host.window)
+                for frame in [explanation.accessibilityFrame(), retry.accessibilityFrame()] {
+                    XCTAssertTrue([frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite))
+                    XCTAssertGreaterThan(frame.width, 0)
+                    XCTAssertGreaterThan(frame.height, 0)
+                    XCTAssertTrue(window.frame.contains(frame))
+                }
+                let approvalActions = try DesktopAccessibilityDriver.elements(in: host).filter {
+                    ["startup-approve", "startup-enable"].contains($0.accessibilityIdentifier() ?? "")
+                }
+                XCTAssertEqual(approvalActions.compactMap { $0.accessibilityIdentifier() }, scenario.approvalAction.map { [$0] } ?? [])
+                XCTAssertTrue(retry.accessibilityPerformPress())
+                XCTAssertEqual(retries, completedAppearances + 1)
+                XCTAssertEqual(registrations, 0, "Retry must never request native startup registration")
+                XCTAssertEqual(settingsOpens, 0, "Retry must never substitute a system settings action")
+                XCTAssertEqual(flow.status, scenario.status)
+                XCTAssertEqual(flow.ready, expectedReady, "Retry is not evidence that startup approval changed")
+                completedAppearances += 1
+            }
+            XCTAssertEqual(completedAppearances, 2)
+            XCTAssertEqual(retries, 2)
+        }
+    }
+
     func testRequiredStartupPendingAndRevokedRendersAreNotOptionalToggles() async throws {
         for status in [DesktopAutomaticStartup.Status.approvalRequired, .disabled, .enabled] {
             let flow = DesktopAutomaticStartup(read: { status }, register: {})

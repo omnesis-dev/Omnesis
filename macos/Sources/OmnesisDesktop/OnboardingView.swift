@@ -130,9 +130,9 @@ struct DesktopOnboardingView: View {
                                     .accessibilityIdentifier("account-terms")
                                 HStack {
                                     if let terms = store.state.signup?.readableTermsURL {
-                                        Link("Certificate authority terms", destination: terms)
+                                        Link("Certificate authority terms", destination: terms).desktopTextLink()
                                     }
-                                    Link("Privacy policy", destination: URL(string: "https://omnesis.dev/privacy")!)
+                                    Link("Privacy policy", destination: URL(string: "https://omnesis.dev/privacy")!).desktopTextLink()
                                 }.font(DesktopDesignTokens.Typography.secondary)
                                 if store.state.signup?.readableTermsURL == nil {
                                     VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.small) {
@@ -226,18 +226,23 @@ struct DesktopOnboardingView: View {
                             case .ready:
                                 ProgressView("Verifying your protected library…")
                             case .error:
-                                Text(store.state.message?.isEmpty == false
-                                    ? "Review the message below before trying again."
-                                    : "Omnesis could not finish this step. Try again to check the current status.")
+                                Text(store.state.message.flatMap { message in
+                                    message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : message
+                                } ?? "Omnesis could not finish this step. Try again to check the current status.")
+                                    .foregroundStyle(DesktopTheme.secondary)
+                                    .textSelection(.enabled)
+                                    .accessibilityIdentifier("onboarding-error-explanation")
                                 if store.state.searchModel?.state == "needs-download" {
                                     Button("Retry search model download") { store.command("prepare", params: ["mode": .string("home")]) }
                                         .buttonStyle(DesktopButtonStyle(primary: true))
+                                        .accessibilityIdentifier("onboarding-error-retry")
                                 } else {
                                     Button("Try again") { store.command("status") }.buttonStyle(DesktopButtonStyle(primary: true))
+                                        .accessibilityIdentifier("onboarding-error-retry")
                                 }
                             }
                         }
-                        if let message = store.state
+                        if store.state.phase != .error, let message = store.state
                             .message { Text(message).foregroundStyle(DesktopTheme.secondary).textSelection(.enabled) }
                         if store.busy, store.state.phase != .preparing {
                             ProgressView(store.launchingRuntime ? "Preparing the Omnesis app…" : "Working…")

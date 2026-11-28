@@ -54,7 +54,7 @@ do not mark the ledger complete from a passing subset.
 | 26. Accessibility                              | AA contrast; VoiceOver/keyboard/system a11y, noncolor state            | desktopContrast env; ask-increased-contrast; AX driver/action tests            | Representative ICC-calibrated helper AA passed; full contrast and assistive checks open |
 | 27. Brand identity                             | Existing brand; limited accent and no visual cliches                   | Vector OmnesisMark/MenuMark BrandAssetTests                                    | Unboxed light/dark template inspected; native sidebar open                              |
 | 28. Design system architecture                 | Simple centralized reusable design primitives                          | Theme/Controls/omnesisSheet/NativeChrome existing seams                        | Shared foundations implemented and source-reviewed                                      |
-| 29. Design system documentation                | Practical implementation-specific docs                                 | macos/README.md and docs/desktop.md                                            | Documentation implemented; final conformance review pending                             |
+| 29. Design system documentation                | Practical implementation-specific docs                                 | macos/README.md and docs/desktop.md                                            | Independent documentation/source audit passed; whole-app conformance open               |
 | 30. Component previews and visual verification | Development-only previews of needed variants/states                    | DesktopDesignPreviews shared-control variants plus root/source/server previews | Partial component rasters inspected; full verification matrix open                      |
 | 31. Performance and implementation quality     | Responsive native implementation, efficient scroll, no heavy effects   | Native List/LazyVStack; Ask scroll ownership tests; NSViewRepresentable seams  | Source reviewed; full-state responsiveness remains open                                 |
 | 32. Visual anti-patterns to eliminate          | Remove listed visual anti-patterns without hiding functionality        | Theme/Root/Card/Controls/font/color inventory                                  | Neutral components inspected; native shell acceptance open                              |
@@ -97,6 +97,24 @@ All required screen families and unperformed preference/display/keyboard/
 VoiceOver checks remain in the ledger even if an early selector passes.
 
 ## Measured results and remaining gaps
+
+A further inspection of the retained Light/Dark native test artifacts identified
+four presentation corrections: historical sources show a factual empty state
+instead of an empty computer picker; textual links use the semantic accent and
+an underline; onboarding errors explain the failure before the retry action;
+and background repair promotes retry only after startup is observed enabled.
+The corrections retain native link activation, existing authorization checks
+and explicit setup actions. Regression cases exercise the actual mounted
+controls, including disabled links and both appearances. Their source and
+formatting have been reviewed; compilation, execution and inspection of the
+new renders remain pending. These additions do not advance visual acceptance.
+
+Scroll-target observations and a bounded intent-retirement failure journal
+distinguish outstanding native test failures without changing production scroll
+decisions, relaxing assertions or extending deadlines. The intent fixture also
+waits for its existing owned-editor focus condition before asserting readiness.
+These are diagnostic and test-observation changes, not evidence that the
+underlying native failures have been resolved.
 
 The app and hosted test bundle compiled for the scoped native runs below.
 `DesktopOnboardingUXTests` passed all eleven methods with zero failures in its latest

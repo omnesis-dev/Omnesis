@@ -169,6 +169,70 @@ final class DesktopOnboardingUXTests: XCTestCase {
         }
     }
 
+    func testTextualAssistantLinksKeepNativeActionsAndDoNotNavigateOnMountInEitherAppearance() async throws {
+        let address = try XCTUnwrap(URL(string: "https://library.example.com/mcp"))
+        let destinations = [
+            "https://chatgpt.com/plugins",
+            "https://help.openai.com/en/articles/12584461-connecting-custom-mcp-servers-in-chatgpt",
+            "https://chatgpt.com/plugins?view=personal",
+        ]
+        let identifiers = ["assistant-plugins-link", "assistant-requirements-link", "assistant-personal-plugins-link"]
+        var opened = [String](), completedAppearances = 0
+        let content = ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                DesktopChatGPTInstructions(mcpURL: address)
+                DesktopChatGPTFinishInstructions()
+            }.padding(24)
+        }.environment(\.openURL, OpenURLAction { url in
+            opened.append(url.absoluteString)
+            return .handled
+        })
+        try await render(content, "assistant-text-links") { host in
+            let expectedBefore = Array(repeating: destinations, count: completedAppearances).flatMap { $0 }
+            XCTAssertEqual(opened, expectedBefore, "Mounting an appearance must never open an external destination")
+            for (index, identifier) in identifiers.enumerated() {
+                let link = try DesktopAccessibilityDriver.element(identifier, in: host)
+                XCTAssertTrue(link.isAccessibilityEnabled())
+                let frame = link.accessibilityFrame()
+                XCTAssertTrue([frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite))
+                XCTAssertGreaterThan(frame.width, 0)
+                XCTAssertGreaterThan(frame.height, 0)
+                XCTAssertTrue(try XCTUnwrap(host.window).frame.contains(frame))
+                XCTAssertTrue(link.accessibilityPerformPress())
+                XCTAssertEqual(
+                    opened,
+                    expectedBefore + Array(destinations.prefix(index + 1)),
+                    "Each actual native press opens only its existing destination once"
+                )
+            }
+            completedAppearances += 1
+        }
+        XCTAssertEqual(completedAppearances, 2)
+        XCTAssertEqual(opened, destinations + destinations)
+    }
+
+    func testTextualAssistantLinksRemainDisabledWithoutNavigationInEitherAppearance() async throws {
+        let address = try XCTUnwrap(URL(string: "https://library.example.com/mcp"))
+        var opened = [URL](), completedAppearances = 0
+        let content = DesktopChatGPTInstructions(mcpURL: address).padding(24).disabled(true)
+            .environment(\.openURL, OpenURLAction { url in
+                opened.append(url)
+                return .handled
+            })
+        try await render(content, "assistant-text-links-disabled") { host in
+            XCTAssertTrue(opened.isEmpty)
+            for identifier in ["assistant-plugins-link", "assistant-requirements-link"] {
+                let link = try DesktopAccessibilityDriver.element(identifier, in: host)
+                XCTAssertFalse(link.isAccessibilityEnabled(), "Text link presentation must not override native disabled state")
+                _ = link.accessibilityPerformPress()
+                XCTAssertTrue(opened.isEmpty, "A disabled link must not dispatch navigation")
+            }
+            completedAppearances += 1
+        }
+        XCTAssertEqual(completedAppearances, 2)
+        XCTAssertTrue(opened.isEmpty)
+    }
+
     func testChatGPTInstructionsUseCurrentPluginLabelsAndKeepOtherAssistantsSeparate() async throws {
         let url = try XCTUnwrap(URL(string: "https://library.example.com/mcp"))
         try await render(ScrollView { DesktopChatGPTInstructions(mcpURL: url).padding(24) }, "assistant-chatgpt-setup") { view in
@@ -198,7 +262,9 @@ final class DesktopOnboardingUXTests: XCTestCase {
             try await render(DesktopOnboardingView().environment(store), "connection-error-guidance-\(index)") { view in
                 if let message {
                     XCTAssertTrue(try DesktopAccessibilityDriver.contains(message, in: view))
-                    XCTAssertTrue(try DesktopAccessibilityDriver.contains("Review the message below before trying again.", in: view))
+                    XCTAssertFalse(try DesktopAccessibilityDriver.contains("Review the message below", in: view))
+                    let explanation = try DesktopAccessibilityDriver.element("onboarding-error-explanation", in: view)
+                    XCTAssertEqual(explanation.accessibilityTextValue() ?? explanation.accessibilityLabel(), message)
                 } else {
                     XCTAssertTrue(try DesktopAccessibilityDriver.contains(
                         "Omnesis could not finish this step. Try again to check the current status.", in: view
@@ -220,6 +286,80 @@ final class DesktopOnboardingUXTests: XCTestCase {
                 XCTAssertFalse(try DesktopAccessibilityDriver.contains("Unlock your Mac", in: view))
             }
         }
+    }
+
+    func testErrorExplanationPrecedesItsActualRetryActionWithoutDuplicateTrailingTextInBothAppearances() async throws {
+        let fallback = "Omnesis could not finish this step. Try again to check the current status."
+        let scenarios: [(json: String, explanation: String, action: String)] = [
+            (
+                #"{"phase":"error","message":"The connection check did not finish. Check the connection, then try again."}"#,
+                "The connection check did not finish. Check the connection, then try again.",
+                "Try again"
+            ),
+            (#"{"phase":"error"}"#, fallback, "Try again"),
+            (#"{"phase":"error","message":"   \n "}"#, fallback, "Try again"),
+            (
+                #"{"phase":"error","message":"The search model download did not finish. Check the connection before retrying.","searchModel":{"state":"needs-download"}}"#,
+                "The search model download did not finish. Check the connection before retrying.",
+                "Retry search model download"
+            ),
+        ]
+        for (index, scenario) in scenarios.enumerated() {
+            let store = try store(scenario.json)
+            XCTAssertFalse(store.state.canOpenLibrary)
+            XCTAssertNil(store.state.connection)
+            XCTAssertNil(store.state.encrypted)
+            var completedAppearances = 0
+            try await render(DesktopOnboardingView().environment(store), "connection-error-explanation-first-\(index)") { host in
+                let explanation = try DesktopAccessibilityDriver.element("onboarding-error-explanation", in: host)
+                XCTAssertEqual(explanation.accessibilityTextValue() ?? explanation.accessibilityLabel(), scenario.explanation)
+                XCTAssertFalse(try DesktopAccessibilityDriver.contains("Review the message below", in: host))
+                let retries = try DesktopAccessibilityDriver.elements(in: host).filter {
+                    $0.accessibilityIdentifier() == "onboarding-error-retry"
+                }
+                XCTAssertEqual(retries.count, 1)
+                let retry = try XCTUnwrap(retries.first)
+                XCTAssertEqual(retry.accessibilityLabel() ?? retry.accessibilityTextValue(), scenario.action)
+                XCTAssertTrue(retry.isAccessibilityEnabled())
+                let window = try XCTUnwrap(host.window)
+                let content = window.convertToScreen(host.convert(host.bounds, to: nil))
+                let explanationFrame = explanation.accessibilityFrame()
+                let retryFrame = retry.accessibilityFrame()
+                for frame in [explanationFrame, retryFrame] {
+                    XCTAssertTrue([frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite))
+                    XCTAssertGreaterThan(frame.width, 0)
+                    XCTAssertGreaterThanOrEqual(frame.height, 10)
+                    XCTAssertTrue(content.contains(frame), "The actual explanation and action must fit the owned viewport")
+                }
+                // Accessibility frames use screen coordinates, whose Y axis points upward.
+                XCTAssertGreaterThanOrEqual(explanationFrame.minY, retryFrame.maxY)
+                XCTAssertLessThanOrEqual(explanationFrame.minY - retryFrame.maxY, 48)
+                XCTAssertLessThan(abs(explanationFrame.minX - retryFrame.minX), 8)
+                let duplicateMessages = try DesktopAccessibilityDriver.elements(in: host).filter {
+                    $0.accessibilityRole() == .staticText &&
+                        ($0.accessibilityTextValue() ?? $0.accessibilityLabel()) == scenario.explanation
+                }
+                XCTAssertEqual(duplicateMessages.count, 1, "An error must not repeat below its retry action")
+                completedAppearances += 1
+            }
+            XCTAssertEqual(
+                completedAppearances,
+                2,
+                "Both explicit renderer appearances must validate the actual explanation/action geometry"
+            )
+        }
+        let checking = try store(#"{"phase":"waiting","mode":"home","message":"The connection check is still running."}"#)
+        var checkingAppearances = 0
+        try await render(DesktopOnboardingView().environment(checking), "connection-check-without-error") { host in
+            XCTAssertTrue(try DesktopAccessibilityDriver.contains("The connection check is still running.", in: host))
+            XCTAssertFalse(try DesktopAccessibilityDriver.contains(fallback, in: host))
+            let errorControls = try DesktopAccessibilityDriver.elements(in: host).filter {
+                ["onboarding-error-explanation", "onboarding-error-retry"].contains($0.accessibilityIdentifier() ?? "")
+            }
+            XCTAssertTrue(errorControls.isEmpty, "An ordinary pending check must not acquire error guidance or retry actions")
+            checkingAppearances += 1
+        }
+        XCTAssertEqual(checkingAppearances, 2)
     }
 
     func testWaitingStatesKeepOnePrincipalHeadingAndTheirDistinctGuidanceAndActions() async throws {

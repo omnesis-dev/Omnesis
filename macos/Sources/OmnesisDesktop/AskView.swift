@@ -32,8 +32,20 @@ struct DesktopAskView: View {
     private func followsLatest(_ context: DesktopChatScrollObservation.Kind) -> Bool {
         let geometry = scrollGeometry
         let follows = geometry?.nearLatest ?? true
-        scrollObservation?(DesktopChatScrollObservation(kind: context, prior: geometry, followsLatest: follows))
+        scrollObservation?(DesktopChatScrollObservation(
+            kind: context, prior: geometry, followsLatest: follows, target: .init(scrollTarget)
+        ))
         return follows
+    }
+
+    private var transcriptPosition: Binding<String?> {
+        guard let scrollObservation else { return $scrollTarget }
+        return Binding(get: { scrollTarget }, set: { value, transaction in
+            scrollObservation(DesktopChatScrollObservation(
+                kind: .bindingWriteback, target: .init(scrollTarget), requestedTarget: .init(value)
+            ))
+            $scrollTarget.transaction(transaction).wrappedValue = value
+        })
     }
 
     private let scrollObservation: (@Sendable (DesktopChatScrollObservation) -> Void)?
@@ -143,20 +155,29 @@ struct DesktopAskView: View {
                                             prior: prior,
                                             candidate: candidate,
                                             decision: decision,
-                                            displayScale: displayScale
+                                            displayScale: displayScale,
+                                            target: .init(scrollTarget)
                                         ))
                                         if let candidate, candidate != prior { scrollGeometry = candidate }
                                     }
                                     .frame(maxWidth: 724).frame(maxWidth: .infinity)
-                            }.scrollPosition(id: $scrollTarget, anchor: .bottom)
+                            }.scrollPosition(id: transcriptPosition, anchor: .bottom)
                                 .accessibilityIdentifier("chat-transcript").coordinateSpace(name: "chat-scroll")
                                 .onChange(of: chat.rows.last?.text) {
-                                    if followsLatest(.streamEvaluation), scrollTarget != "chat-bottom" { scrollTarget = "chat-bottom" }
+                                    if followsLatest(.streamEvaluation), scrollTarget != "chat-bottom" {
+                                        scrollObservation?(DesktopChatScrollObservation(
+                                            kind: .streamRequest, target: .init(scrollTarget), requestedTarget: .bottom
+                                        ))
+                                        scrollTarget = "chat-bottom"
+                                    }
                                 }
                             HStack {
                                 Spacer()
                                 if !followsLatest(.footerEvaluation) {
                                     Button("Jump to latest", systemImage: "arrow.down") {
+                                        scrollObservation?(DesktopChatScrollObservation(
+                                            kind: .jumpRequest, target: .init(scrollTarget), requestedTarget: .bottom
+                                        ))
                                         scrollTarget = "chat-bottom"
                                     }.buttonStyle(DesktopButtonStyle())
                                         .background(DesktopTheme.panel, in: RoundedRectangle(cornerRadius: 8))
@@ -396,7 +417,18 @@ struct DesktopChatScrollGeometry: Equatable, Sendable {
 }
 
 struct DesktopChatScrollObservation: Sendable {
-    enum Kind: String, Sendable { case geometry, footerEvaluation, streamEvaluation, conversationReset, apiReset }
+    enum Kind: String,
+        Sendable { case geometry, footerEvaluation, streamEvaluation, conversationReset, apiReset, bindingWriteback, streamRequest,
+                    jumpRequest
+    }
+
+    enum Target: String, Sendable {
+        case none, bottom, row
+        init(_ id: String?) {
+            self = id == nil ? .none : id == "chat-bottom" ? .bottom : .row
+        }
+    }
+
     enum Decision: String, Sendable { case invalid, unchanged, assignmentRequested }
     let kind: Kind
     var raw: DesktopChatScrollGeometry?
@@ -405,6 +437,8 @@ struct DesktopChatScrollObservation: Sendable {
     var decision: Decision?
     var displayScale: CGFloat?
     var followsLatest: Bool?
+    var target: Target?
+    var requestedTarget: Target?
 }
 
 #Preview("Ask empty · Light") {

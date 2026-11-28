@@ -103,14 +103,23 @@ private final class DesktopChatScrollObservationCapture: @unchecked Sendable {
     private let lock = NSLock()
     private var observations: [DesktopChatScrollObservation] = []
     private var dropped = 0
+    private var liveCounts: [String: Int] = [:]
+    private var liveClipped = false
+    func observeLiveScroll(_ phase: String) {
+        lock.withLock {
+            let old = liveCounts[phase, default: 0]
+            if old < 4096 { liveCounts[phase] = old + 1 } else { liveClipped = true }
+        }
+    }
+
     func observe(_ value: DesktopChatScrollObservation) {
         lock.withLock {
             if observations.count < 4096 { observations.append(value) } else { dropped += 1 }
         }
     }
 
-    var value: (observations: [DesktopChatScrollObservation], dropped: Int) {
-        lock.withLock { (observations, dropped) }
+    var value: (observations: [DesktopChatScrollObservation], dropped: Int, liveCounts: [String: Int], liveClipped: Bool) {
+        lock.withLock { (observations, dropped, liveCounts, liveClipped) }
     }
 }
 
@@ -166,8 +175,12 @@ final class DesktopAskStateTests: XCTestCase {
         try await runJumpViewportScenario(instrumented: true)
     }
 
-    private func runJumpViewportScenario(instrumented: Bool) async throws {
-        let variant = instrumented ? "instrumented" : "plain"
+    func testNoWheelStreamGrowthPreservesTheNativeEndAcrossResizeAndLongTailReflow() async throws {
+        try await runJumpViewportScenario(instrumented: true, naturalBottomOnly: true)
+    }
+
+    private func runJumpViewportScenario(instrumented: Bool, naturalBottomOnly: Bool = false) async throws {
+        let variant = naturalBottomOnly ? "natural-bottom" : instrumented ? "instrumented" : "plain"
         let chat = DesktopChat()
         chat.rows = (0 ..< 30).map { index in
             DesktopChat.Row(
@@ -233,6 +246,8 @@ final class DesktopAskStateTests: XCTestCase {
                     "evaluatedGeometry": geometry(event.prior),
                     "evaluatedFollowsLatest": event.followsLatest as Any? ?? NSNull(),
                     "evaluatedSelectsJump": event.followsLatest.map { !$0 } as Any? ?? NSNull(),
+                    "target": event.target?.rawValue as Any? ?? NSNull(),
+                    "requestedTarget": event.requestedTarget?.rawValue as Any? ?? NSNull(),
                 ]
             }
             let candidates: [[String: Any]] = views(hosting).map { scroll in
@@ -255,6 +270,8 @@ final class DesktopAskStateTests: XCTestCase {
                 "variant": variant,
                 "consumerObservationCount": captured.observations.count,
                 "consumerObservationDropped": captured.dropped,
+                "liveScrollNotifications": captured.liveCounts,
+                "liveScrollNotificationsClipped": captured.liveClipped,
                 "waitReachedBeforeDiagnostics": reachedAtDeadline as Any? ?? NSNull(),
                 "rawContentEnd": raw?.contentEnd as Any? ?? NSNull(),
                 "rawViewportHeight": raw?.viewportHeight as Any? ?? NSNull(),
@@ -277,14 +294,14 @@ final class DesktopAskStateTests: XCTestCase {
                     .write(to: output.appendingPathComponent("chat-viewport-\(variant)-consumer-observations.txt"))
             }
         }
-        func wait(_ stage: String, _ predicate: () -> Bool) async throws {
+        func wait(_ stage: String, until: ContinuousClock.Instant? = nil, _ predicate: () -> Bool) async throws {
             reachedAtDeadline = nil
             try writeFacts("before-" + stage)
-            let deadline = ContinuousClock.now + .seconds(3)
+            let deadline = until ?? ContinuousClock.now + .seconds(3)
             while !predicate(), ContinuousClock.now < deadline {
                 try await Task.sleep(for: .milliseconds(20))
             }
-            let reached = predicate()
+            let reached = predicate() && ContinuousClock.now < deadline
             reachedAtDeadline = reached
             try writeFacts("after-" + stage)
             if !reached {
@@ -317,6 +334,39 @@ final class DesktopAskStateTests: XCTestCase {
         let clip = scroll.contentView
         mappedScroll = scroll
         try writeFacts("mapped-owned-transcript")
+        func geometryMatchesNative() -> Bool {
+            guard let document = scroll.documentView,
+                  let latest = observation.value.observations.last(where: { $0.kind == .geometry }),
+                  let rawEnd = latest.raw?.contentEnd, let rawHeight = latest.raw?.viewportHeight,
+                  let candidateEnd = latest.candidate?.contentEnd,
+                  let candidateHeight = latest.candidate?.viewportHeight else { return false }
+            let bounds = clip.bounds
+            let gap = document.isFlipped ? document.bounds.maxY - bounds.maxY : bounds.minY - document.bounds.minY
+            let end = gap + bounds.height
+            return rawEnd.isFinite && rawHeight.isFinite && candidateEnd.isFinite && candidateHeight.isFinite && end.isFinite &&
+                abs(rawEnd - end) <= pixel && abs(rawHeight - bounds.height) <= pixel &&
+                abs(candidateEnd - end) <= pixel && abs(candidateHeight - bounds.height) <= pixel
+        }
+        func waitForAccurateGeometry(_ stage: String, until deadline: ContinuousClock.Instant) async throws {
+            // Reading capture/native scalars cannot force SwiftUI layout or refresh the observed source.
+            while !geometryMatchesNative(), ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            let matched = geometryMatchesNative() && ContinuousClock.now < deadline
+            XCTAssertTrue(matched, "Published scroll geometry must match its actual native viewport: " + stage)
+            if !matched { try writeFacts("geometry-mismatch-" + stage) }
+        }
+        let liveNames: [(Notification.Name, String)] = [
+            (NSScrollView.willStartLiveScrollNotification, "began"),
+            (NSScrollView.didLiveScrollNotification, "changed"),
+            (NSScrollView.didEndLiveScrollNotification, "ended"),
+        ]
+        let liveObservers = liveNames.map { name, phase in
+            NotificationCenter.default.addObserver(forName: name, object: scroll, queue: .main) { _ in
+                observation.observeLiveScroll(phase)
+            }
+        }
+        defer { liveObservers.forEach { NotificationCenter.default.removeObserver($0) } }
         let originalNotifications = clip.postsFrameChangedNotifications
         clip.postsFrameChangedNotifications = true
         let changes = AskViewportFrameChanges()
@@ -343,6 +393,32 @@ final class DesktopAskStateTests: XCTestCase {
             try await wait("native-end-after-initial-layout-or-resize", isAtEnd)
             let height = clip.bounds.height
             changes.reset(height)
+            if naturalBottomOnly {
+                let tail = try XCTUnwrap(chat.rows.indices.last)
+                for cycle in 0 ..< 2 {
+                    chat.rows[tail].text += " Additional fictional draft text arrives while an earlier note is being read. It must not move the reader away from that note."
+                    try await Task.sleep(for: .milliseconds(100))
+                    var deadline = ContinuousClock.now + .seconds(3)
+                    try await waitForAccurateGeometry("natural-first-growth-\(cycle)", until: deadline)
+                    try await wait("natural-end-after-first-growth-\(cycle)", until: deadline, isAtEnd)
+                    growthSerial += 1
+                    let fragment = "Fictional stream fragment \(growthSerial)"
+                    chat.rows[tail].text += " \(fragment). More response text follows the latest note. The native end target must remain visible as the paragraph grows and wraps across additional lines."
+                    try await Task.sleep(for: .milliseconds(100))
+                    deadline = ContinuousClock.now + .seconds(3)
+                    try await waitForAccurateGeometry("natural-stream-growth-\(cycle)", until: deadline)
+                    try await wait("natural-end-after-stream-growth-\(cycle)", until: deadline, isAtEnd)
+                    XCTAssertLessThanOrEqual(remainingToEnd(), 44)
+                    for _ in 0 ..< 3 {
+                        try await Task.sleep(for: .milliseconds(20))
+                        heartbeats += 1
+                        XCTAssertEqual(clip.bounds.height, height, accuracy: 1 / window.backingScaleFactor)
+                        XCTAssertTrue(isAtEnd(), "Streaming must retain the physical end after layout settles")
+                    }
+                }
+                XCTAssertEqual(changes.observedHeights, [height], "Growth must not cause native viewport frame changes")
+                continue // Additional no-wheel control; both original scenarios keep their complete gesture loops.
+            }
             for cycle in 0 ..< 2 {
                 gestureSerial += 1
                 try writeFacts("before-local-wheel-cycle-\(cycle)")
@@ -391,7 +467,9 @@ final class DesktopAskStateTests: XCTestCase {
                 try await wait("visible-stream-growth-cycle-\(cycle)") {
                     (try? DesktopAccessibilityDriver.contains(fragment, in: hosting)) == true
                 }
-                try await wait("physical-end-after-stream-growth-cycle-\(cycle)", isAtEnd)
+                let deadline = ContinuousClock.now + .seconds(3)
+                if instrumented { try await waitForAccurateGeometry("stream-growth-cycle-\(cycle)", until: deadline) }
+                try await wait("physical-end-after-stream-growth-cycle-\(cycle)", until: deadline, isAtEnd)
                 XCTAssertLessThanOrEqual(remainingToEnd(), 44)
                 for _ in 0 ..< 3 {
                     try await Task.sleep(for: .milliseconds(20))

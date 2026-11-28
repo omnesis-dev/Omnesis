@@ -149,10 +149,12 @@ struct DesktopPhonePairingView: View {
                 Text("Android").tag("android")
             }.pickerStyle(.segmented).disabled(pairing.pending != nil || pairing.working)
             if pairing.kind == "ios" {
-                Link("Get Omnesis for iPhone", destination: URL(string: "https://testflight.apple.com/join/KpMV6HTy")!)
+                Link("Get Omnesis for iPhone", destination: URL(string: "https://testflight.apple.com/join/KpMV6HTy")!).desktopTextLink()
             } else {
                 Link("Join the Android test group", destination: URL(string: "https://groups.google.com/g/omnesis-alpha-testers")!)
+                    .desktopTextLink()
                 Link("Get Omnesis on Google Play", destination: URL(string: "https://play.google.com/apps/testing/dev.omnesis.android")!)
+                    .desktopTextLink()
             }
             if let payload = pairing.payload, let pending = pairing.pending {
                 HStack { Spacer()

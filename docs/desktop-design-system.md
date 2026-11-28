@@ -15,7 +15,7 @@ The presentation foundation is in `macos/Sources/OmnesisDesktop/`:
 - `DesktopDesignTokens.swift`: typography, spacing, radius, icon, control,
   layout and motion values.
 - `DesktopControls.swift`: primary, neutral secondary, icon and destructive
-  button states using the button's existing role.
+  button states using the button's existing role, plus textual link presentation.
 - `DesktopAppearance.swift`: System, Light and Dark preference and picker.
 - `DesktopDesignPreviews.swift`: development-only component previews.
 
@@ -107,6 +107,12 @@ secondary buttons are neutral. Destructive actions use an explicit destructive
 role and retain their existing confirmation. Icon buttons need a tooltip,
 accessibility label and useful hit area.
 
+Apply `desktopTextLink()` to standalone textual `Link` controls. It uses the
+semantic accent and an underline while enabled, preserving native activation,
+the destination and the inherited disabled state. Keep button-styled links and
+navigation controls in their existing control styles. Do not recolor all text
+to make links visible or replace `Link` with a custom tap gesture.
+
 Mark actual page and section headings with `accessibilityAddTraits(.isHeader)`;
 font size alone is insufficient. The shared GroupBox style marks its label,
 while content-only groups need an explicit heading on their title. Status and
@@ -124,7 +130,9 @@ fixed-height control. Icon-only targets remain 32 points square.
 
 ```swift
 VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.regular) {
-    Text("Library settings").font(DesktopDesignTokens.Typography.pageTitle)
+    Text("Library settings")
+        .font(DesktopDesignTokens.Typography.pageTitle)
+        .accessibilityAddTraits(.isHeader)
     Text("Review the computers connected to this library.")
         .foregroundStyle(DesktopTheme.secondary)
     Button("Review devices", action: reviewDevices)

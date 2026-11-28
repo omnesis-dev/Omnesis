@@ -61,3 +61,20 @@ struct DesktopButtonStyle: ButtonStyle {
         return iconOnly ? .clear : DesktopTheme.surface
     }
 }
+
+/// Keeps textual links distinguishable from ordinary prose without replacing native activation.
+private struct DesktopTextLinkModifier: ViewModifier {
+    @Environment(\.isEnabled) private var enabled
+
+    func body(content: Content) -> some View {
+        content
+            .foregroundStyle(enabled ? DesktopTheme.accent : DesktopTheme.muted)
+            .underline(enabled)
+    }
+}
+
+extension Link {
+    func desktopTextLink() -> some View {
+        modifier(DesktopTextLinkModifier())
+    }
+}

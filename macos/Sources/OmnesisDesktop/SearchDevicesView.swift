@@ -64,7 +64,7 @@ struct DesktopSearchView: View {
                             .accessibilityIdentifier("search-document-" + result.documentId)
                         Text(result.chunkText).lineLimit(4).textSelection(.enabled)
                         if let link = result.appUrl ?? result.sourceUrl, let url = URL(string: link), DesktopAnswerBlock.allowsLink(url) {
-                            Link("Open original", destination: url).font(DesktopDesignTokens.Typography.metadata)
+                            Link("Open original", destination: url).desktopTextLink().font(DesktopDesignTokens.Typography.metadata)
                         }
                     }.padding(.vertical, 10)
                 }
@@ -126,9 +126,9 @@ struct DesktopDevicesView: View {
                 }.padding(.vertical, DesktopDesignTokens.Space.small)
             }
             HStack(spacing: DesktopDesignTokens.Space.regular) {
-                Link("Connect another computer", destination: URL(string: "https://omnesis.dev/docs/setup#collector")!)
-                Link("Get the iPhone app", destination: URL(string: "https://omnesis.dev/docs/apps")!)
-                Link("Get the Android app", destination: URL(string: "https://omnesis.dev/docs/apps")!)
+                Link("Connect another computer", destination: URL(string: "https://omnesis.dev/docs/setup#collector")!).desktopTextLink()
+                Link("Get the iPhone app", destination: URL(string: "https://omnesis.dev/docs/apps")!).desktopTextLink()
+                Link("Get the Android app", destination: URL(string: "https://omnesis.dev/docs/apps")!).desktopTextLink()
                 Spacer()
                 Button("Connect a phone") { pairingPhone = true }
             }

@@ -130,37 +130,59 @@ final class DesktopIntentsTests: XCTestCase {
 
     func testIntentAfterApiRetirementCannotPublishOldQuestionIntoCurrentComposer() async throws {
         try await withHarness { harness in
+            harness.beginRetirementObservation()
+            harness.observe(.firstStartup)
             let first = try await harness.startFixture(controlled: true)
+            harness.observe(.secondStartup)
             let second = try await harness.startFixture(controlled: true)
+            harness.observe(.firstConfigure)
             try await harness.configure(first, session: "retired-session", held: true)
+            harness.observe(.secondConfigure)
             try await harness.configure(second, session: "current-session", held: false)
+            harness.observe(.firstBind)
             try harness.bind(first)
             let retired = try XCTUnwrap(harness.store.apiContext)
             let older = "The retired library question must not become current."
             try await Self.ask(older)
+            harness.observe(.mount)
             try await harness.mount()
+            harness.observe(.firstQuestion)
             try await harness.waitForQuestion(older)
+            harness.observe(.send)
             try DesktopAccessibilityDriver.press("chat-send", in: harness.host)
+            harness.observe(.firstSessionObserved)
             try await harness.wait { try await harness.sessionRequests(first).count == 1 }
+            harness.observe(.captureOldTask)
             let oldRequest = try await harness.heldSessionTask()
+            harness.observe(.secondBind)
             try harness.bind(second)
             XCTAssertFalse(retired.isCurrent)
             let current = try XCTUnwrap(harness.store.apiContext)
             XCTAssertFalse(current === retired)
             let question = "Prepare only this current library question."
             try await Self.ask(question)
+            harness.observe(.currentQuestion)
             try await harness.waitForQuestion(question)
+            harness.observe(.currentSessions)
             let currentSessions = try await harness.sessionRequests(second)
             XCTAssertTrue(currentSessions.isEmpty)
+            harness.observe(.releaseFirst)
             try await harness.release(first)
+            harness.observe(.retiredDrain)
             await retired.drain()
+            harness.observe(.retiredDrained)
+            harness.observe(.oldTaskCompletion)
             try await harness.wait { oldRequest.state == .completed }
+            harness.observe(.questionRemains)
             try await harness.assertQuestionRemains(question)
             XCTAssertTrue(harness.store.apiContext === current)
             XCTAssertTrue(current.isCurrent)
+            harness.observe(.firstNoSubmission)
             try await harness.assertNoSubmission(first)
+            harness.observe(.secondNoSubmission)
             try await harness.assertNoSubmission(second)
             XCTAssertNil(DesktopActionRouter.shared.pending)
+            harness.observe(.completed)
         }
     }
 
@@ -427,6 +449,22 @@ final class DesktopIntentsTests: XCTestCase {
         }
     }
 
+    func testRetirementObservationKeepsTheFirstFailureAndBoundsRepeatedStatusFacts() {
+        let observation = RetirementObservation()
+        observation.phase = .currentQuestion
+        for _ in 0 ..< 5000 {
+            observation.requestStarted(.status)
+            observation.requestReturned()
+        }
+        observation.recordFailure(.controlTimeout)
+        observation.phase = .retiredDrain
+        observation.recordFailure(.predicateDeadline)
+        XCTAssertEqual(
+            observation.facts(cleanupReturned: true),
+            "intent-retirement phase=currentQuestion failure=controlTimeout requestKind=status started=4095 returned=4095 cleanupReturned=true"
+        )
+    }
+
     private static func ask(_ question: String) async throws {
         var intent = AskOmnesisDesktopIntent()
         intent.question = question
@@ -443,7 +481,9 @@ final class DesktopIntentsTests: XCTestCase {
         do {
             try await operation(harness)
         } catch {
+            harness.reportRetirementFailure(error, cleanupReturned: false)
             await harness.close()
+            harness.reportRetirementFailure(error, cleanupReturned: true)
             DesktopActionRouter.shared.pending = previousRequest
             throw error
         }
@@ -461,6 +501,27 @@ private final class IntentHarness {
     private var contexts: [DesktopAPIContext] = []
     private var apis: [DesktopAPI] = []
     private var chats: [DesktopChat] = []
+    private var retirementObservation: RetirementObservation?
+
+    func beginRetirementObservation() {
+        retirementObservation = RetirementObservation()
+    }
+
+    func observe(_ phase: RetirementObservation.Phase) {
+        retirementObservation?.phase = phase
+    }
+
+    func reportRetirementFailure(_ error: Error, cleanupReturned: Bool) {
+        guard let observation = retirementObservation else { return }
+        observation.recordFailure(error is URLError ? .unclassifiedURL : .other)
+        // Fixed labels/scalars only; no exception text, request URLs, questions or credentials.
+        let facts = observation.facts(cleanupReturned: cleanupReturned)
+        FileHandle.standardError.write(Data((facts + "\n").utf8))
+        let attachment = XCTAttachment(string: facts)
+        attachment.name = "intent-retirement-failure.txt"
+        attachment.lifetime = .keepAlways
+        XCTContext.runActivity(named: "Owned intent retirement failure") { $0.add(attachment) }
+    }
 
     func makeChat() -> DesktopChat {
         let chat = DesktopChat()
@@ -544,10 +605,14 @@ private final class IntentHarness {
         let deadline = ContinuousClock.now + .seconds(5)
         while ContinuousClock.now < deadline {
             let ready = try await condition()
-            guard ContinuousClock.now < deadline else { throw URLError(.timedOut) }
+            guard ContinuousClock.now < deadline else {
+                retirementObservation?.recordFailure(.predicateDeadline)
+                throw URLError(.timedOut)
+            }
             if ready { return }
             try await Task.sleep(for: .milliseconds(25))
         }
+        retirementObservation?.recordFailure(.predicateDeadline)
         throw URLError(.timedOut)
     }
 
@@ -555,7 +620,9 @@ private final class IntentHarness {
         try await wait {
             guard let hosting = self.hosting, self.composerValue == expected,
                   let input = try? DesktopAccessibilityDriver.element("chat-input", in: hosting),
-                  let send = try? DesktopAccessibilityDriver.element("chat-send", in: hosting) else { return false }
+                  let send = try? DesktopAccessibilityDriver.element("chat-send", in: hosting),
+                  let window = self.window, hosting.window === window,
+                  let responder = window.firstResponder as? NSTextView, responder.window === window else { return false }
             return input.isAccessibilityEnabled() && send.isAccessibilityEnabled() == sendEnabled
         }
         let input = try DesktopAccessibilityDriver.element("chat-input", in: host)
@@ -672,9 +739,25 @@ private final class IntentHarness {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
         }
-        let (data, response) = try await control.data(for: request)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
-        return data
+        let kind: RetirementObservation.RequestKind = switch path {
+        case "fixture-config": .configure
+        case "fixture-context-status": .status
+        case "fixture-release": .release
+        default: .other
+        }
+        retirementObservation?.requestStarted(kind)
+        do {
+            let (data, response) = try await control.data(for: request)
+            retirementObservation?.requestReturned()
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+                retirementObservation?.recordFailure(.controlStatus)
+                throw URLError(.badServerResponse)
+            }
+            return data
+        } catch {
+            retirementObservation?.recordFailure((error as? URLError)?.code == .timedOut ? .controlTimeout : .controlOther)
+            throw error
+        }
     }
 
     func close() async {
@@ -711,5 +794,44 @@ private final class IntentHarness {
         var body: some View {
             DesktopRootView().environment(store).id(store.apiContextEpoch)
         }
+    }
+}
+
+/// A single selected case retains only bounded observation facts, never request data.
+@MainActor
+private final class RetirementObservation {
+    enum Phase: String {
+        case firstStartup, secondStartup, firstConfigure, secondConfigure, firstBind, mount
+        case firstQuestion, send, firstSessionObserved, captureOldTask, secondBind
+        case currentQuestion, currentSessions, releaseFirst, retiredDrain, retiredDrained, oldTaskCompletion
+        case questionRemains, firstNoSubmission, secondNoSubmission, completed
+    }
+
+    enum RequestKind: String { case configure, status, release, other }
+    enum Failure: String { case predicateDeadline, controlTimeout, controlStatus, controlOther, unclassifiedURL, other }
+    var phase: Phase = .firstStartup
+    private var failedPhase: Phase?
+    private var failure: Failure?
+    private var requestKind: RequestKind = .other
+    private var started = 0
+    private var returned = 0
+
+    func requestStarted(_ kind: RequestKind) {
+        requestKind = kind
+        started = min(started + 1, 4095)
+    }
+
+    func requestReturned() {
+        returned = min(returned + 1, 4095)
+    }
+
+    func recordFailure(_ value: Failure) {
+        guard failure == nil else { return }
+        failure = value
+        failedPhase = phase
+    }
+
+    func facts(cleanupReturned: Bool) -> String {
+        "intent-retirement phase=\((failedPhase ?? phase).rawValue) failure=\(failure?.rawValue ?? "other") requestKind=\(requestKind.rawValue) started=\(started) returned=\(returned) cleanupReturned=\(cleanupReturned)"
     }
 }

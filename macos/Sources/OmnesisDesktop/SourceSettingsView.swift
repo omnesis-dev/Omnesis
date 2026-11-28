@@ -38,7 +38,9 @@ struct DesktopSourceSettingsView: View {
                         }
                         if !flow.canEditSelectedHost {
                             Text(
-                                "Indexed information stays in your library. Refresh an eligible computer's source settings before editing collection settings."
+                                flow.memberIds.isEmpty
+                                    ? "Indexed information stays in your library."
+                                    : "Indexed information stays in your library. Refresh an eligible computer's source settings before editing collection settings."
                             )
                             .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
                         }
@@ -71,11 +73,19 @@ struct DesktopSourceSettingsView: View {
 
                         GroupBox("Collection computers") {
                             VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.medium) {
-                                Picker("Settings on", selection: Binding(get: { flow.selectedDeviceId }, set: { id in
-                                    Task { await flow.selectDevice(id) }
-                                })) {
-                                    ForEach(flow.memberIds, id: \.self) { id in Text(deviceName(id)).tag(id) }
-                                }.disabled(flow.busy)
+                                if flow.memberIds.isEmpty {
+                                    Text("No computers are collecting this source.")
+                                        .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
+                                        .accessibilityIdentifier("source-settings-no-computers")
+                                } else {
+                                    Picker("Settings on", selection: Binding(get: { flow.selectedDeviceId }, set: { id in
+                                        Task { await flow.selectDevice(id) }
+                                    })) {
+                                        ForEach(flow.memberIds, id: \.self) { id in Text(deviceName(id)).tag(id) }
+                                    }
+                                    .accessibilityIdentifier("source-settings-computer")
+                                    .disabled(flow.busy)
+                                }
                                 if !flow.selectedDeviceId.isEmpty, !isLocalSelectedDevice {
                                     Text("Paths below refer to \(deviceName(flow.selectedDeviceId)), rather than this Mac.")
                                         .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)

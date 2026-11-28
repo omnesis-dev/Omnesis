@@ -209,7 +209,7 @@ struct DesktopRestoreBackupView: View {
             Toggle("I accept the certificate authority’s terms for my secure address", isOn: $termsAccepted)
                 .disabled(flow.signup?.readableTermsURL == nil)
             if let terms = flow.signup?.readableTermsURL {
-                Link("Certificate authority terms", destination: terms)
+                Link("Certificate authority terms", destination: terms).desktopTextLink()
             } else {
                 Text(
                     "The certificate authority’s terms could not be loaded. Check your connection, then check restoration status again before continuing."

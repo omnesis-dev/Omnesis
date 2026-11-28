@@ -11,7 +11,8 @@ struct DesktopChatGPTInstructions: View {
             VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.medium) {
                 Text("1. Add Omnesis to ChatGPT").font(DesktopDesignTokens.Typography.body.weight(.medium))
                     .accessibilityAddTraits(.isHeader)
-                Link("Open ChatGPT plugins", destination: URL(string: "https://chatgpt.com/plugins")!)
+                Link("Open ChatGPT plugins", destination: URL(string: "https://chatgpt.com/plugins")!).desktopTextLink()
+                    .accessibilityIdentifier("assistant-plugins-link")
                 Text("In ChatGPT, select +, then Add custom MCP server.")
                 Text("Use Omnesis as the name. Paste this address into Server URL and choose OAuth authentication.")
                 HStack {
@@ -32,7 +33,8 @@ struct DesktopChatGPTInstructions: View {
                 Link(
                     "ChatGPT connection requirements",
                     destination: URL(string: "https://help.openai.com/en/articles/12584461-connecting-custom-mcp-servers-in-chatgpt")!
-                )
+                ).desktopTextLink()
+                    .accessibilityIdentifier("assistant-requirements-link")
                 DisclosureGroup("Other assistants") {
                     Text(
                         "In your assistant’s connection settings, add a remote MCP server named Omnesis with the address above. Choose OAuth sign-in, then follow steps 2 and 3 here to approve only the information you want to share."
@@ -53,7 +55,8 @@ struct DesktopChatGPTFinishInstructions: View {
                 Text(
                     "Finish the sign-in in ChatGPT. Open your personal plugins, select + on Omnesis to install it, then start a new Work chat and mention @Omnesis."
                 )
-                Link("Open my ChatGPT plugins", destination: URL(string: "https://chatgpt.com/plugins?view=personal")!)
+                Link("Open my ChatGPT plugins", destination: URL(string: "https://chatgpt.com/plugins?view=personal")!).desktopTextLink()
+                    .accessibilityIdentifier("assistant-personal-plugins-link")
                 Text("For another assistant, return to its conversation and enable the Omnesis connection there.")
                     .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
             }.padding(10).frame(maxWidth: .infinity, alignment: .leading)

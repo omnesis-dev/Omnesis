@@ -1050,7 +1050,15 @@ final class DesktopSourceSetupTests: XCTestCase {
             DesktopSourceSettingsView(flow: flow).environment(store),
             name: "source-settings-paused",
             size: CGSize(width: 660, height: 650)
-        )
+        ) { hosting in
+            let picker = try DesktopAccessibilityDriver.element("source-settings-computer", in: hosting)
+            XCTAssertTrue(picker.isAccessibilityEnabled())
+            XCTAssertEqual(picker.accessibilityRole(), .popUpButton)
+            XCTAssertEqual(picker.accessibilityTextValue(), "My Mac")
+            XCTAssertGreaterThan(picker.accessibilityFrame().width, 0)
+            XCTAssertGreaterThan(picker.accessibilityFrame().height, 0)
+            XCTAssertTrue(try XCTUnwrap(hosting.window).frame.contains(picker.accessibilityFrame()))
+        }
         let move = DesktopSourceFlow(descriptor: descriptor, api: fixture.api)
         try await DesktopSnapshotRenderer.render(
             DesktopSourceMoveConfirmation(flow: move, pending: snapshot).environment(store),
@@ -1111,7 +1119,21 @@ final class DesktopSourceSetupTests: XCTestCase {
         try await DesktopSnapshotRenderer.render(
             DesktopSourceSettingsView(flow: flow).environment(store),
             name: "source-settings-historical", size: CGSize(width: 660, height: 650)
-        )
+        ) { hosting in
+            XCTAssertTrue(try DesktopAccessibilityDriver.contains("No computers are collecting this source.", in: hosting))
+            let explanation = try DesktopAccessibilityDriver.element("source-settings-no-computers", in: hosting)
+            XCTAssertGreaterThan(explanation.accessibilityFrame().width, 0)
+            XCTAssertGreaterThan(explanation.accessibilityFrame().height, 0)
+            XCTAssertTrue(try XCTUnwrap(hosting.window).frame.contains(explanation.accessibilityFrame()))
+            let elements = try DesktopAccessibilityDriver.elements(in: hosting)
+            XCTAssertFalse(elements.contains { $0.accessibilityIdentifier() == "source-settings-computer" })
+            XCTAssertFalse(elements.contains {
+                $0.accessibilityRole() == .popUpButton && $0.isAccessibilityEnabled()
+                    && $0.accessibilityLabel() == "Settings on"
+            })
+            XCTAssertTrue(try DesktopAccessibilityDriver.contains("Remove this source…", in: hosting))
+        }
+        XCTAssertTrue(fixture.script.requests.allSatisfy { $0.httpMethod == "GET" })
         await flow.removeSource()
         XCTAssertTrue(flow.removalComplete)
         XCTAssertTrue(removed)

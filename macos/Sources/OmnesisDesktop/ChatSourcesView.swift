@@ -90,7 +90,7 @@ struct DesktopDocumentView: View {
                 ScrollView { DesktopAnswerText(text: document.content).padding(.trailing, DesktopDesignTokens.Space.medium) }
                     .accessibilityIdentifier("chat-document-content")
                 if let url = selection.originalURL, DesktopAnswerBlock.allowsLink(url) {
-                    Link("Open original", destination: url)
+                    Link("Open original", destination: url).desktopTextLink()
                 }
             }
             Spacer(minLength: 0)

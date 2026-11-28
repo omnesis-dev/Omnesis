@@ -150,7 +150,7 @@ struct DesktopMacServerGuidanceView: View {
                     .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
             }
             HStack {
-                Link("Apple’s sleep settings guide", destination: DesktopMacServerGuidance.appleGuide)
+                Link("Apple’s sleep settings guide", destination: DesktopMacServerGuidance.appleGuide).desktopTextLink()
                     .accessibilityIdentifier("mac-server-apple-guide")
                 Spacer()
                 Button("Open System Settings") { settingsUnavailable = !openSettings() }
