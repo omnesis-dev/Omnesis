@@ -132,6 +132,15 @@ restore their process-local interaction setting and remove only their own items.
 CI retains application-test evidence after a completed Core-test failure. The
 actual Core outcome still fails the job and blocks unsigned package assembly.
 
+The reusable desktop workflow also runs a separate Intel external-accessibility
+diagnostic. Its single selected method queries a test-only AppKit control app,
+then the owned Omnesis Debug app in the same runner method. The diagnostic
+requires explicit runner-only opt-in and exactly one passing result with no
+failures or skips. Its bounded phase and result receipts do not qualify the five
+ordinary product UI tests or identify the cause of an accessibility failure.
+The control app belongs only to the scheme's testing action; it is not a product
+dependency or part of ordinary run, profile, analyze or archive actions.
+
 Core tests keep a partial lifecycle receipt after the background-observer suite
 prepares an XCTest listener. It records only delivered callbacks; the latest
 record does not identify one exclusively active test or prove suite completion.

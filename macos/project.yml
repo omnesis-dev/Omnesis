@@ -88,6 +88,17 @@ targets:
         PRODUCT_NAME: OmnesisBackground
         INFOPLIST_FILE: Background-Info.plist
         SKIP_INSTALL: YES
+  OmnesisAXControlFixture:
+    type: application
+    platform: macOS
+    sources:
+      - path: Tests/Fixtures/ExternalAXControlApp.swift
+    settings:
+      base:
+        PRODUCT_NAME: OmnesisAXControlFixture
+        PRODUCT_BUNDLE_IDENTIFIER: dev.omnesis.desktop.ax-control-fixture
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
   OmnesisDesktopTests:
     type: bundle.unit-test
     platform: macOS
@@ -121,6 +132,7 @@ schemes:
       targets:
         OmnesisDesktop: all
         OmnesisBackground: all
+        OmnesisAXControlFixture: [test]
     test:
       targets:
         - name: OmnesisDesktopTests

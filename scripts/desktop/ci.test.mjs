@@ -272,3 +272,189 @@ node() { printf '{}\\n'; }
     }
   },
 );
+
+test("external AX control app is reachable only from the testing scheme action", async () => {
+  const spec = parse(await readFile(new URL("../../macos/project.yml", import.meta.url), "utf8"));
+  const fixture = "OmnesisAXControlFixture";
+  const source = "Tests/Fixtures/ExternalAXControlApp.swift";
+  const target = spec.targets[fixture];
+  expect(target.type).toBe("application");
+  expect(target.platform).toBe("macOS");
+  expect(target.sources).toEqual([{ path: source }]);
+  expect(target.dependencies ?? []).toEqual([]);
+  expect(target.settings.base.SKIP_INSTALL).toBe("YES");
+  expect(target.settings.base.PRODUCT_BUNDLE_IDENTIFIER).toBe(
+    "dev.omnesis.desktop.ax-control-fixture",
+  );
+  const graph = (roots) => {
+    const visited = new Set();
+    const pending = [...roots];
+    while (pending.length) {
+      const name = pending.pop();
+      if (visited.has(name)) continue;
+      visited.add(name);
+      for (const dependency of spec.targets[name]?.dependencies ?? []) {
+        if (dependency.target) pending.push(dependency.target);
+      }
+    }
+    return visited;
+  };
+  for (const scheme of Object.values(spec.schemes)) {
+    const entries = Object.entries(scheme.build.targets);
+    expect(entries.find(([name]) => name === fixture)?.[1]).toEqual(["test"]);
+    for (const action of [
+      "run",
+      "running",
+      "profile",
+      "profiling",
+      "analyze",
+      "analyzing",
+      "archive",
+      "archiving",
+    ]) {
+      const roots = entries
+        .filter(
+          ([, selected]) =>
+            selected === "all" || (Array.isArray(selected) && selected.includes(action)),
+        )
+        .map(([name]) => name);
+      expect(graph(roots).has(fixture)).toBe(false);
+    }
+  }
+  // The production application and both existing test bundles keep their source boundaries.
+  for (const name of graph(["OmnesisDesktop", "OmnesisDesktopTests", "OmnesisDesktopUITests"])) {
+    const current = spec.targets[name];
+    for (const item of current.sources ?? []) {
+      const path = typeof item === "string" ? item : item.path;
+      expect(source === path || source.startsWith(path + "/")).toBe(false);
+    }
+    expect(JSON.stringify(current.postBuildScripts ?? [])).not.toContain(fixture);
+  }
+});
+
+test("external AX diagnosis has an independent hosted job and runner-only opt-in", () => {
+  const diagnostic = workflow.jobs["external-ax-control"];
+  expect(diagnostic["runs-on"]).toBe("macos-26-intel");
+  expect(diagnostic["timeout-minutes"]).toBe(20);
+  expect(diagnostic).not.toHaveProperty("needs");
+  expect(diagnostic).not.toHaveProperty("continue-on-error");
+  expect(diagnostic).not.toHaveProperty("env");
+  expect(diagnostic.steps[0].with).toEqual(job.steps[0].with);
+  for (const step of diagnostic.steps.filter((step) => step.uses))
+    expect(step.uses).toMatch(/@[a-f0-9]{40}$/u);
+  const selected = diagnostic.steps.find((step) => step.id === "control-test");
+  expect(selected.env).toEqual({ TEST_RUNNER_OMNESIS_EXTERNAL_AX_CONTROL_DIAGNOSTIC: "1" });
+  expect(selected).not.toHaveProperty("continue-on-error");
+  expect(selected.run.match(/-only-testing:[^\s]+/gu)).toEqual([
+    "-only-testing:OmnesisDesktopUITests/DesktopExternalAXControlUITests/testStandardAppKitThenOwnedOmnesisCanBeQueriedInOneRunnerMethod",
+  ]);
+  for (const step of [...job.steps, ...diagnostic.steps.filter((step) => step !== selected)]) {
+    expect(step.env ?? {}).not.toHaveProperty("TEST_RUNNER_OMNESIS_EXTERNAL_AX_CONTROL_DIAGNOSTIC");
+    expect(step.env ?? {}).not.toHaveProperty("OMNESIS_EXTERNAL_AX_CONTROL_DIAGNOSTIC");
+  }
+  expect(
+    diagnostic.steps.some((step) =>
+      /swift test|prepare-runtime|smoke-runtime|assemble-app/u.test(step.run ?? ""),
+    ),
+  ).toBe(false);
+  expect(diagnostic.steps.find((step) => step.id === "production-network").run).toBe(
+    "scripts/ci/production-network.sh isolate",
+  );
+  expect(
+    diagnostic.steps.find((step) => step.name === "Verify production network isolation").if,
+  ).toBe("${{ always() && steps.production-network.outcome == 'success' }}");
+  const upload = diagnostic.steps.find(
+    (step) => step.name === "Upload bounded diagnostic receipts",
+  );
+  expect(upload.if).toBe("always()");
+  expect(upload.with.path).toBe("evidence/external-ax-control/");
+});
+
+test.skipIf(process.platform === "win32").each([
+  [{ totalTestCount: 1, passedTests: 1, failedTests: 0, skippedTests: 0 }, 0, 0],
+  [{ totalTestCount: 0, passedTests: 0, failedTests: 0, skippedTests: 0 }, 0, 1],
+  [{ totalTestCount: 1, passedTests: 0, failedTests: 0, skippedTests: 1 }, 0, 1],
+  [{ totalTestCount: 1, passedTests: 0, failedTests: 1, skippedTests: 0 }, 0, 1],
+  [{ totalTestCount: 2, passedTests: 2, failedTests: 0, skippedTests: 0 }, 0, 1],
+  [{ totalTestCount: 1, passedTests: 1, failedTests: 0, skippedTests: 1 }, 0, 1],
+  [{ totalTestCount: 1, passedTests: 1 }, 0, 1],
+  ["invalid-json", 0, 1],
+  [{ totalTestCount: 1, passedTests: 1, failedTests: 0, skippedTests: 0 }, 17, 1],
+])(
+  "actual diagnostic summary gate requires precisely one pass (%j, tool %s)",
+  async (summary, toolExit, expected) => {
+    const root = await mkdtemp(join(tmpdir(), "omnesis-ax-summary-"));
+    try {
+      const bin = join(root, "bin");
+      await mkdir(bin);
+      await writeFile(
+        join(bin, "xcrun"),
+        `#!/bin/sh\nprintf '%s' "$CONTROL_SUMMARY"\nexit "$CONTROL_TOOL_EXIT"\n`,
+        { mode: 0o700 },
+      );
+      const gate = workflow.jobs["external-ax-control"].steps.find(
+        (step) => step.name === "Require exactly one passed diagnostic and no skip",
+      );
+      expect(gate.if).toBe("${{ always() && steps.control-build.outcome == 'success' }}");
+      const script = gate.run.split("node --input-type=module <<'NODE'\n")[1].split("\nNODE")[0];
+      const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+        cwd: root,
+        env: {
+          PATH: bin + ":/usr/bin:/bin",
+          CONTROL_SUMMARY: typeof summary === "string" ? summary : JSON.stringify(summary),
+          CONTROL_TOOL_EXIT: String(toolExit),
+        },
+        encoding: "utf8",
+        timeout: 3000,
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(expected);
+      const receipt = JSON.parse(
+        await readFile(join(root, "evidence/external-ax-control/qualification.json"), "utf8"),
+      );
+      expect(receipt.qualified).toBe(expected === 0);
+      expect(receipt.scope).toBe("external-ax-control-diagnostic-only");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test.skipIf(process.platform === "win32").each([0, 23])(
+  "diagnostic signing receipt never masks xcodebuild status %s",
+  async (status) => {
+    const root = await mkdtemp(join(tmpdir(), "omnesis-ax-status-"));
+    try {
+      await mkdir(join(root, "evidence/external-ax-control"), { recursive: true });
+      await mkdir(join(root, "macos"));
+      const script = workflow.jobs["external-ax-control"].steps.find(
+        (step) => step.id === "control-test",
+      ).run;
+      const result = spawnSync(
+        "/bin/bash",
+        [
+          "--noprofile",
+          "--norc",
+          "-e",
+          "-o",
+          "pipefail",
+          "-c",
+          `
+xcodebuild() { return "$CONTROL_XCODE_STATUS"; }
+node() { printf '{}\n'; }
+` + script,
+        ],
+        {
+          cwd: join(root, "macos"),
+          env: { PATH: "/usr/bin:/bin", CONTROL_XCODE_STATUS: String(status) },
+          encoding: "utf8",
+          timeout: 3000,
+        },
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(status);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
