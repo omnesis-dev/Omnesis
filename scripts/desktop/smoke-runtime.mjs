@@ -234,6 +234,28 @@ export async function smokeRuntime(sourceRuntime, { analyticsRestore } = {}) {
   } catch (error) {
     operationFailure = error;
     retain = error?.cleanupFailure !== undefined;
+    if (analyticsRestore?.receipt) {
+      try {
+        const { preserveAnalyticsRestoreFailure } = await import("./native-package.mjs");
+        await preserveAnalyticsRestoreFailure({
+          runtime: sourceRuntime,
+          home,
+          destination: analyticsRestore.receipt,
+          manifestSha256: createHash("sha256").update(manifestBytes).digest("hex"),
+          failure: error,
+        });
+      } catch (exportFailure) {
+        operationFailure = Object.assign(
+          new AggregateError(
+            [error, exportFailure],
+            "Analytics restore failure evidence remains unconfirmed",
+            { cause: error },
+          ),
+          { cleanupFailure: "analytics-restore-failure-evidence" },
+        );
+        retain = true;
+      }
+    }
   }
   let cleanupFailure;
   if (!retain) {

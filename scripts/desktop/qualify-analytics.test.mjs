@@ -12,10 +12,16 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { Script } from "node:vm";
 import { afterEach, expect, test, vi } from "vitest";
-import { qualifyDesktopAnalytics, qualifyDesktopAnalyticsRestore } from "./qualify-analytics.mjs";
+import {
+  analyticsRestoreDiagnostic,
+  projectAnalyticsRestoreFailure,
+  qualifyDesktopAnalytics,
+  qualifyDesktopAnalyticsRestore,
+} from "./qualify-analytics.mjs";
 
 const roots = [];
 afterEach(() => {
@@ -232,3 +238,124 @@ process.stdin.resume();process.stdin.on('end',()=>process.stdout.write(target?'c
     }
   },
 );
+
+const targetFailureMarkers =
+  "analytics-restore-stage:input\nanalytics-restore-stage:beforeDataFD\nanalytics-restore-failure:beforeDataFD:Error:EBADF\n";
+test("fixed target stages and actual whitelisted failure codes are projected without raw content", () => {
+  expect(analyticsRestoreDiagnostic(targetFailureMarkers)).toEqual({
+    stage: "beforeDataFD",
+    errorClass: "Error",
+    errorCode: "EBADF",
+  });
+  expect(analyticsRestoreDiagnostic("analytics-restore-stage:input\n")).toEqual({
+    stage: "input",
+    errorClass: "unavailable",
+    errorCode: "unavailable",
+  });
+});
+test.each([
+  "",
+  "invented-private-secret\n",
+  targetFailureMarkers + "invented-private-secret\n",
+  targetFailureMarkers.slice(0, -1),
+  targetFailureMarkers.replace("EBADF", "invented-private-secret"),
+  targetFailureMarkers.replace("beforeDataFD:Error", "modules:Error"),
+  "analytics-restore-stage:undefined\n",
+  "x".repeat(16385),
+])(
+  "malformed or unknown target diagnostics are unavailable without revealing input: %#",
+  (text) => {
+    expect(analyticsRestoreDiagnostic(text)).toEqual({
+      stage: "unavailable",
+      errorClass: "unavailable",
+      errorCode: "unavailable",
+    });
+    expect(
+      projectAnalyticsRestoreFailure({
+        role: "target",
+        ...analyticsRestoreDiagnostic(text),
+        secret: "invented-private-secret",
+      }),
+    ).toEqual({
+      role: "unavailable",
+      stage: "unavailable",
+      errorClass: "unavailable",
+      errorCode: "unavailable",
+    });
+  },
+);
+test.skipIf(process.platform === "win32").each([false, true])(
+  "a real nonzero target joins and exposes only closed failure facts (unknown stderr=%s)",
+  async (unknown) => {
+    const f = restoreFixture(),
+      fake = join(f.home, "fixture-node");
+    const script = `#!${process.execPath}
+const target=process.argv[2]==='--data-use';
+process.stdin.resume();process.stdin.on('end',()=>{
+ if(!target){process.stdout.write('restore-source-ready\\n');return;}
+ process.stderr.write(${JSON.stringify(targetFailureMarkers)}+${JSON.stringify(unknown ? "invented-private-secret\n" : "")},()=>{process.exitCode=1;});
+});
+`;
+    writeFileSync(fake, script, { mode: 0o700 });
+    writeFileSync(join(f.runtime, "runtime-exec"), script, { mode: 0o700 });
+    let failure;
+    try {
+      failure = await qualifyDesktopAnalyticsRestore({ ...f, upstreamNode: fake }).then(
+        () => null,
+        (error) => error,
+      );
+      expect(failure?.message).toBe("Analytics restore qualification process failed");
+      expect(failure.analyticsRestoreFailure).toEqual({
+        role: "target",
+        ...analyticsRestoreDiagnostic(
+          unknown ? targetFailureMarkers + "invented-private-secret\n" : targetFailureMarkers,
+        ),
+      });
+      expect(JSON.stringify(failure.analyticsRestoreFailure)).not.toContain(
+        "invented-private-secret",
+      );
+      expect(
+        JSON.parse(readFileSync(join(f.home, "analytics-restore-target-process.json"), "utf8")),
+      ).toEqual({
+        format: 1,
+        role: "target",
+        rootClosed: true,
+        treeJoined: true,
+        code: 1,
+        forced: false,
+      });
+    } finally {
+      if (failure?.cleanupFailure !== undefined) roots.splice(roots.indexOf(f.scratch), 1);
+    }
+  },
+);
+
+test("the actual target catch classifies a real parser failure without emitting private input", async () => {
+  const f = restoreFixture();
+  let target;
+  await qualifyDesktopAnalyticsRestore(f, {
+    run: async (_executable, args, options) => {
+      if (options.role === "source") return "restore-source-ready\n";
+      target = args[4];
+      return "compiled-restore-qualified\n";
+    },
+  });
+  const result = spawnSync(process.execPath, ["--eval", target, f.runtime], {
+    cwd: f.home,
+    env: { HOME: f.home, PATH: "/usr/bin:/bin", LANG: "C" },
+    input: "invented-private-secret-not-json",
+    encoding: "utf8",
+    timeout: 3000,
+    killSignal: "SIGKILL",
+  });
+  expect(result.error).toBeUndefined();
+  expect(result.signal).toBeNull();
+  expect(result.status).toBe(1);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).not.toContain("invented-private-secret");
+  expect(analyticsRestoreDiagnostic(result.stderr)).toEqual({
+    stage: "input",
+    errorClass: "SyntaxError",
+    errorCode: "none",
+  });
+});

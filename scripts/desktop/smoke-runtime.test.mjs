@@ -25,6 +25,7 @@ import {
 import * as analytics from "./qualify-analytics.mjs";
 import * as inventory from "./native-inventory.mjs";
 import { smokeRuntime, smokeRuntimeEnvironment } from "./smoke-runtime.mjs";
+import { readAnalyticsRestoreReceipt } from "./native-package.mjs";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal();
@@ -300,3 +301,117 @@ test("duplicate export refuses before any analytics process and preserves the or
   expect(analytics.qualifyDesktopAnalytics).not.toHaveBeenCalled();
   expect(await filesystem.readFile(f.destination, "utf8")).toBe("invented prior receipt");
 });
+
+function failedTarget() {
+  return Object.defineProperty(new Error("invented-private-secret"), "analyticsRestoreFailure", {
+    value: { role: "target", stage: "beforeDataFD", errorClass: "Error", errorCode: "EBADF" },
+  });
+}
+test("failed compiled proof survives actual home cleanup as private failure evidence, never success", async () => {
+  const f = receiptSmokeFixture(),
+    primary = failedTarget();
+  let ownedHome;
+  vi.spyOn(analytics, "qualifyDesktopAnalyticsRestore").mockImplementation(async (args) => {
+    ownedHome = args.home;
+    await writeSmokeProof(args);
+    await filesystem.writeFile(
+      join(args.home, "analytics-restore-target-process.json"),
+      JSON.stringify({
+        format: 1,
+        role: "target",
+        rootClosed: true,
+        treeJoined: true,
+        code: 1,
+        forced: false,
+      }),
+    );
+    throw primary;
+  });
+  await expect(smokeRuntime(f.runtime, f.options)).rejects.toBe(primary);
+  const path = join(dirname(f.destination), "analytics-restore-failure.json"),
+    text = await filesystem.readFile(path, "utf8"),
+    receipt = JSON.parse(text);
+  expect(receipt).toMatchObject({
+    scope: "compiled-analytics-restore-failure",
+    role: "target",
+    stage: "beforeDataFD",
+    errorClass: "Error",
+    errorCode: "EBADF",
+    source: { rootClosed: true, treeJoined: true, code: 0 },
+    target: { rootClosed: true, treeJoined: true, code: 1 },
+  });
+  expect(text).not.toContain("invented-private-secret");
+  expect(text).not.toContain(f.home);
+  expect(statSync(path).mode & 0o777).toBe(0o600);
+  await expect(filesystem.lstat(ownedHome)).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(filesystem.lstat(f.destination)).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(
+    readAnalyticsRestoreReceipt({ artifact: dirname(f.destination), runtime: f.runtime }),
+  ).rejects.toThrow("cannot be accepted as success");
+});
+test("failure without trusted stage markers exports unavailable, never arbitrary error properties", async () => {
+  const f = receiptSmokeFixture(),
+    primary = Object.assign(new Error("invented-private-secret"), {
+      analyticsRestoreFailure: {
+        role: "target",
+        stage: "invented-private-secret",
+        errorClass: "Error",
+        errorCode: "EBADF",
+      },
+    });
+  vi.spyOn(analytics, "qualifyDesktopAnalyticsRestore").mockImplementation(async (args) => {
+    await writeSmokeProof(args);
+    throw primary;
+  });
+  await expect(smokeRuntime(f.runtime, f.options)).rejects.toBe(primary);
+  const text = await filesystem.readFile(
+    join(dirname(f.destination), "analytics-restore-failure.json"),
+    "utf8",
+  );
+  expect(JSON.parse(text)).toMatchObject({
+    role: "target",
+    stage: "unavailable",
+    errorClass: "unavailable",
+    errorCode: "unavailable",
+  });
+  expect(text).not.toContain("invented-private-secret");
+});
+test.each(["duplicate", "unknown-process"])(
+  "failure export refusal preserves primary and cleanup causes plus exact home (%s)",
+  async (kind) => {
+    const f = receiptSmokeFixture(),
+      primary = failedTarget();
+    let ownedHome;
+    const path = join(dirname(f.destination), "analytics-restore-failure.json");
+    if (kind === "duplicate") writeFileSync(path, "invented prior evidence", { mode: 0o600 });
+    vi.spyOn(analytics, "qualifyDesktopAnalyticsRestore").mockImplementation(async (args) => {
+      ownedHome = args.home;
+      await writeSmokeProof(args);
+      if (kind === "unknown-process")
+        await filesystem.writeFile(
+          join(args.home, "analytics-restore-target-process.json"),
+          JSON.stringify({
+            format: 1,
+            role: "target",
+            rootClosed: true,
+            treeJoined: true,
+            code: 999,
+            forced: false,
+          }),
+        );
+      throw primary;
+    });
+    const failure = await smokeRuntime(f.runtime, f.options).then(
+      () => null,
+      (error) => error,
+    );
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect(failure.errors[0]).toBe(primary);
+    expect(failure.errors[1]).toBeInstanceOf(Error);
+    expect(failure.cleanupFailure).toBe("analytics-restore-failure-evidence");
+    expect(statSync(ownedHome).mode & 0o777).toBe(0o700);
+    if (kind === "duplicate")
+      expect(await filesystem.readFile(path, "utf8")).toBe("invented prior evidence");
+    else await expect(filesystem.lstat(path)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);

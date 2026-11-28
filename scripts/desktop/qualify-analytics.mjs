@@ -178,12 +178,120 @@ const requireFrom=createRequire(require('node:path').join(process.argv[1],'packa
 })().catch(()=>{process.stderr.write('Analytics restore source preparation failed\n');process.exitCode=1;});
 `;
 
+const restoreStages = [
+  "input",
+  "beforeDataFD",
+  "modules",
+  "readSource",
+  "seal",
+  "productionRestore",
+  "values",
+  "output",
+  "dataFDDone",
+  "receipt",
+];
+const restoreErrorClasses = [
+  "Error",
+  "TypeError",
+  "RangeError",
+  "SyntaxError",
+  "AbortError",
+  "other",
+  "unavailable",
+];
+const restoreErrorCodes = [
+  "none",
+  "other",
+  "unavailable",
+  "ERR_MODULE_NOT_FOUND",
+  "MODULE_NOT_FOUND",
+  "ERR_DLOPEN_FAILED",
+  "ERR_PACKAGE_PATH_NOT_EXPORTED",
+  "ERR_INVALID_ARG_TYPE",
+  "ERR_INVALID_ARG_VALUE",
+  "EACCES",
+  "ENOENT",
+  "EIO",
+  "EPERM",
+  "ENOTSUP",
+  "EBADF",
+  "EINVAL",
+  "EEXIST",
+  "ENOSPC",
+];
+const unavailableDiagnostic = () => ({
+  stage: "unavailable",
+  errorClass: "unavailable",
+  errorCode: "unavailable",
+});
+
+/** Accept only complete ordered fixed markers; never expose raw tool diagnostics. */
+export function analyticsRestoreDiagnostic(text) {
+  if (typeof text !== "string" || Buffer.byteLength(text) > 16384 || !text.endsWith("\n"))
+    return unavailableDiagnostic();
+  let next = 0,
+    failure;
+  for (const line of text.slice(0, -1).split("\n")) {
+    if (failure) return unavailableDiagnostic();
+    if (next < restoreStages.length && line === "analytics-restore-stage:" + restoreStages[next]) {
+      next += 1;
+      continue;
+    }
+    const parts = line.split(":");
+    if (
+      parts.length !== 4 ||
+      parts[0] !== "analytics-restore-failure" ||
+      next === 0 ||
+      parts[1] !== restoreStages[next - 1] ||
+      !restoreErrorClasses.includes(parts[2]) ||
+      !restoreErrorCodes.includes(parts[3])
+    )
+      return unavailableDiagnostic();
+    failure = { stage: parts[1], errorClass: parts[2], errorCode: parts[3] };
+  }
+  return (
+    failure ??
+    (next
+      ? { ...unavailableDiagnostic(), stage: restoreStages[next - 1] }
+      : unavailableDiagnostic())
+  );
+}
+
+export function projectAnalyticsRestoreFailure(value) {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.keys(value).sort().join(",") !== "errorClass,errorCode,role,stage" ||
+    !["source", "target"].includes(value.role) ||
+    ![...restoreStages, "unavailable"].includes(value.stage) ||
+    !restoreErrorClasses.includes(value.errorClass) ||
+    !restoreErrorCodes.includes(value.errorCode)
+  )
+    return { role: "unavailable", ...unavailableDiagnostic() };
+  return {
+    role: value.role,
+    stage: value.stage,
+    errorClass: value.errorClass,
+    errorCode: value.errorCode,
+  };
+}
+
 const restoreProgram = String.raw`
 const {createRequire}=require('node:module');
 const {join}=require('node:path');
 const {pathToFileURL}=require('node:url');
 const fs=require('node:fs/promises');
 const requireFrom=createRequire(join(process.argv[1],'package.json'));
+let restoreStage='input';
+const checkpoint=stage=>{restoreStage=stage;process.stderr.write('analytics-restore-stage:'+stage+'\n');};
+const failureFact=error=>{
+ const classes=['Error','TypeError','RangeError','SyntaxError','AbortError'];
+ const codes=['ERR_MODULE_NOT_FOUND','MODULE_NOT_FOUND','ERR_DLOPEN_FAILED','ERR_PACKAGE_PATH_NOT_EXPORTED','ERR_INVALID_ARG_TYPE','ERR_INVALID_ARG_VALUE','EACCES','ENOENT','EIO','EPERM','ENOTSUP','EBADF','EINVAL','EEXIST','ENOSPC'];
+ const errorClass=classes.includes(error?.name)?error.name:'other';
+ const errorCode=error?.code===undefined?'none':codes.includes(error.code)?error.code:'other';
+ process.stderr.write('analytics-restore-failure:'+restoreStage+':'+errorClass+':'+errorCode+'\n');
+};
 async function privateBytes(path){
  const {constants}=require('node:fs');
  const handle=await fs.open(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
@@ -199,6 +307,7 @@ async function privateBytes(path){
 }
 (async()=>{
  process.umask(0o077);
+ checkpoint('input');
  let text='';for await(const block of process.stdin){text+=block;if(text.length>16384)throw Error('input bound');}
  const {source,sourceKey,destinationKey,work,engineVersion,scope:expectedScope,architecture}=JSON.parse(text);
  if(process.platform!=='darwin' || process.arch!==architecture)throw Error('target architecture');
@@ -209,7 +318,9 @@ async function privateBytes(path){
   if(!held.isFile() || held.uid!==BigInt(process.getuid()) || held.nlink!==1n || (held.mode&0o777n)!==0o600n || held.dev!==published.dev || held.ino!==published.ino || published.isSymbolicLink())throw Error('native data descriptor');
   return {dev:held.dev,ino:held.ino};
  };
+ checkpoint('beforeDataFD');
  const beforeData=dataIdentity();
+ checkpoint('modules');
  const runtime=await fs.realpath(process.argv[1]);
  const entry=await fs.realpath(requireFrom.resolve('@omnesis/gateway/dist/restore/auxiliary-entry.js'));
  if(entry!==join(runtime,'packages/gateway/dist/restore/auxiliary-entry.js'))throw Error('compiled entry boundary');
@@ -223,15 +334,19 @@ async function privateBytes(path){
  const apiEntry=await fs.realpath(apiRequire.resolve('@duckdb/node-api'));
  if(!apiEntry.startsWith(runtime+'/'))throw Error('analytics module boundary');
  const {DuckDBInstance}=apiRequire('@duckdb/node-api');
+ checkpoint('readSource');
  const original=await privateBytes(source);
  if(original.length>16*1024*1024 || original.subarray(8,12).toString('ascii')!=='DUCK' || (original.readBigUInt64LE(20)&1n)!==1n)throw Error('source encryption');
+ checkpoint('seal');
  const rootKey=generateInstallRootKey(), sealed=join(work,'backup.enc'), staging=join(work,'authenticated.db'), destination=join(work,'restored.db');
  const scope='desktop-restore:analytics-qualification';
  await produceEncryptedArtifact(sealed,{rootKey,scope},async body=>{await new Promise((done,reject)=>body.write(original,error=>error?reject(error):done()));});
+ checkpoint('productionRestore');
  const result=await restoreAuxiliaryEntry({kind:'analytics',entry:{path:sealed,scope,targetRootKey:rootKey,sourceRootKey:rootKey,logicalName:GATEWAY_ANALYTICS_STORE_FILE,sourceScope:null,bytes:original.length},sourceKey:Buffer.from(sourceKey,'hex'),sourceCipherPath:staging,destinationPath:destination,destinationKey:Buffer.from(destinationKey,'hex')});
  if(result.rowsPreserved!==2 || result.pendingWorkDiscarded!==0 || result.watchesPaused!==0)throw Error('restore row counts');
  try{await fs.lstat(staging);throw Error('staging remains');}catch(error){if(error.code!=='ENOENT')throw error;}
  if(!(await privateBytes(source)).equals(original))throw Error('source changed');
+ checkpoint('values');
  const instance=await DuckDBInstance.create(':memory:',{threads:'1',temp_directory:'',autoload_known_extensions:'false',autoinstall_known_extensions:'false',allow_unsigned_extensions:'false'});
  let connection;
  const quote=value=>"'"+value.replaceAll("'","''")+"'";
@@ -256,6 +371,7 @@ async function privateBytes(path){
   }finally{await connection.run('ROLLBACK');}
   await connection.run('DETACH restored');
  }finally{try{connection?.closeSync();}finally{instance.closeSync();}}
+ checkpoint('output');
  const allowed=['backup.enc','restored.db'];
  const actual=(await fs.readdir(work)).sort();
  if(JSON.stringify(actual)!==JSON.stringify(allowed))throw Error('unexpected restore output');
@@ -264,9 +380,11 @@ async function privateBytes(path){
  if(destinationBytes.subarray(8,12).toString('ascii')!=='DUCK' || (destinationBytes.readBigUInt64LE(20)&1n)!==1n)throw Error('destination encryption');
  const afterData=dataIdentity();
  if(beforeData.dev!==afterData.dev || beforeData.ino!==afterData.ino)throw Error('native data descriptor changed');
+ checkpoint('dataFDDone');
+ checkpoint('receipt');
  await fs.writeFile(join(work,'qualification.json'),JSON.stringify({format:1,compiledEntry:true,staticModule:true,sourceUnchanged:true,keyedRowsAndConstraints:true,encryptedPrivateOutputs:true,authenticatedStagingRemoved:true,nativeDataFdMatched:true}),{flag:'wx',mode:0o600});
  process.stdout.write('compiled-restore-qualified\n');
-})().catch(()=>{process.stderr.write('Compiled analytics restore qualification failed\n');process.exitCode=1;});
+})().catch(error=>{failureFact(error);process.exitCode=1;});
 `;
 
 async function restoreProcess(executable, args, { home, role, env, input, signal }) {
@@ -293,6 +411,7 @@ async function restoreProcess(executable, args, { home, role, env, input, signal
   });
   void joined.catch(() => {});
   let output = "",
+    diagnostics = "",
     bytes = 0,
     failure,
     forced = false;
@@ -309,6 +428,7 @@ async function restoreProcess(executable, args, { home, role, env, input, signal
       bytes += part.length;
       if (bytes > 16384) stop();
       else if (stream === child.stdout) output += part.toString("utf8");
+      else diagnostics += part.toString("utf8");
     });
   }
   child.stdin.end(input);
@@ -342,15 +462,21 @@ async function restoreProcess(executable, args, { home, role, env, input, signal
       { cleanupFailure: "analytics-qualification-evidence" },
     );
   }
+  const failed = (error) =>
+    Object.defineProperty(error, "analyticsRestoreFailure", {
+      value: { role, ...analyticsRestoreDiagnostic(bytes > 16384 ? "" : diagnostics) },
+    });
   if (!treeJoined)
-    throw Object.assign(
-      new Error("Analytics qualification process ownership remains unconfirmed", {
-        cause: failure,
-      }),
-      { cleanupFailure: "analytics-qualification-client" },
+    throw failed(
+      Object.assign(
+        new Error("Analytics qualification process ownership remains unconfirmed", {
+          cause: failure,
+        }),
+        { cleanupFailure: "analytics-qualification-client" },
+      ),
     );
   if (failure || forced || code !== 0)
-    throw new Error("Analytics restore qualification process failed");
+    throw failed(new Error("Analytics restore qualification process failed"));
   return output;
 }
 

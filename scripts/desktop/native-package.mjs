@@ -11,6 +11,7 @@ import { acquireNodeArchive, extractNodeArchive, NODE_RUNTIME } from "./node-run
 import { parseArguments } from "./arguments.mjs";
 import { qualifyNativeCompositionServices } from "./native-composition-smoke.mjs";
 import { isEntryScript } from "../lib/is-entry-script.mjs";
+import { projectAnalyticsRestoreFailure } from "./qualify-analytics.mjs";
 
 /** Deliberately excludes host configuration, signing inputs, Git and installed dependencies. */
 export const PACKAGE_INPUTS = [
@@ -174,7 +175,7 @@ async function runtimeManifest(runtime) {
 }
 
 /** Only this exact attempt's private artifact is a writable export destination. */
-export async function validateAnalyticsReceiptDestination(runtime, destination) {
+async function validateAnalyticsDestination(runtime, destination, leaf) {
   const output = dirname(runtime),
     scratch = dirname(output),
     attempt = basename(output);
@@ -182,7 +183,7 @@ export async function validateAnalyticsReceiptDestination(runtime, destination) 
     runtime !== resolve(runtime) ||
     basename(runtime) !== "runtime" ||
     !/^package-[0-9]+-[0-9]+$/u.test(attempt) ||
-    destination !== join(scratch, "evidence", attempt, "analytics-restore.json")
+    destination !== join(scratch, "evidence", attempt, leaf)
   )
     throw new Error("Analytics receipt destination refused");
   await requirePackageScratch(scratch);
@@ -195,6 +196,71 @@ export async function validateAnalyticsReceiptDestination(runtime, destination) 
     throw error;
   }
   throw new Error("Analytics receipt destination already exists");
+}
+
+export async function validateAnalyticsReceiptDestination(runtime, destination) {
+  return validateAnalyticsDestination(runtime, destination, "analytics-restore.json");
+}
+
+/** Failure facts are distinct evidence and can never satisfy the success reader. */
+export async function preserveAnalyticsRestoreFailure({
+  runtime,
+  home,
+  destination,
+  manifestSha256,
+  failure,
+}) {
+  if (basename(destination) !== "analytics-restore.json")
+    throw new Error("Analytics failure destination refused");
+  const path = join(dirname(destination), "analytics-restore-failure.json");
+  await validateAnalyticsDestination(runtime, path, "analytics-restore-failure.json");
+  await requirePrivateDirectory(home);
+  async function processReceipt(role) {
+    let bytes;
+    try {
+      bytes = await ownedReceiptBytes(join(home, `analytics-restore-${role}-process.json`));
+    } catch (error) {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    }
+    const value = parseReceipt(bytes);
+    if (
+      !exactKeys(value, processReceiptKeys) ||
+      value.format !== 1 ||
+      value.role !== role ||
+      value.rootClosed !== true ||
+      typeof value.treeJoined !== "boolean" ||
+      typeof value.forced !== "boolean" ||
+      !(
+        value.code === null ||
+        (Number.isInteger(value.code) && value.code >= 0 && value.code <= 255)
+      )
+    )
+      throw new Error("Analytics failure process facts refused");
+    return value;
+  }
+  const source = await processReceipt("source"),
+    target = await processReceipt("target");
+  const role = target ? "target" : source ? "source" : "unavailable";
+  let diagnostic = projectAnalyticsRestoreFailure(failure?.analyticsRestoreFailure);
+  if (diagnostic.role !== role) diagnostic = projectAnalyticsRestoreFailure(null);
+  const manifest = await runtimeManifest(runtime);
+  if (manifest.sha256 !== manifestSha256) throw new Error("Analytics failure manifest changed");
+  const receipt = {
+    format: 1,
+    scope: "compiled-analytics-restore-failure",
+    runtimeManifestSha256: manifest.sha256,
+    architecture: manifest.architecture,
+    role,
+    stage: diagnostic.stage,
+    errorClass: diagnostic.errorClass,
+    errorCode: diagnostic.errorCode,
+    source,
+    target,
+  };
+  await writeFile(path, JSON.stringify(receipt) + "\n", { flag: "wx", mode: 0o600 });
+  if (JSON.stringify(parseReceipt(await ownedReceiptBytes(path))) !== JSON.stringify(receipt))
+    throw new Error("Analytics failure evidence changed");
 }
 
 /** Export fixed facts only after both real clients and their compiled proof succeeded. */
@@ -260,6 +326,12 @@ export async function preserveAnalyticsRestoreReceipt({
 
 export async function readAnalyticsRestoreReceipt({ artifact, runtime }) {
   await requirePrivateDirectory(artifact);
+  try {
+    await lstat(join(artifact, "analytics-restore-failure.json"));
+    throw new Error("Failed analytics qualification cannot be accepted as success");
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
   const receipt = parseReceipt(await ownedReceiptBytes(join(artifact, "analytics-restore.json")));
   const manifest = await runtimeManifest(runtime);
   if (
