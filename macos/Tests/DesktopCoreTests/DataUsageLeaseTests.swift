@@ -43,14 +43,14 @@ final class DataUsageLeaseTests: XCTestCase {
         }
     }
 
+    static func observesExclusiveOperation(_ name: String) -> Bool {
+        DesktopCoreLifecycleMetadata.normalize(name) ==
+            "DataUsageLeaseTests.testExclusiveDescriptorSurvivesOperationParentKillThroughWorkerMapping"
+    }
+
     private func prepareExclusiveOperationJournal() {
-        switch name {
-        case "DataUsageLeaseTests.testExclusiveDescriptorSurvivesOperationParentKillThroughWorkerMapping",
-             "DesktopCoreTests.DataUsageLeaseTests.testExclusiveDescriptorSurvivesOperationParentKillThroughWorkerMapping",
-             "-[DesktopCoreTests.DataUsageLeaseTests testExclusiveDescriptorSurvivesOperationParentKillThroughWorkerMapping]":
-            exclusiveObservationSelected = true
-        default: return
-        }
+        guard Self.observesExclusiveOperation(name) else { return }
+        exclusiveObservationSelected = true
         do {
             var checkout = URL(fileURLWithPath: #filePath)
             for _ in 0 ..< 4 {

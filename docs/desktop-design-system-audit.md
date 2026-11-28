@@ -236,7 +236,11 @@ unresolved, so this is not a passing native job or complete design acceptance.
 Draft action callbacks now bind their observed context and request before
 changing the chat or consuming a queued action. Eight non-window cases use the
 actual production handler and real Store/Router/Chat APIs, with refused HTTP and
-runtime startup disabled. Native compilation and execution remain pending.
+runtime startup disabled. The old-behavior control executed all eight cases:
+five stale-callback cases failed with 23 assertions while three valid cases
+passed. The fixed snapshot passed all eight, with zero failures or skips
+(510.1s queue wait / 297.6s run; test suite 0.248s). These are non-window state
+results, including execution under a reported screen shield.
 This addresses stale observed identities; it does not establish the cause of
 the mounted retired-question mismatch or an outgoing view's lifetime ownership.
 

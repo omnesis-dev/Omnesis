@@ -260,3 +260,50 @@ final class DesktopCoreLifecycleJournalTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: home.path))
     }
 }
+
+/// Inspect XCTest's discovered names without invoking Data setup or any method.
+final class DesktopExclusiveOperationSelectionTests: XCTestCase {
+    private let selected = "DataUsageLeaseTests.testExclusiveDescriptorSurvivesOperationParentKillThroughWorkerMapping"
+
+    func testEveryCanonicalSpellingIsSelectedButUnrelatedOrMalformedNamesAreNot() {
+        let method = "testExclusiveDescriptorSurvivesOperationParentKillThroughWorkerMapping"
+        for name in [
+            "DataUsageLeaseTests." + method,
+            "DesktopCoreTests.DataUsageLeaseTests." + method,
+            "-[DesktopCoreTests.DataUsageLeaseTests " + method + "]",
+            "-[DataUsageLeaseTests " + method + "]",
+        ] {
+            XCTAssertEqual(DesktopCoreLifecycleMetadata.normalize(name), selected)
+            XCTAssertTrue(DataUsageLeaseTests.observesExclusiveOperation(name))
+            XCTAssertFalse(DataUsageLeaseTests.observesExclusiveOperation("prefix" + name))
+            XCTAssertFalse(DataUsageLeaseTests.observesExclusiveOperation(name + "suffix"))
+            XCTAssertFalse(DataUsageLeaseTests.observesExclusiveOperation(name + "\n"))
+        }
+        for name in [
+            "OtherModule.DataUsageLeaseTests." + method,
+            "-[OtherModule.DataUsageLeaseTests " + method + "]",
+            "DataUsageLeaseTests.testAnUnrelatedInventedCase",
+            "OtherTests." + method,
+            String(repeating: "x", count: 321),
+        ] {
+            XCTAssertFalse(DataUsageLeaseTests.observesExclusiveOperation(name))
+        }
+    }
+
+    func testNativeDiscoveredDataCaseNamesIncludeExactlyOneSelectedOperation() throws {
+        let discovered = DataUsageLeaseTests.defaultTestSuite.tests
+        XCTAssertFalse(discovered.isEmpty, "Native Data discovery must expose its cases")
+        var expectedMatches = 0, actualMatches = 0
+        for test in discovered {
+            let instance = try XCTUnwrap(test as? DataUsageLeaseTests, "Native discovery must return the exact Data test class")
+            // No raw name is printed or fabricated with init(selector:).
+            let expected = DesktopCoreLifecycleMetadata.normalize(instance.name) == selected
+            let actual = DataUsageLeaseTests.observesExclusiveOperation(instance.name)
+            XCTAssertEqual(actual, expected, "The actual setup selector must agree with the canonical native name")
+            if expected { expectedMatches += 1 }
+            if actual { actualMatches += 1 }
+        }
+        XCTAssertEqual(expectedMatches, 1, "Native discovery must canonically identify exactly one selected operation")
+        XCTAssertEqual(actualMatches, 1, "The actual setup selector must admit that discovered operation")
+    }
+}
