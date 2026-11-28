@@ -31,7 +31,7 @@ import { createNativeDependencyFilter } from "./native-dependency-assets.mjs";
 import { stageCodexNotices } from "./codex-notices.mjs";
 import { buildDesktopAnalytics } from "./build-analytics.mjs";
 import { stageDesktopAnalytics } from "./stage-analytics.mjs";
-import { qualifyDesktopAnalytics } from "./qualify-analytics.mjs";
+import { smokeRuntime } from "./smoke-runtime.mjs";
 import { writeDesktopUpdateMetadata } from "./update-metadata.mjs";
 import { parseArguments } from "./arguments.mjs";
 
@@ -57,6 +57,7 @@ export async function prepareRuntime({
   const scratch = `${target}.preparing-${process.pid}`;
   mkdirSync(scratch);
   let ownsTarget = false;
+  let retain = false;
   try {
     const archive = await acquireNodeArchive(architecture, cache);
     const distribution = await extractNodeArchive(
@@ -148,7 +149,6 @@ export async function prepareRuntime({
       cache: cache ? join(resolve(cache), "analytics") : undefined,
     });
     await stageDesktopAnalytics({ target, architecture, build: analytics });
-    qualifyDesktopAnalytics({ input, target, node, architecture, scratch, env });
     cpSync(runtimeExec, join(target, "runtime-exec"));
     chmodSync(join(target, "runtime-exec"), 0o755);
     copyNodeTools(distribution, target);
@@ -174,13 +174,16 @@ export async function prepareRuntime({
         2,
       )}\n`,
     );
+    // Native restore requires the sealed inventory and real runtime-exec/data-use owner.
+    await smokeRuntime(target, { analyticsRestore: { input, upstreamNode: node, architecture } });
     return target;
   } catch (error) {
     // target is exclusively created by stageRuntime during this invocation.
-    if (ownsTarget) rmSync(target, { recursive: true, force: true });
+    retain = error?.cleanupFailure !== undefined;
+    if (ownsTarget && !retain) rmSync(target, { recursive: true, force: true });
     throw error;
   } finally {
-    rmSync(scratch, { recursive: true, force: true });
+    if (!retain) rmSync(scratch, { recursive: true, force: true });
   }
 }
 

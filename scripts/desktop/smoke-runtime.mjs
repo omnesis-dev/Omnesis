@@ -8,9 +8,10 @@ import { chmod, cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "no
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { parseArguments } from "./arguments.mjs";
-import { inventoryBundle } from "./native-inventory.mjs";
 import { isEntryScript } from "../lib/is-entry-script.mjs";
+import { parseArguments } from "./arguments.mjs";
+import { qualifyDesktopAnalytics, qualifyDesktopAnalyticsRestore } from "./qualify-analytics.mjs";
+import { inventoryBundle } from "./native-inventory.mjs";
 
 const execute = promisify(execFile);
 
@@ -32,7 +33,7 @@ export function smokeRuntimeEnvironment(runtime, home) {
 }
 
 /** Exercise the actual compiled closure with no host Node/npm or personal state. */
-async function smokeRuntime(sourceRuntime) {
+export async function smokeRuntime(sourceRuntime, { analyticsRestore } = {}) {
   const manifestBytes = await readFile(join(sourceRuntime, "desktop-runtime.json"));
   const manifest = JSON.parse(manifestBytes.toString("utf8"));
   if (
@@ -57,17 +58,21 @@ async function smokeRuntime(sourceRuntime) {
   const env = smokeRuntimeEnvironment(runtime, home);
   const node = join(runtime, "runtime-exec");
   const script = join(runtime, "packages/cli/dist/index.js");
+  let retain = false,
+    operationFailure;
   try {
     await mkdir(cache, { mode: 0o700 });
     await cp(sourceRuntime, runtime, { recursive: true, verbatimSymlinks: true });
     await chmod(runtime, 0o700);
-    const version = await execute(node, ["--node", script, "--version"], {
-      cwd: runtime,
-      env,
-      timeout: 30_000,
-    });
-    if (!version.stdout.includes(manifest.productVersion))
-      throw new Error("Compiled CLI version mismatch");
+    if (!analyticsRestore) {
+      const version = await execute(node, ["--node", script, "--version"], {
+        cwd: runtime,
+        env,
+        timeout: 30_000,
+      });
+      if (!version.stdout.includes(manifest.productVersion))
+        throw new Error("Compiled CLI version mismatch");
+    }
     // The database probe is a real data consumer, distinct from the unconfigured
     // welcome bridge below. Give it an owned fixture installation and native SH.
     const configDir = join(home, "database-fixture");
@@ -91,17 +96,38 @@ async function smokeRuntime(sourceRuntime) {
       }),
       { flag: "wx", mode: 0o600 },
     );
-    // Instantiate both SQLite builds and DuckDB, rather than merely dlopen their
-    // modules. In-memory databases cannot contain or modify an existing library.
-    await execute(
-      node,
-      [
-        "--data-use",
-        Buffer.from(JSON.stringify(scope)).toString("base64url"),
-        "--node",
-        "--input-type=module",
-        "--eval",
-        `
+    if (analyticsRestore) {
+      if (analyticsRestore.architecture !== manifest.architecture)
+        throw new Error("Analytics qualification architecture mismatch");
+      const upstream = qualifyDesktopAnalytics({
+        input: analyticsRestore.input,
+        target: runtime,
+        node: analyticsRestore.upstreamNode,
+        architecture: manifest.architecture,
+        scratch: home,
+        env,
+      });
+      await qualifyDesktopAnalyticsRestore({
+        input: analyticsRestore.input,
+        upstreamNode: analyticsRestore.upstreamNode,
+        runtime,
+        home,
+        scope,
+        env,
+        upstream,
+      });
+    } else {
+      // Instantiate both SQLite builds and DuckDB, rather than merely dlopen their
+      // modules. In-memory databases cannot contain or modify an existing library.
+      await execute(
+        node,
+        [
+          "--data-use",
+          Buffer.from(JSON.stringify(scope)).toString("base64url"),
+          "--node",
+          "--input-type=module",
+          "--eval",
+          `
       import Database from 'better-sqlite3';
       import EncryptedDatabase from 'better-sqlite3-multiple-ciphers';
       import { DuckDBInstance } from '@duckdb/node-api';
@@ -134,66 +160,84 @@ async function smokeRuntime(sourceRuntime) {
       connection.closeSync();
       instance.closeSync();
     `,
-      ],
-      { cwd: join(runtime, "packages/gateway"), env, timeout: 30_000 },
-    );
-    await new Promise((resolveSmoke, rejectSmoke) => {
-      const child = spawn(node, ["--node", script, "desktop", "bridge"], {
-        cwd: runtime,
-        env,
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-      let failure;
-      let termination;
-      const stop = (message) => {
-        if (failure) return;
-        failure = new Error(message);
-        child.kill("SIGTERM");
-        termination = setTimeout(() => child.kill("SIGKILL"), 5000);
-      };
-      const timeout = setTimeout(() => stop("Bundled desktop bridge did not answer"), 30_000);
-      let stdout = "";
-      child.stdout.on("data", (chunk) => {
-        stdout += chunk;
-        if (stdout.length > 65_536) {
-          stop("Unexpected desktop bridge output");
-          return;
-        }
-        if (stdout.includes("\n")) child.stdin.end();
-      });
-      // Drain diagnostic output without putting credentials or local paths in CI logs.
-      child.stderr.resume();
-      child.on("error", (error) => {
-        clearTimeout(timeout);
-        clearTimeout(termination);
-        rejectSmoke(error);
-      });
-      child.on("close", (code) => {
-        clearTimeout(timeout);
-        clearTimeout(termination);
-        if (failure) return rejectSmoke(failure);
-        try {
-          const reply = JSON.parse(stdout.trim());
-          const answered =
-            code === 0 &&
-            reply.version === 1 &&
-            reply.id === "bundle-status" &&
-            reply.ok === true &&
-            reply.result?.phase === "welcome";
-          if (!answered) throw new Error("Bundled desktop bridge failed its first-run contract");
-          resolveSmoke();
-        } catch {
-          rejectSmoke(new Error("Bundled desktop bridge failed its first-run contract"));
-        }
-      });
-      child.stdin.on("error", () => {});
-      child.stdin.write(
-        JSON.stringify({ version: 1, id: "bundle-status", command: "status" }) + "\n",
+        ],
+        { cwd: join(runtime, "packages/gateway"), env, timeout: 30_000 },
       );
-    });
-  } finally {
-    await rm(home, { recursive: true, force: true });
+      await new Promise((resolveSmoke, rejectSmoke) => {
+        const child = spawn(node, ["--node", script, "desktop", "bridge"], {
+          cwd: runtime,
+          env,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+        let failure;
+        let termination;
+        const stop = (message) => {
+          if (failure) return;
+          failure = new Error(message);
+          child.kill("SIGTERM");
+          termination = setTimeout(() => child.kill("SIGKILL"), 5000);
+        };
+        const timeout = setTimeout(() => stop("Bundled desktop bridge did not answer"), 30_000);
+        let stdout = "";
+        child.stdout.on("data", (chunk) => {
+          stdout += chunk;
+          if (stdout.length > 65_536) {
+            stop("Unexpected desktop bridge output");
+            return;
+          }
+          if (stdout.includes("\n")) child.stdin.end();
+        });
+        // Drain diagnostic output without putting credentials or local paths in CI logs.
+        child.stderr.resume();
+        child.on("error", (error) => {
+          clearTimeout(timeout);
+          clearTimeout(termination);
+          rejectSmoke(error);
+        });
+        child.on("close", (code) => {
+          clearTimeout(timeout);
+          clearTimeout(termination);
+          if (failure) return rejectSmoke(failure);
+          try {
+            const reply = JSON.parse(stdout.trim());
+            const answered =
+              code === 0 &&
+              reply.version === 1 &&
+              reply.id === "bundle-status" &&
+              reply.ok === true &&
+              reply.result?.phase === "welcome";
+            if (!answered) throw new Error("Bundled desktop bridge failed its first-run contract");
+            resolveSmoke();
+          } catch {
+            rejectSmoke(new Error("Bundled desktop bridge failed its first-run contract"));
+          }
+        });
+        child.stdin.on("error", () => {});
+        child.stdin.write(
+          JSON.stringify({ version: 1, id: "bundle-status", command: "status" }) + "\n",
+        );
+      });
+    }
+  } catch (error) {
+    operationFailure = error;
+    retain = error?.cleanupFailure !== undefined;
   }
+  let cleanupFailure;
+  if (!retain) {
+    try {
+      await rm(home, { recursive: true, force: true });
+    } catch (error) {
+      cleanupFailure = Object.assign(
+        new AggregateError(
+          [...(operationFailure ? [operationFailure] : []), error],
+          "Runtime qualification home cleanup remains unconfirmed",
+        ),
+        { cleanupFailure: "runtime-qualification-home" },
+      );
+    }
+  }
+  if (cleanupFailure) throw cleanupFailure;
+  if (operationFailure) throw operationFailure;
 }
 
 if (isEntryScript(import.meta.url)) {
