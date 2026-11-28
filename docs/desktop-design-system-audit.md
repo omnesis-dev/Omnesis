@@ -176,6 +176,13 @@ repair action. Source settings binds Escape to its existing Done action while
 retaining the busy guard. Mounted semantic and callback regressions await native
 execution. Physical Escape and VoiceOver behavior remain unverified.
 
+The automatic recovery-copy confirmation now bounds its variable details in a
+scrolling area while retaining compact short content. The heading, explicit
+consent and original actions stay outside that area. New actual-window fixtures
+exercise compact and long valid previews, the native scroll extent, reachable
+footer controls and consent without removal. Native execution and attached-sheet
+inspection are pending; other recovery and runtime dialogs remain in the matrix.
+
 ### Source follow-ups and earlier local evidence
 
 A further inspection of the retained Light/Dark native test artifacts identified

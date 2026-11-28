@@ -194,9 +194,41 @@ struct DesktopRecoveryCopyConfirmation: View {
     @Bindable var flow: DesktopRecoveryCopiesFlow
     let preview: DesktopRecoveryCleanupPreview
     @State private var understood = false
+    @State private var detailsHeight: CGFloat = 0
+    private static let maximumDetailsHeight: CGFloat = 320
     var body: some View {
         VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.regular) {
             Text("Remove this automatic recovery copy?").font(DesktopDesignTokens.Typography.pageTitle).accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("recovery-copy-confirmation-title")
+            ScrollView {
+                details.frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                    .background(GeometryReader { geometry in
+                        Color.clear.preference(key: RecoveryCopyDetailsHeight.self, value: geometry.size.height)
+                    })
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            // Leave room for the heading, consent and actions in a small window.
+            .frame(height: detailsHeight > 0 ? min(detailsHeight, Self.maximumDetailsHeight) : Self.maximumDetailsHeight)
+            .onPreferenceChange(RecoveryCopyDetailsHeight.self) { height in
+                if height.isFinite, height > 0 { detailsHeight = height }
+            }
+            .accessibilityIdentifier("recovery-copy-confirmation-details")
+            Toggle("I understand this removes the selected automatic copy", isOn: $understood)
+                .accessibilityIdentifier("confirm-recovery-copy-understood")
+            HStack {
+                Spacer()
+                Button("Keep copy", role: .cancel) { flow.dismissReview() }.buttonStyle(DesktopButtonStyle())
+                    .keyboardShortcut(.cancelAction).accessibilityIdentifier("keep-recovery-copy")
+                Button("Remove copy", role: .destructive) { Task { await flow.removeReviewed(confirmationId: preview.confirmationId) } }
+                    .buttonStyle(DesktopButtonStyle(primary: true)).disabled(!understood || !preview.valid || flow.busy)
+                    .accessibilityIdentifier("confirm-remove-recovery-copy")
+            }
+        }.padding(DesktopDesignTokens.Space.section).frame(width: 620).fixedSize(horizontal: false, vertical: true)
+            .interactiveDismissDisabled(flow.busy)
+    }
+
+    private var details: some View {
+        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.regular) {
             Text(preview.selected?.label ?? "The selected unfinished automatic recovery copy")
                 .font(DesktopDesignTokens.Typography.body.weight(.medium))
             LabeledContent(
@@ -215,17 +247,14 @@ struct DesktopRecoveryCopyConfirmation: View {
                 .foregroundStyle(DesktopTheme.secondary)
             }
             Text(preview.message).foregroundStyle(DesktopTheme.secondary)
-            Toggle("I understand this removes the selected automatic copy", isOn: $understood)
-                .accessibilityIdentifier("confirm-recovery-copy-understood")
-            HStack {
-                Spacer()
-                Button("Keep copy", role: .cancel) { flow.dismissReview() }.buttonStyle(DesktopButtonStyle())
-                    .keyboardShortcut(.cancelAction)
-                Button("Remove copy", role: .destructive) { Task { await flow.removeReviewed(confirmationId: preview.confirmationId) } }
-                    .buttonStyle(DesktopButtonStyle(primary: true)).disabled(!understood || !preview.valid || flow.busy)
-                    .accessibilityIdentifier("confirm-remove-recovery-copy")
-            }
-        }.padding(DesktopDesignTokens.Space.section).frame(width: 620).fixedSize(horizontal: false, vertical: true)
-            .interactiveDismissDisabled(flow.busy)
+                .accessibilityIdentifier("recovery-copy-confirmation-explanation")
+        }
+    }
+}
+
+private struct RecoveryCopyDetailsHeight: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }

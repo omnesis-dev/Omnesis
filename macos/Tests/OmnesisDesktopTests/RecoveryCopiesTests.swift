@@ -103,4 +103,134 @@ final class RecoveryCopiesTests: XCTestCase {
             XCTAssertFalse(try DesktopAccessibilityDriver.contains("Delete", in: view))
         }
     }
+
+    func testRecoveryCopyConfirmationKeepsLongDetailsScrollableAndConsentAndActionsReachableInBothAppearances() async throws {
+        let longMessage = String(
+            repeating: "This fictional recovery copy contains the earlier project index. Personal backups and original source files stay kept. ",
+            count: 15
+        )
+        for (name, message, overflows) in [
+            ("compact", "Personal backups and original files stay kept.", false),
+            ("long", longMessage, true),
+        ] {
+            let data = try JSONSerialization.data(withJSONObject: [
+                "kind": "desktopRecoveryCleanup", "phase": "preview", "id": id,
+                "confirmationId": String(repeating: "a", count: 64), "bytes": 1024,
+                "mode": "redundant-snapshot", "message": message,
+                "selected": [
+                    "id": id,
+                    "purpose": "update",
+                    "oldVersion": "1.2.3",
+                    "registeredAt": "2030-01-01T12:00:00.000Z",
+                    "bytes": 1024,
+                    "order": 1,
+                ],
+                "keeper": [
+                    "id": "22222222-2222-4222-8222-222222222222",
+                    "purpose": "restore",
+                    "oldVersion": "1.2.4",
+                    "registeredAt": "2030-01-02T12:00:00.000Z",
+                    "bytes": 2048,
+                    "order": 2,
+                ],
+            ])
+            let preview = try JSONDecoder().decode(DesktopRecoveryCleanupPreview.self, from: data)
+            XCTAssertTrue(preview.valid, "The long fixture must remain inside the real preview contract")
+            var commands = [String](), appearances = 0
+            let flow = DesktopRecoveryCopiesFlow(preview: preview) { command, _ in
+                commands.append(command)
+                XCTFail("Measuring, scrolling and keeping a copy must not request removal")
+                return .null
+            }
+            try await DesktopSnapshotRenderer.renderVisibleWindow(
+                DesktopRecoveryCopyConfirmation(flow: flow, preview: preview),
+                name: "recovery-copy-confirmation-\(name)", size: CGSize(width: 620, height: 560)
+            ) { hosting in
+                func descendants(_ view: NSView) -> [NSView] {
+                    [view] + view.subviews.flatMap(descendants)
+                }
+                let scrolls = descendants(hosting).compactMap { $0 as? NSScrollView }
+                XCTAssertEqual(scrolls.count, 1, "Only the variable confirmation details need a scroll viewport")
+                let scroll = try XCTUnwrap(scrolls.first)
+                let deadline = ContinuousClock.now + .seconds(3)
+                while scroll.contentView.bounds.height <= 0 || scroll.documentView == nil, ContinuousClock.now < deadline {
+                    try await Task.sleep(for: .milliseconds(25))
+                }
+                let document = try XCTUnwrap(scroll.documentView)
+                XCTAssertGreaterThan(scroll.contentView.bounds.height, 0)
+                XCTAssertLessThanOrEqual(scroll.contentView.bounds.height, 320)
+                if overflows {
+                    XCTAssertGreaterThan(document.bounds.height, scroll.contentView.bounds.height + 44)
+                } else {
+                    XCTAssertLessThanOrEqual(document.bounds.height, scroll.contentView.bounds.height + 1)
+                    XCTAssertLessThan(scroll.contentView.bounds.height, 320, "Ordinary details must retain their natural compact height")
+                }
+                let explanation = try DesktopAccessibilityDriver.element("recovery-copy-confirmation-explanation", in: hosting)
+                XCTAssertEqual(explanation.accessibilityTextValue() ?? explanation.accessibilityLabel(), message)
+                let title = try DesktopAccessibilityDriver.element("recovery-copy-confirmation-title", in: hosting)
+                let consent = try DesktopAccessibilityDriver.element("confirm-recovery-copy-understood", in: hosting)
+                let keep = try DesktopAccessibilityDriver.element("keep-recovery-copy", in: hosting)
+                let remove = try DesktopAccessibilityDriver.element("confirm-remove-recovery-copy", in: hosting)
+                let window = try XCTUnwrap(hosting.window)
+                let frames = [title, consent, keep, remove].map { $0.accessibilityFrame() }
+                let viewport = window.convertToScreen(hosting.convert(hosting.bounds, to: nil))
+                for frame in frames {
+                    XCTAssertGreaterThan(frame.width, 0)
+                    XCTAssertGreaterThan(frame.height, 0)
+                    XCTAssertTrue(viewport.contains(frame), "Title, consent and footer actions must remain in the actual small viewport")
+                }
+                XCTAssertTrue(keep.isAccessibilityEnabled())
+                XCTAssertFalse(remove.isAccessibilityEnabled(), "Scrolling does not imply consent")
+                let original = scroll.contentView.bounds.origin
+                if overflows {
+                    let end = document.isFlipped ? document.bounds.maxY - scroll.contentView.bounds.height : document.bounds.minY
+                    scroll.contentView.scroll(to: NSPoint(x: original.x, y: end))
+                    scroll.reflectScrolledClipView(scroll.contentView)
+                    try await Task.sleep(for: .milliseconds(100))
+                    XCTAssertNotEqual(scroll.contentView.bounds.origin.y, original.y)
+                    let distance = document.isFlipped
+                        ? document.bounds.maxY - scroll.contentView.bounds.maxY
+                        : scroll.contentView.bounds.minY - document.bounds.minY
+                    XCTAssertEqual(
+                        distance,
+                        0,
+                        accuracy: 1 / window.backingScaleFactor,
+                        "The actual end of the complete message must be scrollable into view"
+                    )
+                    XCTAssertEqual(
+                        [title, consent, keep, remove].map { $0.accessibilityFrame() },
+                        frames,
+                        "Scrolling details must not move the fixed consent or footer"
+                    )
+                    scroll.contentView.scroll(to: original)
+                    scroll.reflectScrolledClipView(scroll.contentView)
+                }
+                XCTAssertTrue(consent.accessibilityPerformPress())
+                let consentDeadline = ContinuousClock.now + .seconds(3)
+                while !remove.isAccessibilityEnabled(), ContinuousClock.now < consentDeadline {
+                    try await Task.sleep(for: .milliseconds(25))
+                }
+                XCTAssertTrue(
+                    remove.isAccessibilityEnabled(),
+                    "Only the unchanged explicit consent enables removal for a valid idle preview"
+                )
+                XCTAssertTrue(commands.isEmpty, "Consent alone must not remove a copy")
+                XCTAssertTrue(consent.accessibilityPerformPress())
+                let clearDeadline = ContinuousClock.now + .seconds(3)
+                while remove.isAccessibilityEnabled(), ContinuousClock.now < clearDeadline {
+                    try await Task.sleep(for: .milliseconds(25))
+                }
+                XCTAssertFalse(remove.isAccessibilityEnabled())
+                XCTAssertTrue(commands.isEmpty)
+                XCTAssertEqual(flow.preview?.confirmationId, preview.confirmationId)
+                if appearances == 1 {
+                    XCTAssertTrue(keep.accessibilityPerformPress())
+                    XCTAssertNil(flow.preview, "The existing Keep action must still dismiss review without removal")
+                }
+                appearances += 1
+            }
+            XCTAssertEqual(appearances, 2)
+            XCTAssertTrue(commands.isEmpty)
+        }
+    }
 }
