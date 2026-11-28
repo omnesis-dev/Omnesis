@@ -41,6 +41,12 @@ dismissed prompt cannot answer, cancel or open a link for the current native
 prompt. Cancellation of a matching prompt retains the existing whole-operation
 abort behavior; this does not change the runtime protocol.
 
+Native draft callbacks carry their observed API context and pending request ID.
+They require the captured context to remain current and the same request to
+remain pending before changing the chat or consuming that request. A callback
+for an older observation cannot adopt a replacement library or draft. A request
+without a current library remains pending; preparing a local draft never sends it.
+
 Presentation and lifecycle authority have separate responsibilities:
 
 | Owner                    | Responsibilities                                                                                                                             |

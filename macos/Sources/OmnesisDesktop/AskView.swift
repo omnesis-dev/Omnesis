@@ -7,6 +7,28 @@ import SwiftUI
 struct DesktopDraftObservation: Equatable {
     let context: ObjectIdentifier?
     let request: UUID?
+
+    /// One observed callback may act only for its captured context and request.
+    @MainActor @discardableResult
+    func apply(
+        to chat: DesktopChat,
+        context: DesktopAPIContext?,
+        currentContext: DesktopAPIContext?,
+        router: DesktopActionRouter,
+        didPrepare: () -> Void
+    )
+        -> Bool {
+        guard self.context == context.map(ObjectIdentifier.init), context === currentContext,
+              request == router.pending?.id else { return false }
+        guard let context, context.isCurrent else { chat.detach()
+            return false
+        }
+        chat.attach(context.api, context: context)
+        guard let pending = router.pending else { return false }
+        chat.prepareLocalDraft(question: pending.question)
+        didPrepare()
+        return router.consume(pending)
+    }
 }
 
 struct DesktopModelObservation: Equatable {
@@ -335,17 +357,12 @@ struct DesktopAskView: View {
                 }
                 .onChange(of: DesktopDraftObservation(
                     context: context.map(ObjectIdentifier.init), request: DesktopActionRouter.shared.pending?.id
-                ), initial: true) {
-                    guard let context = store.apiContext, context.isCurrent else { chat.detach()
-                        return
+                ), initial: true) { _, observation in
+                    observation.apply(to: chat, context: context, currentContext: store.apiContext, router: .shared) {
+                        chosenConversation = nil
+                        showSources = false
+                        composerFocused = layout.showsReading
                     }
-                    chat.attach(context.api, context: context)
-                    guard let request = DesktopActionRouter.shared.pending else { return }
-                    chat.prepareLocalDraft(question: request.question)
-                    chosenConversation = nil
-                    showSources = false
-                    composerFocused = layout.showsReading
-                    DesktopActionRouter.shared.consume(request)
                 }
                 .onDisappear {
                     historyTask?.cancel()

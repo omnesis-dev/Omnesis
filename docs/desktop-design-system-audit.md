@@ -233,6 +233,13 @@ with the original assertions and privacy regressions preserved; execution of
 that correction is pending. Intent and external accessibility failures remain
 unresolved, so this is not a passing native job or complete design acceptance.
 
+Draft action callbacks now bind their observed context and request before
+changing the chat or consuming a queued action. Eight non-window cases use the
+actual production handler and real Store/Router/Chat APIs, with refused HTTP and
+runtime startup disabled. Native compilation and execution remain pending.
+This addresses stale observed identities; it does not establish the cause of
+the mounted retired-question mismatch or an outgoing view's lifetime ownership.
+
 ### Source follow-ups and earlier local evidence
 
 A further inspection of the retained Light/Dark native test artifacts identified
