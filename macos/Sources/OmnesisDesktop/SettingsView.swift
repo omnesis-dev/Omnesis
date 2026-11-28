@@ -45,7 +45,7 @@ struct DesktopSettingsView: View {
                     ForEach(prerequisiteOrder.isEmpty ? currentPrerequisiteOrder : prerequisiteOrder, id: \.self) { section in
                         prerequisite(section)
                     }
-                    Section("Appearance") {
+                    Section {
                         DesktopAppearancePicker()
                     }
                     Section("Your library") {

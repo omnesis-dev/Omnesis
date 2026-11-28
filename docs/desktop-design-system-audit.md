@@ -24,45 +24,45 @@ The rows below distinguish partial component evidence from final acceptance. Upd
 individual rows with exact source, test result and inspected artifact evidence;
 do not mark the ledger complete from a passing subset.
 
-| Area                                           | Required evidence                                                      | Useful existing fixture families                                               | Current verification                                                                    |
-| ---------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
-| 1. Objective                                   | Whole native redesign preserving behavior                              | DesktopTheme; DesktopRenderTests                                               | Implemented; partial component evidence; acceptance open                                |
-| 2. Overall design philosophy                   | Quiet native productivity aesthetic                                    | Native NavigationSplitView/Form/Settings/NSMenu                                | Light/Dark components inspected; native shell open                                      |
-| 3. Scope and implementation constraints        | Inspect/reuse architecture; presentation-only changes                  | Native view and AppKit adapter inventory with shared adaptive foundations      | Source reviewed; full behavioral gate open                                              |
-| 4. Color philosophy                            | Neutral semantic palettes; System default, Light/Dark live updates     | DesktopAppearance, adaptive DesktopTheme and owned-window adapter              | Adaptive palettes and live System transition tests passed; native capture open          |
-| 5. Surface hierarchy and visual depth          | Four restrained surface levels                                         | DesktopCardStyle/DesktopGroupBoxStyle                                          | Component hierarchy inspected; native materials open                                    |
-| 6. Native macOS window integration             | Native chrome/toolbars/materials and native controls                   | DesktopOwnedWindowChrome; minimum-library/settings; hosted sources/resize      | Native geometry exercised; window captures failed                                       |
-| 7. Sidebar design                              | Compact integrated sidebar/neutral selection/modest brand              | DesktopRootView.libraryNavigation; ready-sidebar                               | Source and row presence checked; native painting/selection open                         |
-| 8. Main content layout                         | Content-specific widths and responsive margins                         | Shared reading/form width tokens; onboarding and native settings layouts       | Empty Ask composition passed; full layout matrix open                                   |
-| 9. Typography system                           | System semantic typography, restrained weights, readable metadata      | System fonts throughout; literal-font inventory                                | Terms wrap and three-state heading regression passed; full type matrix open             |
-| 10. Spacing system                             | 4pt spacing + meaningful grouping and density                          | VStack/HStack/Form existing primitives                                         | Representative component spacing inspected; remaining states open                       |
-| 11. Corner radius system                       | Small consistent radii; native shapes                                  | DesktopButtonStyle, grouped sections and shared Radius tokens                  | Component radii inspected; native window and 2× open                                    |
-| 12. Borders, separators and shadows            | Subtle borders/separators/shadows, sharp1x/2x                          | Card stroke1/2; native chrome test framework                                   | Logical focus contrast corrected; complete native focus proof open                      |
-| 13. Iconography                                | SF Symbols/brand asset consistent sizes; labelled icon controls        | BrandAssetTests; MenuBarImageTests; toolbar identifiers/help                   | Brand/components inspected; full native input proof open                                |
-| 14. Buttons                                    | Primary/secondary/ghost/destructive coherent control states            | DesktopButtonStyle; existing action tests                                      | Aqua action subphase observed; full state/appearance proof open                         |
-| 15. Inputs and form controls                   | Native neutral inputs/labels/errors; focus                             | Native TextField/SecureField/Picker/Toggle; SourceSetup/Connections tests      | Onboarding label/action cases passed; complete input state matrix open                  |
-| 16. Composer and large text entry components   | Refined bounded composer; stable multiline/focus/readability           | AskView; ChatLayoutTests; AskState; HostedChatFlow; Intents                    | Empty Ask Light/Dark composition passed; active chat open                               |
-| 17. Empty states                               | Intentional factual empty states                                       | Render ask/search/devices/sources empty; ContentUnavailableView                | Representative empty states inspected; full state matrix open                           |
-| 18. Lists and rows                             | Shared scanable rows; subtle hover vs selection; keyboard actions      | Native List sources/devices/search/history; source policy tests                | Selected source states exercised; keyboard/hover/selection open                         |
-| 19. Cards and grouped content                  | Selective cards/flat settings                                          | GroupBox globally DesktopGroupBoxStyle                                         | Flat sections inspected; native material integration open                               |
-| 20. Settings and configuration interfaces      | Orderly native settings, actual options retained                       | SettingsView7tabs; minimum-settings; prerequisite-order tests                  | Partial General/Storage renders inspected; native tabs/window open                      |
-| 21. Status indicators and feedback             | Compact factual status/errors/progress; important requirements visible | SetupBanner/StoreRefresh/PrerequisiteMonitor/SourceHealth tests                | Representative truthful states inspected; full error/progress matrix open               |
-| 22. Popovers, menus and dialogs                | Native popovers/menus/dialogs, safe defaults                           | omnesisSheet; NSOpenPanel/NSSavePanel; StatusMenuTests; restore/recovery flows | Recovery/removal components inspected; true sheet geometry open                         |
-| 23. Interaction state system                   | Reusable rest/hover/pressed/selected/focus/disabled/loading/error      | DesktopButtonStyle; native List/Form; source actions                           | Aqua action/focus subphase observed; pointer/pressed/full keyboard open                 |
-| 24. Animation and motion                       | Purposeful motion; respect Reduce Motion                               | No explicit animation/withAnimation/scaleEffect in current product inventory   | Source reviewed; native accessibility preferences remain open                           |
-| 25. Responsive desktop layout                  | Resizable desktop, min/typical/wide/fullscreen and scale resilience    | Minimum860x600 library,720x600 settings; Ask resize; source doc sheets         | Partial sizing exercised; full resize/fullscreen/2× matrix open                         |
-| 26. Accessibility                              | AA contrast; VoiceOver/keyboard/system a11y, noncolor state            | desktopContrast env; ask-increased-contrast; AX driver/action tests            | Representative ICC-calibrated helper AA passed; full contrast and assistive checks open |
-| 27. Brand identity                             | Existing brand; limited accent and no visual cliches                   | Vector OmnesisMark/MenuMark BrandAssetTests                                    | Unboxed light/dark template inspected; native sidebar open                              |
-| 28. Design system architecture                 | Simple centralized reusable design primitives                          | Theme/Controls/omnesisSheet/NativeChrome existing seams                        | Shared foundations implemented and source-reviewed                                      |
-| 29. Design system documentation                | Practical implementation-specific docs                                 | macos/README.md and docs/desktop.md                                            | Independent documentation/source audit passed; whole-app conformance open               |
-| 30. Component previews and visual verification | Development-only previews of needed variants/states                    | DesktopDesignPreviews shared-control variants plus root/source/server previews | Partial component rasters inspected; full verification matrix open                      |
-| 31. Performance and implementation quality     | Responsive native implementation, efficient scroll, no heavy effects   | Native List/LazyVStack; Ask scroll ownership tests; NSViewRepresentable seams  | Source reviewed; full-state responsiveness remains open                                 |
-| 32. Visual anti-patterns to eliminate          | Remove listed visual anti-patterns without hiding functionality        | Theme/Root/Card/Controls/font/color inventory                                  | Neutral components inspected; native shell acceptance open                              |
-| 33. Reference mockup interpretation            | Interpret reference as aesthetic only                                  | Existing destination6/settings7 and real provider metadata                     | Reference used without adding mockup-only features                                      |
-| 34. Implementation approach                    | Audit→foundations→shell→components→all screens→verify→docs             | This baseline inventory and semantic native tests                              | Audit/foundations/shell/screens implemented; verification ongoing                       |
-| 35. Acceptance criteria                        | All acceptance categories fulfilled with honest evidence               | Existing source/test apparatus, current activation diagnosis                   | Not accepted; measured gaps remain                                                      |
-| 36. Design decision-making principles          | Correctness/native/a11y before minimalism                              | Required setup, permission repair, saved artifact/consent tests                | Behavior-preserving source review complete; full gates open                             |
-| 37. Expected final deliverables                | Implemented result and concise final proof/limitations/docs            | Implemented redesign and this scoped evidence ledger                           | Implemented; final delivery pending complete evidence                                   |
+| Area                                           | Required evidence                                                      | Useful existing fixture families                                               | Current verification                                                                                        |
+| ---------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| 1. Objective                                   | Whole native redesign preserving behavior                              | DesktopTheme; DesktopRenderTests                                               | Implemented; partial component evidence; acceptance open                                                    |
+| 2. Overall design philosophy                   | Quiet native productivity aesthetic                                    | Native NavigationSplitView/Form/Settings/NSMenu                                | Light/Dark components inspected; native shell open                                                          |
+| 3. Scope and implementation constraints        | Inspect/reuse architecture; presentation-only changes                  | Native view and AppKit adapter inventory with shared adaptive foundations      | Source reviewed; full behavioral gate open                                                                  |
+| 4. Color philosophy                            | Neutral semantic palettes; System default, Light/Dark live updates     | DesktopAppearance, adaptive DesktopTheme and owned-window adapter              | a0c7 palette and live appearance tests passed; full native matrix open                                      |
+| 5. Surface hierarchy and visual depth          | Four restrained surface levels                                         | DesktopCardStyle/DesktopGroupBoxStyle                                          | Component hierarchy inspected; native materials open                                                        |
+| 6. Native macOS window integration             | Native chrome/toolbars/materials and native controls                   | DesktopOwnedWindowChrome; minimum-library/settings; hosted sources/resize      | a0c7 minimum Library and fitted Settings window checks passed; full matrix open                             |
+| 7. Sidebar design                              | Compact integrated sidebar/neutral selection/modest brand              | DesktopRootView.libraryNavigation; ready-sidebar                               | Source and row presence checked; native painting/selection open                                             |
+| 8. Main content layout                         | Content-specific widths and responsive margins                         | Shared reading/form width tokens; onboarding and native settings layouts       | Empty Ask composition passed; full layout matrix open                                                       |
+| 9. Typography system                           | System semantic typography, restrained weights, readable metadata      | System fonts throughout; literal-font inventory                                | Terms wrap and three-state heading regression passed; full type matrix open                                 |
+| 10. Spacing system                             | 4pt spacing + meaningful grouping and density                          | VStack/HStack/Form existing primitives                                         | Representative component spacing inspected; remaining states open                                           |
+| 11. Corner radius system                       | Small consistent radii; native shapes                                  | DesktopButtonStyle, grouped sections and shared Radius tokens                  | Component radii inspected; native window and 2× open                                                        |
+| 12. Borders, separators and shadows            | Subtle borders/separators/shadows, sharp1x/2x                          | Card stroke1/2; native chrome test framework                                   | Logical focus contrast corrected; complete native focus proof open                                          |
+| 13. Iconography                                | SF Symbols/brand asset consistent sizes; labelled icon controls        | BrandAssetTests; MenuBarImageTests; toolbar identifiers/help                   | Brand/components inspected; full native input proof open                                                    |
+| 14. Buttons                                    | Primary/secondary/ghost/destructive coherent control states            | DesktopButtonStyle; existing action tests                                      | a0c7 Light/Dark action, disabled and input-focus checks passed; full state matrix open                      |
+| 15. Inputs and form controls                   | Native neutral inputs/labels/errors; focus                             | Native TextField/SecureField/Picker/Toggle; SourceSetup/Connections tests      | Onboarding label/action cases passed; complete input state matrix open                                      |
+| 16. Composer and large text entry components   | Refined bounded composer; stable multiline/focus/readability           | AskView; ChatLayoutTests; AskState; HostedChatFlow; Intents                    | Empty Ask Light/Dark composition passed; active chat open                                                   |
+| 17. Empty states                               | Intentional factual empty states                                       | Render ask/search/devices/sources empty; ContentUnavailableView                | Representative empty states inspected; full state matrix open                                               |
+| 18. Lists and rows                             | Shared scanable rows; subtle hover vs selection; keyboard actions      | Native List sources/devices/search/history; source policy tests                | Selected source states exercised; keyboard/hover/selection open                                             |
+| 19. Cards and grouped content                  | Selective cards/flat settings                                          | GroupBox globally DesktopGroupBoxStyle                                         | Flat sections inspected; native material integration open                                                   |
+| 20. Settings and configuration interfaces      | Orderly native settings, actual options retained                       | SettingsView7tabs; minimum-settings; prerequisite-order tests                  | a0c7 fitted Settings native tabs, scrolling and repair checks passed; full settings matrix open             |
+| 21. Status indicators and feedback             | Compact factual status/errors/progress; important requirements visible | SetupBanner/StoreRefresh/PrerequisiteMonitor/SourceHealth tests                | Representative truthful states inspected; full error/progress matrix open                                   |
+| 22. Popovers, menus and dialogs                | Native popovers/menus/dialogs, safe defaults                           | omnesisSheet; NSOpenPanel/NSSavePanel; StatusMenuTests; restore/recovery flows | Recovery/removal components inspected; true sheet geometry open                                             |
+| 23. Interaction state system                   | Reusable rest/hover/pressed/selected/focus/disabled/loading/error      | DesktopButtonStyle; native List/Form; source actions                           | a0c7 Light/Dark mounted action/input-focus checks passed; pointer/pressed/full keyboard open                |
+| 24. Animation and motion                       | Purposeful motion; respect Reduce Motion                               | No explicit animation/withAnimation/scaleEffect in current product inventory   | Source reviewed; native accessibility preferences remain open                                               |
+| 25. Responsive desktop layout                  | Resizable desktop, min/typical/wide/fullscreen and scale resilience    | 860x600 minimum Library;720x600 fitted Settings; Ask resize; source sheets     | a0c7 minimum Library/fitted Settings passed at1×; full minimum/resize/fullscreen/2× matrix open             |
+| 26. Accessibility                              | AA contrast; VoiceOver/keyboard/system a11y, noncolor state            | desktopContrast env; ask-increased-contrast; AX driver/action tests            | a0c7 logical role contrast passed; representative calibrated helper AA; full rendered/assistive checks open |
+| 27. Brand identity                             | Existing brand; limited accent and no visual cliches                   | Vector OmnesisMark/MenuMark BrandAssetTests                                    | Unboxed light/dark template inspected; native sidebar open                                                  |
+| 28. Design system architecture                 | Simple centralized reusable design primitives                          | Theme/Controls/omnesisSheet/NativeChrome existing seams                        | Shared foundations implemented and source-reviewed                                                          |
+| 29. Design system documentation                | Practical implementation-specific docs                                 | macos/README.md and docs/desktop.md                                            | Independent documentation/source audit passed; whole-app conformance open                                   |
+| 30. Component previews and visual verification | Development-only previews of needed variants/states                    | DesktopDesignPreviews shared-control variants plus root/source/server previews | Partial component rasters inspected; full verification matrix open                                          |
+| 31. Performance and implementation quality     | Responsive native implementation, efficient scroll, no heavy effects   | Native List/LazyVStack; Ask scroll ownership tests; NSViewRepresentable seams  | Source reviewed; full-state responsiveness remains open                                                     |
+| 32. Visual anti-patterns to eliminate          | Remove listed visual anti-patterns without hiding functionality        | Theme/Root/Card/Controls/font/color inventory                                  | Neutral components inspected; native shell acceptance open                                                  |
+| 33. Reference mockup interpretation            | Interpret reference as aesthetic only                                  | Existing destination6/settings7 and real provider metadata                     | Reference used without adding mockup-only features                                                          |
+| 34. Implementation approach                    | Audit→foundations→shell→components→all screens→verify→docs             | This baseline inventory and semantic native tests                              | Audit/foundations/shell/screens implemented; verification ongoing                                           |
+| 35. Acceptance criteria                        | All acceptance categories fulfilled with honest evidence               | Existing source/test apparatus, current activation diagnosis                   | Not accepted; measured gaps remain                                                                          |
+| 36. Design decision-making principles          | Correctness/native/a11y before minimalism                              | Required setup, permission repair, saved artifact/consent tests                | Behavior-preserving source review complete; full gates open                                                 |
+| 37. Expected final deliverables                | Implemented result and concise final proof/limitations/docs            | Implemented redesign and this scoped evidence ledger                           | Implemented; final delivery pending complete evidence                                                       |
 
 ## Current source and execution order
 
@@ -98,6 +98,50 @@ VoiceOver checks remain in the ledger even if an early selector passes.
 
 ## Measured results and remaining gaps
 
+### Scoped a0c7 Intel CI results
+
+The Intel job for source `a0c7f4ba22b4607090bb9f64bd179f12eb30c954`
+(run 46084092859, job 140789895107, artifact 15241483487) completed all seven
+`DesktopDesignSystemTests`, both `DesktopColorReferenceTests` and all 26
+`DesktopRenderTests` methods successfully. These terminal results supersede the
+earlier local capture failures described below for those exact method scopes;
+they do not erase the failures in those earlier runs.
+
+The foundation checks prove the independent palette oracle, logical role contrast,
+private preference changes on the same window, live inherited System changes,
+explicit preference isolation, and mounted controls in both appearances. Actual
+native accessible actions, enabled/disabled roles, owned text-editor focus,
+multiline containment and separate adjacent actions passed. This is not complete
+keyboard traversal, pointer-state or VoiceOver qualification.
+
+Owned receipts for `design-controls`, `design-multiline-controls`,
+`minimum-library` and `minimum-settings` in both appearances record successful
+image writing, exact window/process ownership, active/key/frontmost status,
+on-screen presence and matching canvas. The minimum Library and fitted Settings
+checks retain native chrome/control containment, required-repair reachability,
+and actual Settings tab actions and form scrolling. The eight native-window images for these four paired cases were inspected:
+focused filled input, enabled/disabled buttons, naturally wrapped multiline row,
+ordinary minimum Sources and fitted Settings with readable tabs and reachable
+repair actions. Their chrome is active in the receipts and visible in the images.
+This inspection is limited to those artifacts. The color-reference receipt
+records backing scale 1 and validates both cache and native-window samples.
+The increased-contrast Ask case remains component evidence, as its capture scope
+explicitly states; it does not establish OS preference or full-screen qualification.
+
+These results belong to the a0c7 source, not subsequent follow-ups. At the later
+reviewed revision, Theme, Appearance, tokens, renderer and the three suites remain
+byte-identical; Controls adds only textual Link presentation. New Link, error,
+startup, source-picker, scroll and intent follow-ups still need their own validation.
+The subsequent section-inset and dialog-spacing migration uses existing shared
+tokens, and the General form keeps the Appearance picker's persistent label
+without repeating it as a section heading. These presentation refinements also
+require inspection of their own rendered output.
+The same Intel job contains one Core failure, four other hosted failures and five
+external-UI failures. It is not a full native pass. Full screen/state/display-scale,
+keyboard/VoiceOver, pointer and packaged-app acceptance remain open.
+
+### Earlier local evidence and later unvalidated corrections
+
 A further inspection of the retained Light/Dark native test artifacts identified
 four presentation corrections: historical sources show a factual empty state
 instead of an empty computer picker; textual links use the semantic accent and
@@ -130,7 +174,7 @@ Inspected Light/Dark terms components show the full final sentence. A joined-acc
 presentation fixture is robustness coverage, not evidence that production joined
 enrollment uses the home-account consent route.
 
-The latest seven-method `DesktopDesignSystemTests` run passed five methods,
+An earlier local seven-method `DesktopDesignSystemTests` run passed five methods,
 including both previously failing live preference/System transitions. Two methods
 still failed at native ScreenCaptureKit capture. Thus actual inherited native
 appearance and SwiftUI color-scheme transitions passed their scoped assertions;
@@ -138,7 +182,7 @@ this is not a seven-method pass or complete native interaction qualification.
 The initial focus-contrast and undersized-probe findings were corrected, but
 unperformed keyboard/pointer states remain open.
 
-The earlier 26-method render run passed 18 methods and failed eight, producing
+An earlier local 26-method render run passed 18 methods and failed eight, producing
 40 component rasters. Its eight native capture failures remained failures; three
 additional banner assertions misclassified a broad accessibility container as a
 content column. The corrected check uses the actual label/action envelope while
@@ -147,7 +191,7 @@ Capture reported ScreenCaptureKit error -3811; no permission or session cause wa
 established. Additional visibility facts do not change capture behavior.
 
 The visible-window helper caches its component image, runs its validation
-callback, then captures the native window. The first Aqua control-action,
+callback, then captures the native window. In that earlier local run, the first Aqua control-action,
 input-focus and multiline-layout subphases therefore executed before capture
 failed; failure prevented the second appearance and final cumulative assertions.
 These subphases are partial evidence, not a passing test or active-window proof.
@@ -175,7 +219,8 @@ authoritative affected gate remains required for the final coherent source.
 Representative Light/Dark components were inspected for typography, brand,
 composition, statuses, forms and removal/recovery presentation. Native sidebar
 materials and tabs omitted by component caching establish neither a product
-rendering defect nor successful integration. Actual window captures, remaining
+rendering defect nor successful integration. The a0c7 scoped native-window results
+above supersede the earlier local capture failures for those exact cases. Remaining
 live appearance/control states, keyboard/VoiceOver, pointer states, real sheet
 geometry and the full size/display-scale matrix remain open. No full native or
 full affected-gate pass is claimed.

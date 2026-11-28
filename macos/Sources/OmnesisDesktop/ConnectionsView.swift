@@ -45,7 +45,7 @@ struct DesktopAssistantsView: View {
                                         .isEmpty || authorization.busy)
                                 }
                             }
-                        }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                        }.padding(DesktopDesignTokens.Space.medium).frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
                 if let request = authorization.request, let requestID = authorization.requestID, let overview = connections.overview {
@@ -128,7 +128,7 @@ struct DesktopAssistantsView: View {
                         .disabled(!authorization.personallyStarted || authorization.allowedSources
                             .isEmpty || (!authorization.allowAnswers && !authorization.allowDirect))
                 }
-            }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
+            }.padding(DesktopDesignTokens.Space.medium).frame(maxWidth: .infinity, alignment: .leading)
         }.disabled(authorization.busy)
     }
 }

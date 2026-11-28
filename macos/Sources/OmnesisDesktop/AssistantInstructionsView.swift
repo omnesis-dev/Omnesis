@@ -41,7 +41,7 @@ struct DesktopChatGPTInstructions: View {
                     )
                     .padding(.top, DesktopDesignTokens.Space.small)
                 }
-            }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
+            }.padding(DesktopDesignTokens.Space.medium).frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
@@ -59,7 +59,7 @@ struct DesktopChatGPTFinishInstructions: View {
                     .accessibilityIdentifier("assistant-personal-plugins-link")
                 Text("For another assistant, return to its conversation and enable the Omnesis connection there.")
                     .font(DesktopDesignTokens.Typography.secondary).foregroundStyle(DesktopTheme.secondary)
-            }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
+            }.padding(DesktopDesignTokens.Space.medium).frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

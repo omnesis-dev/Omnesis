@@ -272,7 +272,7 @@ struct DesktopSourceMoveConfirmation: View {
                 .buttonStyle(DesktopButtonStyle(primary: true)).disabled(flow.busy)
             }
             if flow.busy { ProgressView("Moving account…") }
-        }.buttonStyle(DesktopButtonStyle()).padding(26).frame(width: 520)
+        }.buttonStyle(DesktopButtonStyle()).padding(DesktopDesignTokens.Space.section).frame(width: 520)
             .interactiveDismissDisabled(flow.busy)
     }
 

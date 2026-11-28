@@ -99,7 +99,7 @@ struct DesktopOnboardingView: View {
                                                 params: ["mode": .string("joined")]
                                             )
                                             }
-                                        }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                                        }.padding(DesktopDesignTokens.Space.medium).frame(maxWidth: .infinity, alignment: .leading)
                                     }
                                 }
                             case .accountRequired:
