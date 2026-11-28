@@ -244,6 +244,13 @@ results, including execution under a reported screen shield.
 This addresses stale observed identities; it does not establish the cause of
 the mounted retired-question mismatch or an outgoing view's lifetime ownership.
 
+The document reader keeps its full selectable title and content in one bounded
+reading surface, with loading/error feedback before the title and Done/Open
+original outside the scroller. Sixteen real-HTTP wrapper cases cover short,
+long, error and held-loading states in both appearances and parent sizes;
+initial status and final title-line geometry are explicit assertions. Source
+review passed; native compilation, execution and image inspection are pending.
+
 ### Source follow-ups and earlier local evidence
 
 A further inspection of the retained Light/Dark native test artifacts identified

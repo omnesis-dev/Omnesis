@@ -76,25 +76,47 @@ struct DesktopDocumentView: View {
     @State private var error: String?
     @State private var loading = false
     @State private var requestGeneration = UUID()
+    @State private var bodyHeight: CGFloat?
+    private static let maximumBodyHeight: CGFloat = 360
+
     var body: some View {
         VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.large) {
             HStack(alignment: .top) {
-                Text(document?.title ?? selection.title).font(DesktopDesignTokens.Typography.section).accessibilityAddTraits(.isHeader)
-                    .textSelection(.enabled)
+                Text("Source document").font(DesktopDesignTokens.Typography.section).accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier("chat-document-heading")
                 Spacer()
                 Button("Done") { dismiss() }.keyboardShortcut(.cancelAction).accessibilityIdentifier("chat-document-done")
             }
-            if loading { ProgressView("Opening the source document…") }
-            if let error { Label(error, systemImage: "exclamationmark.circle").foregroundStyle(DesktopTheme.secondary) }
-            if let document {
-                ScrollView { DesktopAnswerText(text: document.content).padding(.trailing, DesktopDesignTokens.Space.medium) }
-                    .accessibilityIdentifier("chat-document-content")
+            ScrollView {
+                VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.large) {
+                    if loading { ProgressView("Opening the source document…").accessibilityIdentifier("chat-document-loading") }
+                    if let error {
+                        Label(error, systemImage: "exclamationmark.circle").foregroundStyle(DesktopTheme.secondary)
+                            .accessibilityIdentifier("chat-document-error")
+                    }
+                    Text(document?.title ?? selection.title).font(DesktopDesignTokens.Typography.section).accessibilityAddTraits(.isHeader)
+                        .textSelection(.enabled).accessibilityIdentifier("chat-document-title")
+                    if let document {
+                        DesktopAnswerText(text: document.content).padding(.trailing, DesktopDesignTokens.Space.medium)
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                    .background(GeometryReader { geometry in
+                        Color.clear.preference(key: DocumentReaderBodyHeight.self, value: geometry.size.height)
+                    })
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(height: min(bodyHeight ?? Self.maximumBodyHeight, Self.maximumBodyHeight))
+            .onPreferenceChange(DocumentReaderBodyHeight.self) { height in
+                if let height, height.isFinite, height >= 0 { bodyHeight = height }
+            }
+            .accessibilityIdentifier("chat-document-content")
+            if document != nil {
                 if let url = selection.originalURL, DesktopAnswerBlock.allowsLink(url) {
                     Link("Open original", destination: url).desktopTextLink()
+                        .accessibilityIdentifier("chat-document-original")
                 }
             }
-            Spacer(minLength: 0)
-        }.padding(DesktopDesignTokens.Space.section).frame(width: 680, height: 600).omnesisTheme()
+        }.padding(DesktopDesignTokens.Space.section).frame(width: 680).fixedSize(horizontal: false, vertical: true).omnesisTheme()
             .task(id: DesktopDocumentRequest(id: selection.id, api: context.map { ObjectIdentifier($0.api) })) {
                 let generation = UUID()
                 requestGeneration = generation
@@ -120,5 +142,13 @@ struct DesktopDocumentView: View {
                     self.error = "This document could not be opened. It may have been removed, or your connection may be interrupted."
                 }
             }
+    }
+}
+
+private struct DocumentReaderBodyHeight: PreferenceKey {
+    static let defaultValue: CGFloat? = nil
+    static func reduce(value: inout CGFloat?, nextValue: () -> CGFloat?) {
+        guard let next = nextValue() else { return }
+        value = value.map { max($0, next) } ?? next
     }
 }
