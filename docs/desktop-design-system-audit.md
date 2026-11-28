@@ -140,7 +140,35 @@ The same Intel job contains one Core failure, four other hosted failures and fiv
 external-UI failures. It is not a full native pass. Full screen/state/display-scale,
 keyboard/VoiceOver, pointer and packaged-app acceptance remain open.
 
-### Earlier local evidence and later unvalidated corrections
+### Scoped 0b23 follow-ups
+
+Source `0b23cac0acf1b87596b50ee38b7f3eb428a0cded` executed in Intel job
+140821414762 of run 46094023828 (artifact 15244176021). All 14 onboarding UX,
+14 automatic-startup and 50 source-setup methods passed. The inspected 26
+component images (13 Light/Dark pairs) show distinguishable textual links, error explanations before
+retry, factual historical-source guidance without an empty picker, and startup
+action hierarchy. These are component and mounted-control proofs, not packaged
+permission or whole-window qualification.
+
+Inspection also found that checking and unavailable startup states still used
+copy implying startup was disabled or unapproved. Their correction retains the
+required prerequisite while describing its status as unverified; the revised
+copy and explicit per-status expectations await new native verification.
+
+Both gesture-driven scroll cases and one retired-context intent case still
+failed; the no-wheel streaming control passed across its complete size/growth
+matrix. Gesture receipts show live scrolling continued after the fixture's
+packet-delivery checkpoint. Preparation now requires the owned live-scroll end
+within the existing deadline, retaining the subsequent physical assertions.
+The intent diagnostic identifies a readiness-predicate deadline, not an HTTP
+timeout; further fixed-label clause facts retain its original checks. These
+follow-ups need execution before any failure is considered resolved.
+
+The Intel Core suite passed all 334 tests, while its hosted suite had three
+failed methods and all five external UI queries failed. This remains a failing
+native job; neither successful components nor Core establish full acceptance.
+
+### Source follow-ups and earlier local evidence
 
 A further inspection of the retained Light/Dark native test artifacts identified
 four presentation corrections: historical sources show a factual empty state
@@ -149,9 +177,9 @@ an underline; onboarding errors explain the failure before the retry action;
 and background repair promotes retry only after startup is observed enabled.
 The corrections retain native link activation, existing authorization checks
 and explicit setup actions. Regression cases exercise the actual mounted
-controls, including disabled links and both appearances. Their source and
-formatting have been reviewed; compilation, execution and inspection of the
-new renders remain pending. These additions do not advance visual acceptance.
+controls, including disabled links and both appearances. Their executed scope
+is recorded above; later copy and spacing refinements remain unverified.
+These additions do not establish complete visual acceptance.
 
 Scroll-target observations and a bounded intent-retirement failure journal
 distinguish outstanding native test failures without changing production scroll

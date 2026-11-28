@@ -422,12 +422,25 @@ final class DesktopAskStateTests: XCTestCase {
             for cycle in 0 ..< 2 {
                 gestureSerial += 1
                 try writeFacts("before-local-wheel-cycle-\(cycle)")
+                let liveBaseline = observation.value
+                func gestureCompleted() -> Bool {
+                    let current = observation.value
+                    let priorBegan = liveBaseline.liveCounts["began", default: 0]
+                    let priorEnded = liveBaseline.liveCounts["ended", default: 0]
+                    let began = current.liveCounts["began", default: 0]
+                    let ended = current.liveCounts["ended", default: 0]
+                    return !liveBaseline.liveClipped && !current.liveClipped && priorBegan == priorEnded &&
+                        began > priorBegan && ended > priorEnded && began == ended
+                }
                 try await DesktopScrollInput.scrollUp(scroll, in: window, evidence: "ask-state-\(variant)-scroll-\(gestureSerial)")
                 try await wait("physical-top-and-jump-after-local-wheel-cycle-\(cycle)") {
                     let atTop = document.isFlipped
                         ? abs(document.visibleRect.minY - document.bounds.minY) <= pixel
                         : abs(document.visibleRect.maxY - document.bounds.maxY) <= pixel
-                    return atTop && (try? DesktopAccessibilityDriver.element("chat-jump-latest", in: hosting)) != nil
+                    return gestureCompleted() && atTop && (try? DesktopAccessibilityDriver.element("chat-jump-latest", in: hosting)) != nil
+                }
+                guard reachedAtDeadline == true else {
+                    throw DesktopScrollInput.Failure(description: "The owned scroll gesture did not reach its completed top-and-Jump state")
                 }
                 try writeFacts("scrolled-top-cycle-\(cycle)")
                 if document.isFlipped {

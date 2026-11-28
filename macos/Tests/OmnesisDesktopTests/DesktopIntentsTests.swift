@@ -452,16 +452,18 @@ final class DesktopIntentsTests: XCTestCase {
     func testRetirementObservationKeepsTheFirstFailureAndBoundsRepeatedStatusFacts() {
         let observation = RetirementObservation()
         observation.phase = .currentQuestion
+        observation.questionReadiness = .sendNotEnabled
         for _ in 0 ..< 5000 {
             observation.requestStarted(.status)
             observation.requestReturned()
         }
         observation.recordFailure(.controlTimeout)
         observation.phase = .retiredDrain
+        observation.questionReadiness = .ready
         observation.recordFailure(.predicateDeadline)
         XCTAssertEqual(
             observation.facts(cleanupReturned: true),
-            "intent-retirement phase=currentQuestion failure=controlTimeout requestKind=status started=4095 returned=4095 cleanupReturned=true"
+            "intent-retirement phase=currentQuestion failure=controlTimeout requestKind=status questionReadiness=sendNotEnabled started=4095 returned=4095 cleanupReturned=true"
         )
     }
 
@@ -617,13 +619,26 @@ private final class IntentHarness {
     }
 
     func waitForQuestion(_ expected: String, sendEnabled: Bool = true) async throws {
+        retirementObservation?.questionReadiness = .notObserved
         try await wait {
-            guard let hosting = self.hosting, self.composerValue == expected,
-                  let input = try? DesktopAccessibilityDriver.element("chat-input", in: hosting),
-                  let send = try? DesktopAccessibilityDriver.element("chat-send", in: hosting),
-                  let window = self.window, hosting.window === window,
-                  let responder = window.firstResponder as? NSTextView, responder.window === window else { return false }
-            return input.isAccessibilityEnabled() && send.isAccessibilityEnabled() == sendEnabled
+            func blocked(_ clause: RetirementObservation.QuestionReadiness) -> Bool {
+                self.retirementObservation?.questionReadiness = clause
+                return false
+            }
+            guard let hosting = self.hosting else { return blocked(.hostingMissing) }
+            guard self.composerValue == expected else { return blocked(.questionMismatch) }
+            guard let input = try? DesktopAccessibilityDriver.element("chat-input", in: hosting) else { return blocked(.inputMissing) }
+            guard let send = try? DesktopAccessibilityDriver.element("chat-send", in: hosting) else { return blocked(.sendMissing) }
+            guard let window = self.window else { return blocked(.windowMissing) }
+            guard hosting.window === window else { return blocked(.hostingWindowMismatch) }
+            guard let responder = window.firstResponder as? NSTextView else { return blocked(.responderNotText) }
+            guard responder.window === window else { return blocked(.responderWindowMismatch) }
+            guard input.isAccessibilityEnabled() else { return blocked(.inputDisabled) }
+            guard send.isAccessibilityEnabled() == sendEnabled else {
+                return blocked(sendEnabled ? .sendNotEnabled : .sendUnexpectedlyEnabled)
+            }
+            self.retirementObservation?.questionReadiness = .ready
+            return true
         }
         let input = try DesktopAccessibilityDriver.element("chat-input", in: host)
         let window = try XCTUnwrap(window)
@@ -807,10 +822,18 @@ private final class RetirementObservation {
         case questionRemains, firstNoSubmission, secondNoSubmission, completed
     }
 
+    enum QuestionReadiness: String {
+        case notObserved, hostingMissing, questionMismatch, inputMissing, sendMissing, windowMissing, hostingWindowMismatch
+        case responderNotText, responderWindowMismatch, inputDisabled, sendNotEnabled, sendUnexpectedlyEnabled, ready
+    }
+
+    var questionReadiness: QuestionReadiness = .notObserved
+
     enum RequestKind: String { case configure, status, release, other }
     enum Failure: String { case predicateDeadline, controlTimeout, controlStatus, controlOther, unclassifiedURL, other }
     var phase: Phase = .firstStartup
     private var failedPhase: Phase?
+    private var failedQuestionReadiness: QuestionReadiness?
     private var failure: Failure?
     private var requestKind: RequestKind = .other
     private var started = 0
@@ -829,9 +852,10 @@ private final class RetirementObservation {
         guard failure == nil else { return }
         failure = value
         failedPhase = phase
+        failedQuestionReadiness = questionReadiness
     }
 
     func facts(cleanupReturned: Bool) -> String {
-        "intent-retirement phase=\((failedPhase ?? phase).rawValue) failure=\(failure?.rawValue ?? "other") requestKind=\(requestKind.rawValue) started=\(started) returned=\(returned) cleanupReturned=\(cleanupReturned)"
+        "intent-retirement phase=\((failedPhase ?? phase).rawValue) failure=\(failure?.rawValue ?? "other") requestKind=\(requestKind.rawValue) questionReadiness=\((failedQuestionReadiness ?? questionReadiness).rawValue) started=\(started) returned=\(returned) cleanupReturned=\(cleanupReturned)"
     }
 }

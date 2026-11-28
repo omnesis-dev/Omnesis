@@ -293,12 +293,13 @@ final class AutomaticStartupTests: XCTestCase {
     func testRepairCopyTracksObservedStartupReadinessAndRetryNeverRegistersInBothAppearances() async throws {
         let pendingCopy = "Automatic startup is required and has not been enabled or approved. Review it in macOS, then retry the background connection. These controls do not create or replace a library."
         let readyCopy = "Automatic startup is enabled. Retry the background connection to continue. These controls do not create or replace a library."
-        let scenarios: [(name: String, status: DesktopAutomaticStartup.Status, approvalAction: String?)] = [
-            ("approval", .approvalRequired, "startup-approve"),
-            ("disabled", .disabled, "startup-enable"),
-            ("checking", .needsCheck, nil),
-            ("unavailable", .unavailable, nil),
-            ("ready", .enabled, nil),
+        let unverifiedCopy = "Automatic startup is required. Check its status before retrying the background connection. These controls do not create or replace a library."
+        let scenarios: [(name: String, status: DesktopAutomaticStartup.Status, approvalAction: String?, explanation: String)] = [
+            ("approval", .approvalRequired, "startup-approve", pendingCopy),
+            ("disabled", .disabled, "startup-enable", pendingCopy),
+            ("checking", .needsCheck, nil, unverifiedCopy),
+            ("unavailable", .unavailable, nil, unverifiedCopy),
+            ("ready", .enabled, nil, readyCopy),
         ]
         for scenario in scenarios {
             var registrations = 0, retries = 0, settingsOpens = 0, completedAppearances = 0
@@ -316,9 +317,15 @@ final class AutomaticStartupTests: XCTestCase {
                 let explanation = try DesktopAccessibilityDriver.element("startup-repair-explanation", in: host)
                 XCTAssertEqual(
                     explanation.accessibilityTextValue() ?? explanation.accessibilityLabel(),
-                    expectedReady ? readyCopy : pendingCopy
+                    scenario.explanation
                 )
-                XCTAssertFalse(try DesktopAccessibilityDriver.contains(expectedReady ? pendingCopy : readyCopy, in: host))
+                for otherCopy in [pendingCopy, readyCopy, unverifiedCopy] where otherCopy != scenario.explanation {
+                    XCTAssertFalse(try DesktopAccessibilityDriver.contains(otherCopy, in: host))
+                }
+                if scenario.status == .needsCheck || scenario.status == .unavailable {
+                    XCTAssertFalse(try DesktopAccessibilityDriver.contains("has not been enabled or approved", in: host))
+                    XCTAssertFalse(try DesktopAccessibilityDriver.contains("Automatic startup is off", in: host))
+                }
                 let retry = try DesktopAccessibilityDriver.element("startup-runtime-retry", in: host)
                 XCTAssertEqual(retry.accessibilityRole(), .button)
                 XCTAssertEqual(retry.accessibilityLabel() ?? retry.accessibilityTextValue(), "Retry background connection")

@@ -135,15 +135,23 @@ struct DesktopStartupRepairView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.regular) {
             Text("Finish background setup").font(DesktopDesignTokens.Typography.section).accessibilityAddTraits(.isHeader)
-            Text(flow.ready
-                ? "Automatic startup is enabled. Retry the background connection to continue. These controls do not create or replace a library."
-                :
-                "Automatic startup is required and has not been enabled or approved. Review it in macOS, then retry the background connection. These controls do not create or replace a library.")
+            Text(explanation)
                 .foregroundStyle(DesktopTheme.secondary)
                 .accessibilityIdentifier("startup-repair-explanation")
             DesktopAutomaticStartupView(flow: flow, openSettings: openSettings)
             Button("Retry background connection", action: retry).buttonStyle(DesktopButtonStyle(primary: flow.ready))
                 .disabled(flow.working).accessibilityIdentifier("startup-runtime-retry")
         }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var explanation: String {
+        switch flow.status {
+        case .enabled:
+            "Automatic startup is enabled. Retry the background connection to continue. These controls do not create or replace a library."
+        case .approvalRequired, .disabled:
+            "Automatic startup is required and has not been enabled or approved. Review it in macOS, then retry the background connection. These controls do not create or replace a library."
+        case .needsCheck, .unavailable:
+            "Automatic startup is required. Check its status before retrying the background connection. These controls do not create or replace a library."
+        }
     }
 }
