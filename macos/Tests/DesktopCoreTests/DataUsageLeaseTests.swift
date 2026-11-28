@@ -10,6 +10,9 @@ import XCTest
 final class DataUsageLeaseTests: XCTestCase {
     private static let retentionLock = NSLock()
     private static var retainedFixtures: [DataUsageLeaseTests] = []
+    private var exclusiveOperationJournal: DesktopFixturePhaseJournal?
+    private var exclusiveObservationSelected = false
+    private var exclusiveObservationRefused = false
     private var home: URL!
     private var processes: [Process] = []
     private var capturedReaders: [(FileHandle, Capture)] = []
@@ -40,7 +43,56 @@ final class DataUsageLeaseTests: XCTestCase {
         }
     }
 
+    private func prepareExclusiveOperationJournal() {
+        switch name {
+        case "DataUsageLeaseTests.testExclusiveDescriptorSurvivesOperationParentKillThroughWorkerMapping",
+             "DesktopCoreTests.DataUsageLeaseTests.testExclusiveDescriptorSurvivesOperationParentKillThroughWorkerMapping",
+             "-[DesktopCoreTests.DataUsageLeaseTests testExclusiveDescriptorSurvivesOperationParentKillThroughWorkerMapping]":
+            exclusiveObservationSelected = true
+        default: return
+        }
+        do {
+            var checkout = URL(fileURLWithPath: #filePath)
+            for _ in 0 ..< 4 {
+                checkout.deleteLastPathComponent()
+            }
+            let canonical = try DesktopCanonicalPath.resolve(checkout.path)
+            exclusiveOperationJournal = try DesktopFixturePhaseJournal(checkout: URL(fileURLWithPath: canonical, isDirectory: true))
+        } catch { refuseExclusiveObservation() }
+    }
+
+    private func refuseExclusiveObservation() {
+        guard !exclusiveObservationRefused else { return }
+        exclusiveObservationRefused = true
+        // Best effort, fixed metadata only; observation never changes the functional test.
+        let bytes = Array("exclusive-operation-observation=refused\n".utf8)
+        _ = bytes.withUnsafeBytes { Darwin.write(STDERR_FILENO, $0.baseAddress, $0.count) }
+    }
+
+    private func exclusivePhase(_ phase: DesktopFixturePhaseJournal.Phase) {
+        guard exclusiveObservationSelected, !exclusiveObservationRefused else { return }
+        guard exclusiveOperationJournal?.record(phase) == true else {
+            refuseExclusiveObservation()
+            return
+        }
+    }
+
+    private func exclusiveCleanupPhase(_ phase: CatalogFixtureChild.CleanupPhase) {
+        switch phase {
+        case .parentWaitEnter: exclusivePhase(.exclusiveParentWaitEnter)
+        case .parentWaitReturned: exclusivePhase(.exclusiveParentWaitReturned)
+        case .parentJoinEnter: exclusivePhase(.exclusiveParentJoinEnter)
+        case .parentJoinReturned: exclusivePhase(.exclusiveParentJoinReturned)
+        case .workerWaitEnter: exclusivePhase(.exclusiveWorkerWaitEnter)
+        case .workerWaitReturned: exclusivePhase(.exclusiveWorkerWaitReturned)
+        case .socketExitEnter: exclusivePhase(.exclusiveSocketExitEnter)
+        case .socketExitReturned: exclusivePhase(.exclusiveSocketExitReturned)
+        }
+    }
+
     override func setUpWithError() throws {
+        prepareExclusiveOperationJournal()
+        exclusivePhase(.exclusiveSetupEnter)
         if let selected = DesktopOwnedUIObservation.dataParentSelection(name) {
             // Capture this process now, but admit no sample until the Node sampler joins.
             parentObservation = DesktopOwnedUIObservation(selected)
@@ -74,9 +126,11 @@ final class DataUsageLeaseTests: XCTestCase {
             "processAuthorityVersion": 3,
         ], to: config.appendingPathComponent("desktop-install.json"))
         Self.phase("setup-returned")
+        exclusivePhase(.exclusiveSetupReturned)
     }
 
     override func tearDown() async throws {
+        exclusivePhase(.exclusiveTeardownEnter)
         parentObservation?.record(.dataTeardown, .entered)
         Self.phase("teardown-enter")
         var readersRetired = false
@@ -95,7 +149,10 @@ final class DataUsageLeaseTests: XCTestCase {
             var physicallyDrained = Set<String>()
             for (child, socket) in catalogChildren {
                 do {
-                    try await child.cleanup { try self.sendExit(socket) }
+                    exclusivePhase(.exclusiveTeardownChildEnter)
+                    try await child
+                        .cleanup(observe: exclusiveObservationSelected ? exclusiveCleanupPhase : nil) { try self.sendExit(socket) }
+                    exclusivePhase(.exclusiveTeardownChildReturned)
                     physicallyDrained.insert(socket)
                 } catch {
                     XCTFail("Catalog child drain is uncertain; the owned fixture was retained")
@@ -105,9 +162,12 @@ final class DataUsageLeaseTests: XCTestCase {
             Self.phase("catalog-joined")
             untrackedSockets = sockets.filter { !physicallyDrained.contains($0) }
             for path in untrackedSockets {
+                exclusivePhase(.exclusiveTeardownSocketExitEnter)
                 try? sendExit(path)
+                exclusivePhase(.exclusiveTeardownSocketExitReturned)
             }
             for process in processes {
+                exclusivePhase(.exclusiveTeardownProcessEnter)
                 let wasRunning = process.isRunning
                 if wasRunning {
                     guard kill(process.processIdentifier, SIGKILL) == 0 || errno == ESRCH else {
@@ -116,26 +176,37 @@ final class DataUsageLeaseTests: XCTestCase {
                 }
                 parentObservation?.record(.dataProcessJoin, .entered)
                 Self.phase("process-join-enter")
-                if wasRunning { process.waitUntilExit() }
+                if wasRunning {
+                    exclusivePhase(.exclusiveTeardownProcessJoinEnter)
+                    process.waitUntilExit()
+                    exclusivePhase(.exclusiveTeardownProcessJoinReturned)
+                }
                 // These exact objects were launched or observed running. Foundation's
                 // termination metadata is their exit receipt once isRunning is false.
                 _ = (status: process.terminationStatus, reason: process.terminationReason)
                 Self.phase("process-join-returned")
                 parentObservation?.record(.dataProcessJoin, .returned)
+                exclusivePhase(.exclusiveTeardownProcessReturned)
             }
             parentObservation?.record(.dataReaderRetirement, .entered)
+            exclusivePhase(.exclusiveReadersEnter)
             try closeCapturedReadersAfterJoin()
+            exclusivePhase(.exclusiveReadersReturned)
             readersRetired = true
             Self.phase("readers-retired")
             parentObservation?.record(.dataReaderRetirement, .returned)
         } catch {
+            exclusivePhase(.exclusiveObserverCloseEnter)
             observerJoined = await closeParentObservation()
+            exclusivePhase(.exclusiveObserverCloseReturned)
             if !observerJoined {
                 XCTFail("Parent observation cleanup is unconfirmed; the original fixture failure and exact owner are retained")
             }
             throw error
         }
+        exclusivePhase(.exclusiveObserverCloseEnter)
         observerJoined = await closeParentObservation()
+        exclusivePhase(.exclusiveObserverCloseReturned)
         guard observerJoined else {
             throw TestFailure.diagnostics("Parent observation cleanup is unconfirmed; exact readers and fixture retained")
         }
@@ -144,6 +215,7 @@ final class DataUsageLeaseTests: XCTestCase {
         // Untracked commands still use their socket as the legacy exit acknowledgement.
         // Tracked children have stronger physical join/incarnation-gone proof above; TERM can
         // leave their owned Unix entry, which the private home removal retires afterward.
+        exclusivePhase(.exclusiveTeardownSocketsEnter)
         let deadline = Date().addingTimeInterval(5)
         while untrackedSockets.contains(where: { FileManager.default.fileExists(atPath: $0) }), Date() < deadline {
             usleep(10000)
@@ -151,7 +223,11 @@ final class DataUsageLeaseTests: XCTestCase {
         for path in untrackedSockets {
             XCTAssertFalse(FileManager.default.fileExists(atPath: path), "Owned data-use child did not drain")
         }
+        exclusivePhase(.exclusiveTeardownSocketsReturned)
+        exclusivePhase(.exclusiveHomeRemoveEnter)
         try FileManager.default.removeItem(at: home)
+        exclusivePhase(.exclusiveHomeRemoveReturned)
+        exclusivePhase(.exclusiveTeardownReturned)
     }
 
     private func armParentObservationAfterNodePublication() {
@@ -901,21 +977,47 @@ final class DataUsageLeaseTests: XCTestCase {
             socket: socket,
             inheritDataDescriptor: true
         )
+        exclusivePhase(.exclusiveRuntimePrepareEnter)
         try makeRuntime(host: script)
+        exclusivePhase(.exclusiveRuntimePrepareReturned)
+        exclusivePhase(.exclusiveRetireEnter)
         try retire()
+        exclusivePhase(.exclusiveRetireReturned)
+        exclusivePhase(.exclusiveOperationStartEnter)
         let operation = try start(exclusiveArguments())
+        exclusivePhase(.exclusiveOperationStartReturned)
+        exclusivePhase(.exclusiveChildTrackEnter)
         let child = try trackChild(operation, receipt: receipt, socket: socket)
+        exclusivePhase(.exclusiveChildTrackReturned)
+        exclusivePhase(.exclusiveOperationReadyEnter)
         try await waitReady(operation, catalog: child, until: operation.bootstrapDeadline)
+        exclusivePhase(.exclusiveOperationReadyReturned)
+        exclusivePhase(.exclusiveControllerKillEnter)
         try child.killControllerAfterReady()
+        exclusivePhase(.exclusiveControllerKillReturned)
+        exclusivePhase(.exclusiveOperationExitEnter)
         try await waitExited(operation)
+        exclusivePhase(.exclusiveOperationExitReturned)
+        exclusivePhase(.exclusiveDeniedStartEnter)
         let denied = try start(exclusiveArguments())
+        exclusivePhase(.exclusiveDeniedStartReturned)
+        exclusivePhase(.exclusiveDeniedExitEnter)
         try await waitExited(denied)
+        exclusivePhase(.exclusiveDeniedExitReturned)
         XCTAssertEqual(denied.process.terminationStatus, 78)
         XCTAssertTrue(denied.diagnostics.text.contains("inUse"), denied.diagnostics.text)
-        try await child.cleanup { try self.sendExit(socket) }
+        exclusivePhase(.exclusiveChildCleanupEnter)
+        try await child.cleanup(observe: exclusiveCleanupPhase) { try self.sendExit(socket) }
+        exclusivePhase(.exclusiveChildCleanupReturned)
+        exclusivePhase(.exclusiveSocketAbsentEnter)
         try await waitAbsent(socket)
+        exclusivePhase(.exclusiveSocketAbsentReturned)
+        exclusivePhase(.exclusiveAvailableStartEnter)
         let available = try start(exclusiveArguments())
+        exclusivePhase(.exclusiveAvailableStartReturned)
+        exclusivePhase(.exclusiveAvailableReadyEnter)
         try await waitReady(available, until: available.bootstrapDeadline)
+        exclusivePhase(.exclusiveAvailableReadyReturned)
     }
 
     private let scrubModes = [
@@ -1654,7 +1756,9 @@ final class DataUsageLeaseTests: XCTestCase {
         // Capture's gate also joins any already-running file I/O before closing the reader.
         for (reader, capture) in capturedReaders {
             Self.phase("reader-close-enter")
+            exclusivePhase(.exclusiveReaderCloseEnter)
             try capture.close(reader)
+            exclusivePhase(.exclusiveReaderCloseReturned)
             Self.phase("reader-close-returned")
         }
         capturedReaders.removeAll()

@@ -84,28 +84,55 @@ final class CatalogFixtureChild {
         orphaned = true
     }
 
-    func cleanup(sendExit: () throws -> Void) async throws {
+    enum CleanupPhase: Sendable {
+        case parentWaitEnter, parentWaitReturned, parentJoinEnter, parentJoinReturned
+        case workerWaitEnter, workerWaitReturned, socketExitEnter, socketExitReturned
+    }
+
+    func cleanup(observe: ((CleanupPhase) -> Void)? = nil, sendExit: () throws -> Void) async throws {
         guard !cleanupConfirmed else { return }
         let drain = Drain()
         if !orphaned, parent.isRunning {
             guard try DesktopBackgroundProcessIdentity.read(parentIdentity.pid) == parentIdentity,
                   Darwin.kill(parentIdentity.pid, SIGTERM) == 0 else { throw Failure.uncertainOwnership }
+            observe?(.parentWaitEnter)
             try await drain.waitForParent { !parent.isRunning && joined() }
+            observe?(.parentWaitReturned)
+            observe?(.parentJoinEnter)
             parent.waitUntilExit()
-            if identity != nil { try await drain.waitForChild(observe: observeChild) }
+            observe?(.parentJoinReturned)
+            if identity != nil {
+                observe?(.workerWaitEnter)
+                try await drain.waitForChild(observe: observeChild)
+                observe?(.workerWaitReturned)
+            }
         } else if !orphaned, !parent.isRunning, joined() {
+            observe?(.parentJoinEnter)
             parent.waitUntilExit()
-            if identity != nil { try await drain.waitForChild(observe: observeChild) }
+            observe?(.parentJoinReturned)
+            if identity != nil {
+                observe?(.workerWaitEnter)
+                try await drain.waitForChild(observe: observeChild)
+                observe?(.workerWaitReturned)
+            }
         } else {
             // Unexpected parent death before adoption supplies no authority to signal a guessed orphan.
             guard identity != nil else { throw Failure.uncertainOwnership }
+            observe?(.parentWaitEnter)
             try await drain.waitForParent { !parent.isRunning }
+            observe?(.parentWaitReturned)
+            observe?(.parentJoinEnter)
             parent.waitUntilExit()
+            observe?(.parentJoinReturned)
+            observe?(.workerWaitEnter)
             try await drain.waitForChild(observe: observeChild) {
                 guard !exitRequested else { return }
                 exitRequested = true
+                observe?(.socketExitEnter)
                 try sendExit()
+                observe?(.socketExitReturned)
             }
+            observe?(.workerWaitReturned)
         }
         try drain.checkDeadline()
         // A confirmed original incarnation cannot become live again after PID reuse.
