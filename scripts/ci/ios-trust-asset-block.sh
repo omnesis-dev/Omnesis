@@ -65,6 +65,30 @@ system_resolves() {
   ' "$1"
 }
 
+# Count completed records only; a not-yet-created journal has no evidence.
+sink_record_lines() {
+  if [[ ! -e "$SINK_RECORD" ]]; then
+    printf '0\n'
+    return
+  fi
+  wc -l <"$SINK_RECORD" | tr -d '[:space:]'
+}
+
+recorded_domain_after() {
+  local domain="$1" boundary="$2" complete
+  complete="$(sink_record_lines)" || return 1
+  if ((complete <= boundary)); then
+    printf '0\n'
+    return
+  fi
+  head -n "$complete" "$SINK_RECORD" | awk -v boundary="$boundary" -v domain="$domain" '
+    NR > boundary && NF == 5 &&
+    $1 ~ /^([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$/ &&
+    $2 == "DNS" && $3 == "query" && $4 == "for" && tolower($5) == domain { count++ }
+    END { print count + 0 }
+  '
+}
+
 block() {
   if [[ "$(uname -s)" != Darwin ]]; then
     echo "::error::the iOS trust asset block is for macOS runners only" >&2
@@ -88,18 +112,22 @@ block() {
     printf 'nameserver 127.0.0.1\nport %s\ntimeout 2\n' "$SINK_PORT" |
       sudo tee "/etc/resolver/${domain}" >/dev/null
   done
+  # One evidence epoch for the complete installed configuration. Background
+  # queries after this boundary can qualify their own later negative probe.
+  local configuration_start
+  configuration_start="$(sink_record_lines)"
   sudo dscacheutil -flushcache
   sudo killall -HUP mDNSResponder || true
 
-  local before
+  local refusals
   for domain in "${DOMAINS[@]}"; do
-    before="$(wc -l <"$SINK_RECORD" 2>/dev/null || echo 0)"
     if system_resolves "$domain"; then
       echo "::error::${domain} still resolves on this runner after the block" >&2
       return 1
     fi
-    if (($(wc -l <"$SINK_RECORD" 2>/dev/null || echo 0) <= before)); then
-      echo "::error::the lookup of ${domain} failed but no refusal was recorded" >&2
+    refusals="$(recorded_domain_after "$domain" "$configuration_start")"
+    if ((refusals == 0)); then
+      echo "::error::the lookup of ${domain} failed but no matching refusal was recorded for this configuration" >&2
       return 1
     fi
   done
