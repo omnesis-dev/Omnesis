@@ -504,7 +504,7 @@ final class DesktopRenderTests: XCTestCase {
     func testRevokedSourceHostNeedingPairingRemainsVisibleWithRepairInstructions() async throws {
         let store = DesktopStore.preview()
         store.devices = try JSONDecoder().decode([DesktopDevice].self, from: Data(
-            #"[{"id":"repair-host","name":"Example laptop","kind":"collector","online":false,"revokedAt":1,"needsPairing":true},{"id":"retired-host","name":"Retired device fixture","kind":"collector","revokedAt":1,"needsPairing":false}]"#
+            #"[{"id":"repair-host","name":"Example laptop","kind":"collector","online":false,"revokedAt":1,"needsPairing":true},{"id":"second-repair-host","name":"Example tablet","kind":"ios","online":false,"revokedAt":1,"needsPairing":true},{"id":"retired-host","name":"Retired device fixture","kind":"collector","revokedAt":1,"needsPairing":false}]"#
                 .utf8
         ))
         try await DesktopSnapshotRenderer.render(
@@ -515,6 +515,15 @@ final class DesktopRenderTests: XCTestCase {
             XCTAssertTrue(try DesktopAccessibilityDriver.contains("Example laptop", in: hosting))
             XCTAssertTrue(try DesktopAccessibilityDriver.contains("Needs pairing", in: hosting))
             XCTAssertTrue(try DesktopAccessibilityDriver.contains("Repair instructions", in: hosting))
+            for name in ["Example laptop", "Example tablet"] {
+                let control = try XCTUnwrap(DesktopAccessibilityDriver.elements(in: hosting).first {
+                    $0.accessibilityRole() == .button && $0.accessibilityLabel() == "Repair instructions for \(name)"
+                })
+                XCTAssertTrue(control.isAccessibilityEnabled())
+                XCTAssertGreaterThan(control.accessibilityFrame().width, 0)
+                XCTAssertGreaterThan(control.accessibilityFrame().height, 0)
+                XCTAssertTrue(try XCTUnwrap(hosting.window).frame.contains(control.accessibilityFrame()))
+            }
             XCTAssertFalse(try DesktopAccessibilityDriver.contains("Retired device fixture", in: hosting))
         }
     }

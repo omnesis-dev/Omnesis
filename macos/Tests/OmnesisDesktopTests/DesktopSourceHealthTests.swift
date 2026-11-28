@@ -200,6 +200,95 @@ final class DesktopSourceHealthTests: XCTestCase {
         }
     }
 
+    func testRepeatedSignInActionsIdentifyTheirAccountAndKeepTheirReportingDeviceInBothAppearances() async throws {
+        let sources = try JSONDecoder().decode([DesktopSource].self, from: Data(
+            #"[{"id":"invented:first","type":"invented","accountId":"Example first account","enabled":true,"deviceId":"local"},{"id":"invented:second","type":"invented","accountId":"Example second account","enabled":true,"deviceId":"local"}]"#
+                .utf8
+        ))
+        let devices = try JSONDecoder().decode([DesktopDevice].self, from: Data(
+            #"[{"id":"local","name":"Example desktop","kind":"collector","online":true}]"#.utf8
+        ))
+        let statuses = try Dictionary(uniqueKeysWithValues: sources.enumerated().map { index, source in
+            let device = index == 0 ? ",\"deviceId\":\"local\"" : ""
+            return try (source.id, health("{\"sourceId\":\"\(source.id)\"\(device),\"state\":\"needs-auth\"}"))
+        })
+        var requests = [String](), appearances = 0
+        try await DesktopSnapshotRenderer.render(
+            VStack(alignment: .leading, spacing: 24) {
+                ForEach(sources) { source in
+                    DesktopSourceHealthView(
+                        source: source, status: statuses[source.id], current: true, devices: devices, canSignIn: true,
+                        signIn: { device in requests.append(source.id + ":" + device) }
+                    )
+                }
+            }.padding(24),
+            name: "source-contextual-sign-in", size: CGSize(width: 520, height: 420)
+        ) { hosting in
+            XCTAssertEqual(requests.count, appearances * sources.count, "Mounting must not initiate sign-in")
+            for source in sources {
+                let control = try DesktopAccessibilityDriver.element("source-reauth-\(source.id)-local", in: hosting)
+                XCTAssertEqual(control.accessibilityRole(), .button)
+                XCTAssertEqual(control.accessibilityLabel(), "Sign in again for \(source.accountId) on Example desktop")
+                XCTAssertTrue(control.isAccessibilityEnabled())
+                XCTAssertGreaterThan(control.accessibilityFrame().width, 0)
+                XCTAssertGreaterThan(control.accessibilityFrame().height, 0)
+                XCTAssertTrue(try XCTUnwrap(hosting.window).frame.contains(control.accessibilityFrame()))
+                let before = requests.count
+                XCTAssertTrue(control.accessibilityPerformPress())
+                XCTAssertEqual(requests.count, before + 1)
+                XCTAssertEqual(requests.last, source.id + ":local", "The contextual label must retain its actual reporting-device action")
+            }
+            appearances += 1
+        }
+        XCTAssertEqual(appearances, 2)
+        XCTAssertEqual(requests.count, sources.count * 2)
+    }
+
+    func testMultipleReportsWithoutADeviceKeepUnknownAttributionAndOfferNoInventedSignIn() async throws {
+        let source = try JSONDecoder().decode(DesktopSource.self, from: Data(
+            #"{"id":"invented:ambiguous","type":"invented","accountId":"Example shared account","enabled":true,"deviceId":"local","members":["local","other"]}"#
+                .utf8
+        ))
+        let devices = try JSONDecoder().decode([DesktopDevice].self, from: Data(
+            #"[{"id":"local","name":"Example desktop","kind":"collector","online":true},{"id":"other","name":"Example second computer","kind":"collector","online":true}]"#
+                .utf8
+        ))
+        let status = try health(
+            #"{"sourceId":"invented:ambiguous","state":"synced","members":[{"sourceId":"invented:ambiguous","state":"needs-auth"},{"sourceId":"invented:ambiguous","deviceId":"other","state":"needs-auth"}]}"#
+        )
+        var requests = [String](), appearances = 0
+        try await DesktopSnapshotRenderer.render(
+            DesktopSourceHealthView(
+                source: source, status: status, current: true, devices: devices, canSignIn: true,
+                signIn: { requests.append($0) }
+            ).padding(24),
+            name: "source-contextual-sign-in-ambiguous", size: CGSize(width: 520, height: 340)
+        ) { hosting in
+            XCTAssertTrue(try DesktopAccessibilityDriver.contains("Another device: Sign-in needed", in: hosting))
+            XCTAssertTrue(try DesktopAccessibilityDriver.contains("Example second computer: Sign-in needed", in: hosting))
+            XCTAssertFalse(try DesktopAccessibilityDriver.contains("Example desktop: Sign-in needed", in: hosting))
+            let repairActions = try DesktopAccessibilityDriver.elements(in: hosting).filter {
+                ($0.accessibilityIdentifier() ?? "").hasPrefix("source-reauth-")
+            }
+            XCTAssertEqual(requests.count, appearances, "Mounting must not initiate sign-in")
+            XCTAssertEqual(repairActions.count, 1, "Only the explicitly identified report may offer sign-in")
+            let control = try XCTUnwrap(repairActions.first)
+            XCTAssertEqual(control.accessibilityIdentifier(), "source-reauth-invented:ambiguous-other")
+            XCTAssertEqual(control.accessibilityRole(), .button)
+            XCTAssertEqual(control.accessibilityLabel(), "Sign in again for Example shared account on Example second computer")
+            XCTAssertTrue(control.isAccessibilityEnabled())
+            XCTAssertGreaterThan(control.accessibilityFrame().width, 0)
+            XCTAssertGreaterThan(control.accessibilityFrame().height, 0)
+            XCTAssertTrue(try XCTUnwrap(hosting.window).frame.contains(control.accessibilityFrame()))
+            XCTAssertTrue(control.accessibilityPerformPress())
+            XCTAssertEqual(requests.count, appearances + 1)
+            XCTAssertEqual(requests.last, "other", "The missing report must never acquire the source owner's repair target")
+            appearances += 1
+        }
+        XCTAssertEqual(appearances, 2)
+        XCTAssertEqual(requests, ["other", "other"])
+    }
+
     private func health(_ json: String) throws -> DesktopSourceHealth {
         try JSONDecoder().decode(DesktopSourceHealth.self, from: Data(json.utf8))
     }

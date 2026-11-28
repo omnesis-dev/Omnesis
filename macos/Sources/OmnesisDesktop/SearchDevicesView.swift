@@ -120,6 +120,7 @@ struct DesktopDevicesView: View {
                         if device.needsPairing == true {
                             Text("Needs pairing").foregroundStyle(DesktopTheme.warning)
                             Button("Repair instructions") { repairDevice = device }.font(DesktopDesignTokens.Typography.secondary)
+                                .accessibilityLabel("Repair instructions for \(device.name)")
                         } else { Text(device.online == true ? "Connected" : "Not connected").foregroundStyle(DesktopTheme.secondary) }
                     }
                     Spacer()

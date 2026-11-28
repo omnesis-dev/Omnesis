@@ -1055,10 +1055,25 @@ final class DesktopSourceSetupTests: XCTestCase {
             XCTAssertTrue(picker.isAccessibilityEnabled())
             XCTAssertEqual(picker.accessibilityRole(), .popUpButton)
             XCTAssertEqual(picker.accessibilityTextValue(), "My Mac")
+            let done = try DesktopAccessibilityDriver.element("source-settings-done", in: hosting)
+            XCTAssertEqual(done.accessibilityRole(), .button)
+            XCTAssertEqual(done.accessibilityLabel(), "Done")
+            XCTAssertTrue(done.isAccessibilityEnabled())
             XCTAssertGreaterThan(picker.accessibilityFrame().width, 0)
             XCTAssertGreaterThan(picker.accessibilityFrame().height, 0)
             XCTAssertTrue(try XCTUnwrap(hosting.window).frame.contains(picker.accessibilityFrame()))
         }
+        flow.busy = true
+        try await DesktopSnapshotRenderer.render(
+            DesktopSourceSettingsView(flow: flow).environment(store),
+            name: "source-settings-busy-dismissal", size: CGSize(width: 660, height: 650)
+        ) { hosting in
+            let done = try DesktopAccessibilityDriver.element("source-settings-done", in: hosting)
+            XCTAssertEqual(done.accessibilityRole(), .button)
+            XCTAssertEqual(done.accessibilityLabel(), "Done")
+            XCTAssertFalse(done.isAccessibilityEnabled(), "The Escape-bound Done action must retain its busy guard")
+        }
+        flow.busy = false
         let move = DesktopSourceFlow(descriptor: descriptor, api: fixture.api)
         try await DesktopSnapshotRenderer.render(
             DesktopSourceMoveConfirmation(flow: move, pending: snapshot).environment(store),

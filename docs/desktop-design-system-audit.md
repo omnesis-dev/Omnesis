@@ -130,8 +130,9 @@ explicitly states; it does not establish OS preference or full-screen qualificat
 
 These results belong to the a0c7 source, not subsequent follow-ups. At the later
 reviewed revision, Theme, Appearance, tokens, renderer and the three suites remain
-byte-identical; Controls adds only textual Link presentation. New Link, error,
-startup, source-picker, scroll and intent follow-ups still need their own validation.
+byte-identical; Controls adds only textual Link presentation. At that checkpoint,
+new Link, error, startup, source-picker, scroll and intent follow-ups had not yet
+been validated. The next subsection records their later scoped results.
 The subsequent section-inset and dialog-spacing migration uses existing shared
 tokens, and the General form keeps the Appearance picker's persistent label
 without repeating it as a section heading. These presentation refinements also
@@ -167,6 +168,13 @@ follow-ups need execution before any failure is considered resolved.
 The Intel Core suite passed all 334 tests, while its hosted suite had three
 failed methods and all five external UI queries failed. This remains a failing
 native job; neither successful components nor Core establish full acceptance.
+
+Additional source and device actions now carry contextual accessibility names.
+Reauthentication names its already-resolved reporting computer, including a
+single legacy report without a device ID; ambiguous reports gain no inferred
+repair action. Source settings binds Escape to its existing Done action while
+retaining the busy guard. Mounted semantic and callback regressions await native
+execution. Physical Escape and VoiceOver behavior remain unverified.
 
 ### Source follow-ups and earlier local evidence
 

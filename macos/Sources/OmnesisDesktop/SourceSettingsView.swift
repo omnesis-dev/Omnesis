@@ -158,7 +158,9 @@ struct DesktopSourceSettingsView: View {
                 }.padding(DesktopDesignTokens.Space.section).frame(maxWidth: .infinity, alignment: .leading)
             }
             .navigationTitle(flow.descriptor.name)
-            .toolbar { Button("Done") { dismiss() }.disabled(flow.busy) }
+            .toolbar { Button("Done") { dismiss() }.disabled(flow.busy).keyboardShortcut(.cancelAction)
+                .accessibilityIdentifier("source-settings-done")
+            }
         }
         .frame(width: 660, height: 650)
         .interactiveDismissDisabled(flow.busy)

@@ -50,6 +50,7 @@ struct DesktopSourceHealthView: View {
                         Button(reports.count > 1 ? "Sign in again on \(deviceName(report))" : "Sign in again") {
                             signIn(deviceId)
                         }.accessibilityIdentifier("source-reauth-\(source.id)-\(deviceId)")
+                            .accessibilityLabel("Sign in again for \(source.accountId) on \(repairDeviceName(deviceId))")
                     }
                 }
                 ForEach(reports.filter(\.needsAccessRecovery)) { report in
@@ -129,6 +130,10 @@ struct DesktopSourceHealthView: View {
     private func repairDevice(_ report: DesktopSourceHealth) -> String? {
         let id = report.deviceId ?? (reports.count == 1 ? source.deviceId : "")
         return DesktopSourceActionPolicy(source: source, devices: devices).canRepair(id) ? id : nil
+    }
+
+    private func repairDeviceName(_ id: String) -> String {
+        devices.first(where: { $0.id == id })?.name ?? "Another device"
     }
 
     private func deviceName(_ report: DesktopSourceHealth) -> String {
