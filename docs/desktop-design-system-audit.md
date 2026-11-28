@@ -197,6 +197,22 @@ with status requests disabled. These qualify neither the production root's
 status request nor file dialogs or runtime cancellation. Native compilation,
 execution and capture inspection of this follow-up remain pending.
 
+Account-move consent keeps a compact heading and fixed actions, with complete
+account, destination and permission details in a bounded scrolling body. The
+move action's accessible name includes the destination. Sixteen paired wrapper
+cases cover long names and access requirements, enabled and paused sources,
+busy controls and keeping the current connection without dispatching a move,
+at Library and fitted Settings parent sizes.
+Native compilation, execution and capture inspection remain pending; these
+fixtures do not qualify source discovery or the production setup presenter.
+
+Phone pairing keeps its title and Done/Create actions outside bounded variable
+content. Sixteen paired wrapper cases cover compact, active-code, large-roster
+and issuance-error states at Library and fitted Settings sizes. The cases use
+an owned HTTP fixture and require the issued code's withdrawal after Done;
+they do not qualify real phone redemption or Devices navigation. Native
+compilation, execution and capture inspection remain pending.
+
 ### Source follow-ups and earlier local evidence
 
 A further inspection of the retained Light/Dark native test artifacts identified

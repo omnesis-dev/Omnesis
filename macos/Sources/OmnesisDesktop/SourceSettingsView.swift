@@ -243,11 +243,49 @@ struct DesktopSourceMoveConfirmation: View {
     @Environment(DesktopStore.self) private var store
     let flow: DesktopSourceFlow
     let pending: DesktopSourceSettingsSnapshot
+    @State private var detailsHeight: CGFloat?
+    private static let maximumDetailsHeight: CGFloat = 360
 
     var body: some View {
         VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.regular) {
-            Text("Move this account to \(targetName)?").font(DesktopDesignTokens.Typography.section).accessibilityAddTraits(.isHeader)
+            Text("Move this account?").font(DesktopDesignTokens.Typography.section).accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("source-move-title")
+            ScrollView {
+                details.fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(GeometryReader { geometry in
+                        Color.clear.preference(key: SourceMoveDetailsHeight.self, value: geometry.size.height)
+                    })
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(height: min(detailsHeight ?? Self.maximumDetailsHeight, Self.maximumDetailsHeight))
+            .onPreferenceChange(SourceMoveDetailsHeight.self) { height in
+                if let height, height.isFinite, height >= 0 { detailsHeight = height }
+            }
+            .accessibilityIdentifier("source-move-details")
+            HStack {
+                Button("Keep current connection", role: .cancel) { flow.pendingMove = nil }.disabled(flow.busy)
+                    .accessibilityIdentifier("source-move-keep")
+                Spacer()
+                Button("Move account") { Task { await flow.confirmMove()
+                    await store.refresh()
+                } }
+                .accessibilityLabel("Move account to \(targetName)")
+                .accessibilityIdentifier("source-move-confirm")
+                .buttonStyle(DesktopButtonStyle(primary: true)).disabled(flow.busy)
+            }
+            if flow.busy { ProgressView("Moving account…") }
+        }.buttonStyle(DesktopButtonStyle()).padding(DesktopDesignTokens.Space.section).frame(width: 520)
+            .fixedSize(horizontal: false, vertical: true)
+            .interactiveDismissDisabled(flow.busy)
+    }
+
+    private var details: some View {
+        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.regular) {
             Text(pending.source.accountId).font(DesktopDesignTokens.Typography.body.weight(.medium)).textSelection(.enabled)
+                .accessibilityIdentifier("source-move-account")
+            Text("To: \(targetName)").textSelection(.enabled)
+                .accessibilityIdentifier("source-move-destination")
             if flow.needsAccess {
                 DesktopCollectionAccessCard(
                     flow: flow.access,
@@ -264,21 +302,20 @@ struct DesktopSourceMoveConfirmation: View {
                 "When you resume this source, collection will run on the selected computer. Information already indexed stays in your library. Your original files and sign-ins stay on the previous computer.")
             if !pending.source.enabled {
                 Label("This source is paused. Moving it keeps it paused until you choose Resume.", systemImage: "pause.circle")
+                    .accessibilityIdentifier("source-move-paused")
             }
-            HStack {
-                Button("Keep current connection", role: .cancel) { flow.pendingMove = nil }.disabled(flow.busy)
-                Spacer()
-                Button("Move to \(targetName)") { Task { await flow.confirmMove()
-                    await store.refresh()
-                } }
-                .buttonStyle(DesktopButtonStyle(primary: true)).disabled(flow.busy)
-            }
-            if flow.busy { ProgressView("Moving account…") }
-        }.buttonStyle(DesktopButtonStyle()).padding(DesktopDesignTokens.Space.section).frame(width: 520)
-            .interactiveDismissDisabled(flow.busy)
+        }
     }
 
     private var targetName: String {
         flow.descriptor.devices?.first(where: { $0.id == flow.deviceId })?.name ?? "the selected computer"
+    }
+}
+
+private struct SourceMoveDetailsHeight: PreferenceKey {
+    static let defaultValue: CGFloat? = nil
+    static func reduce(value: inout CGFloat?, nextValue: () -> CGFloat?) {
+        guard let next = nextValue() else { return }
+        value = value.map { max($0, next) } ?? next
     }
 }

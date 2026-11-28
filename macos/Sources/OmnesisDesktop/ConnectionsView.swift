@@ -139,9 +139,50 @@ struct DesktopPhonePairingView: View {
     @State private var connections = DesktopConnections()
     @State private var pairing = DesktopPhonePairing()
     var context: DesktopAPIContext?
+    @State private var bodyHeight: CGFloat?
+    private static let maximumBodyHeight: CGFloat = 320
     var body: some View {
         VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.large) {
             Text("Connect your phone").font(DesktopDesignTokens.Typography.pageTitle).accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("phone-pairing-title")
+            ScrollView {
+                pairingContent.frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                    .background(GeometryReader { geometry in
+                        Color.clear.preference(key: PhonePairingBodyHeight.self, value: geometry.size.height)
+                    })
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(height: min(bodyHeight ?? Self.maximumBodyHeight, Self.maximumBodyHeight))
+            .onPreferenceChange(PhonePairingBodyHeight.self) { height in
+                if let height, height.isFinite, height >= 0 { bodyHeight = height }
+            }
+            .accessibilityIdentifier("phone-pairing-content")
+            HStack {
+                Button("Done") { dismiss() }.keyboardShortcut(.cancelAction).accessibilityIdentifier("phone-pairing-done")
+                Spacer()
+                Group {
+                    Button(pairing.pending == nil ? "Create a scan code" : "Create a new code") {
+                        context?.run { scope in
+                            await pairing.cancel()
+                            guard scope.isCurrent else { return }
+                            await connections.load(context: scope)
+                            if let origin = connections.gatewayOrigin, scope.isCurrent { await pairing.start(
+                                context: scope,
+                                gatewayOrigin: origin
+                            ) }
+                        }
+                    }.buttonStyle(DesktopButtonStyle(primary: true)).disabled(pairing.working || connections.loading)
+                        .accessibilityIdentifier("phone-pairing-create")
+                }
+            }
+        }.padding(DesktopDesignTokens.Space.section).frame(width: 500).fixedSize(horizontal: false, vertical: true)
+            .task(id: context?.id) { if let context { await connections.load(context: context) } }
+            .onDisappear { Task { await pairing.cancel() } }
+            .onChange(of: pairing.observedPhones.map(\.id)) { Task { await store.refresh() } }
+    }
+
+    private var pairingContent: some View {
+        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.large) {
             Text("Install Omnesis on your phone and sign in with the same account. You can also scan a one-time code below.")
                 .foregroundStyle(DesktopTheme.secondary)
             Picker("Phone", selection: $pairing.kind) {
@@ -158,7 +199,7 @@ struct DesktopPhonePairingView: View {
             }
             if let payload = pairing.payload, let pending = pairing.pending {
                 HStack { Spacer()
-                    QRCodeView(payload: payload)
+                    QRCodeView(payload: payload).accessibilityIdentifier("phone-pairing-qr")
                     Spacer()
                 }
                 Text("In the Omnesis phone app, choose Scan a code and point the camera here.")
@@ -168,6 +209,7 @@ struct DesktopPhonePairingView: View {
                     .font(DesktopDesignTokens.Typography.metadata).foregroundStyle(DesktopTheme.secondary)
                 Text("After scanning, finish connecting in the phone app. This window cannot confirm which phone used this code.")
                     .foregroundStyle(DesktopTheme.secondary)
+                    .accessibilityIdentifier("phone-pairing-completion")
             }
             if !pairing.observedPhones.isEmpty {
                 VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.small) {
@@ -180,6 +222,7 @@ struct DesktopPhonePairingView: View {
             }
             if let failure = pairing.failure ?? connections.failure {
                 Text(failure).foregroundStyle(DesktopTheme.danger).textSelection(.enabled)
+                    .accessibilityIdentifier("phone-pairing-error")
             }
             if pairing.needsBrowserConfirmation, let origin = connections.gatewayOrigin {
                 Button("Confirm it’s you on your library’s page") {
@@ -187,27 +230,7 @@ struct DesktopPhonePairingView: View {
                 }
             }
             if pairing.working || connections.loading { ProgressView("Preparing a secure connection…") }
-            HStack {
-                Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
-                Spacer()
-                Group {
-                    Button(pairing.pending == nil ? "Create a scan code" : "Create a new code") {
-                        context?.run { scope in
-                            await pairing.cancel()
-                            guard scope.isCurrent else { return }
-                            await connections.load(context: scope)
-                            if let origin = connections.gatewayOrigin, scope.isCurrent { await pairing.start(
-                                context: scope,
-                                gatewayOrigin: origin
-                            ) }
-                        }
-                    }.buttonStyle(DesktopButtonStyle(primary: true)).disabled(pairing.working || connections.loading)
-                }
-            }
-        }.padding(DesktopDesignTokens.Space.section).frame(width: 500)
-            .task(id: context?.id) { if let context { await connections.load(context: context) } }
-            .onDisappear { Task { await pairing.cancel() } }
-            .onChange(of: pairing.observedPhones.map(\.id)) { Task { await store.refresh() } }
+        }
     }
 }
 
@@ -222,5 +245,13 @@ struct DesktopAssistantDecisionView: View {
             )
             if decision == .approved { DesktopChatGPTFinishInstructions() }
         }
+    }
+}
+
+private struct PhonePairingBodyHeight: PreferenceKey {
+    static let defaultValue: CGFloat? = nil
+    static func reduce(value: inout CGFloat?, nextValue: () -> CGFloat?) {
+        guard let next = nextValue() else { return }
+        value = value.map { max($0, next) } ?? next
     }
 }
