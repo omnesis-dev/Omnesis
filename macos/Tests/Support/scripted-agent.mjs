@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createServer } from "node:http";
-import { writeFileSync } from "node:fs";
+import { linkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 const root = process.env.OMNESIS_GUI_FIXTURE_ROOT;
 if (!root) throw new Error("An owned fixture directory is required");
@@ -246,12 +246,16 @@ const server = createServer(async (request, response) => {
   response.writeHead(404);
   response.end();
 });
-server.listen(0, "127.0.0.1", () =>
-  writeFileSync(join(root, "endpoint.json"), JSON.stringify({ port: server.address().port }), {
+server.listen(0, "127.0.0.1", () => {
+  const pending = join(root, "endpoint.pending");
+  writeFileSync(pending, JSON.stringify({ port: server.address().port }), {
     mode: 0o600,
     flag: "wx",
-  }),
-);
+  });
+  // Publish complete bytes atomically, without replacing an existing endpoint.
+  linkSync(pending, join(root, "endpoint.json"));
+  unlinkSync(pending);
+});
 process.on("SIGTERM", () => {
   for (const client of clients) client.end();
   server.closeAllConnections();
