@@ -173,29 +173,31 @@ Additional source and device actions now carry contextual accessibility names.
 Reauthentication names its already-resolved reporting computer, including a
 single legacy report without a device ID; ambiguous reports gain no inferred
 repair action. Source settings binds Escape to its existing Done action while
-retaining the busy guard. Mounted semantic and callback regressions await native
-execution. Physical Escape and VoiceOver behavior remain unverified.
+retaining the busy guard. The subsequent Intel source-health and source-setup
+suites passed, including the mounted contextual repair actions. Physical Escape
+and VoiceOver behavior remain unverified.
 
 The automatic recovery-copy confirmation now bounds its variable details in a
 scrolling area while retaining compact short content. The heading, explicit
 consent and original actions stay outside that area. New actual-window fixtures
 exercise compact and long valid previews, the native scroll extent, reachable
-footer controls and consent without removal. Native execution and attached-sheet
-inspection are pending; other recovery and runtime dialogs remain in the matrix.
+footer controls and consent without removal. The subsequent attached-sheet
+execution and inspected captures are recorded below; the ordinary fixture's
+viewport correction still needs execution.
 
 Runtime interaction sheets also bound long messages and choices while keeping
 comparison codes beside their original warning and approval. The existing Cancel
 and browser-completion actions stay reachable. Compact, long and code-only body
-fixtures use the production presenter in both appearances; their native execution
-and capture inspection remain pending.
+fixtures use the production presenter in both appearances. Their code compiled;
+native execution and capture inspection remain pending.
 
 Recovery protection bounds its variable states and full errors while keeping
 the heading and existing dismissal action visible. Recovery code masking,
 save confirmations, expiry and cancellation guards remain intact. Eighteen
 paired cases mount the actual recovery view through the shared sheet wrapper
 with status requests disabled. These qualify neither the production root's
-status request nor file dialogs or runtime cancellation. Native compilation,
-execution and capture inspection of this follow-up remain pending.
+status request nor file dialogs or runtime cancellation. Their code compiled;
+native execution and capture inspection of this follow-up remain pending.
 
 Account-move consent keeps a compact heading and fixed actions, with complete
 account, destination and permission details in a bounded scrolling body. The
@@ -203,15 +205,33 @@ move action's accessible name includes the destination. Sixteen paired wrapper
 cases cover long names and access requirements, enabled and paused sources,
 busy controls and keeping the current connection without dispatching a move,
 at Library and fitted Settings parent sizes.
-Native compilation, execution and capture inspection remain pending; these
+Their code compiled; native execution and capture inspection remain pending. These
 fixtures do not qualify source discovery or the production setup presenter.
 
 Phone pairing keeps its title and Done/Create actions outside bounded variable
 content. Sixteen paired wrapper cases cover compact, active-code, large-roster
 and issuance-error states at Library and fitted Settings sizes. The cases use
 an owned HTTP fixture and require the issued code's withdrawal after Done;
-they do not qualify real phone redemption or Devices navigation. Native
-compilation, execution and capture inspection remain pending.
+they do not qualify real phone redemption or Devices navigation. Their code
+compiled; native execution and capture inspection remain pending.
+
+Removal keeps the current state's actions outside bounded details. Erase-mode
+plan matching, confirmations and system cleanup guards are unchanged. Sixteen
+paired wrapper cases cover compact states, complete long errors, completed
+removal and pending key cleanup at Library and fitted Settings sizes. The cases
+never invoke removal, Login Items changes or Trash. Their compilation, native
+execution and capture inspection remain pending.
+
+The subsequent Intel run passed all 338 Core tests and both physical-scroll
+cases after the completed-gesture precondition. Its production-attached recovery
+copy test passed; four owned compact/long Light/Dark sheet captures were
+inspected with matching active, key, frontmost and on-screen receipts. These show
+the bounded details with consent and actions outside the scroller. The ordinary
+window fixture failed eight viewport assertions by shrinking to the dialog's
+natural height. Its test-only host now keeps the requested outer viewport,
+with the original assertions and privacy regressions preserved; execution of
+that correction is pending. Intent and external accessibility failures remain
+unresolved, so this is not a passing native job or complete design acceptance.
 
 ### Source follow-ups and earlier local evidence
 

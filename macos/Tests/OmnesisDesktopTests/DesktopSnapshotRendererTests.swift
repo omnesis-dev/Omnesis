@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import AppKit
 import Foundation
 import ScreenCaptureKit
+import SwiftUI
 import XCTest
 
 @MainActor
@@ -41,5 +43,29 @@ final class DesktopSnapshotRendererTests: XCTestCase {
             XCTAssertFalse(text.contains(domain))
             XCTAssertFalse(text.contains("confidential"))
         }
+    }
+
+    func testOrdinaryViewportDoesNotShrinkToANaturallySizedRoot() async throws {
+        let size = CGSize(width: 620, height: 560)
+        let compact = VStack(alignment: .leading) {
+            Text("Fictional naturally sized content").accessibilityIdentifier("renderer-natural-content")
+        }.padding(24).frame(width: 300).fixedSize(horizontal: false, vertical: true)
+        var appearances = 0
+        try await DesktopSnapshotRenderer.renderVisibleWindow(compact, name: "renderer-natural-root-viewport", size: size) { hosting in
+            let window = try XCTUnwrap(hosting.window)
+            XCTAssertEqual(hosting.bounds.size, size)
+            XCTAssertGreaterThanOrEqual(window.contentLayoutRect.width, size.width)
+            XCTAssertGreaterThanOrEqual(window.contentLayoutRect.height, size.height)
+            let text = try DesktopAccessibilityDriver.element("renderer-natural-content", in: hosting)
+            let frame = text.accessibilityFrame()
+            let viewport = window.convertToScreen(hosting.convert(hosting.bounds, to: nil))
+            XCTAssertTrue([frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite))
+            XCTAssertGreaterThan(frame.width, 0)
+            XCTAssertGreaterThan(frame.height, 0)
+            XCTAssertLessThan(frame.height, size.height, "The fixture must not stretch the natural content to fake its viewport")
+            XCTAssertTrue(viewport.contains(frame))
+            appearances += 1
+        }
+        XCTAssertEqual(appearances, 2)
     }
 }

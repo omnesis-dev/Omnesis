@@ -127,7 +127,9 @@ enum DesktopSnapshotRenderer {
             let suite = "dev.omnesis.visible-render-tests." + UUID().uuidString
             let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
             defer { defaults.removePersistentDomain(forName: suite) }
-            let hosting = NSHostingView(rootView: view.omnesisTheme()
+            // The fixture owns the requested viewport; naturally sized dialogs remain compact inside it.
+            let hosting = NSHostingView(rootView: view.frame(width: size.width, height: size.height, alignment: .topLeading)
+                .omnesisTheme()
                 .defaultAppStorage(defaults)
                 .environment(\.desktopAppearanceOverride, appearance == .aqua ? .light : .dark))
             hosting.sizingOptions = []
