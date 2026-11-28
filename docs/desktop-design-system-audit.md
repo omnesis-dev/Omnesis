@@ -183,6 +183,13 @@ exercise compact and long valid previews, the native scroll extent, reachable
 footer controls and consent without removal. Native execution and attached-sheet
 inspection are pending; other recovery and runtime dialogs remain in the matrix.
 
+Runtime interaction sheets also bound long messages and choices while keeping
+comparison codes beside their original warning and approval. The existing Cancel
+and browser-completion actions stay reachable. Compact, long and code-only body
+fixtures use the production presenter in both appearances; their native execution
+and capture inspection remain pending. The recovery-protection dialog still needs
+its long-content qualification.
+
 ### Source follow-ups and earlier local evidence
 
 A further inspection of the retained Light/Dark native test artifacts identified

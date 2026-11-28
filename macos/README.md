@@ -164,6 +164,15 @@ node scripts/desktop/smoke-runtime.mjs --runtime /tmp/omnesis-runtime
 node scripts/desktop/assemble-app.mjs --runtime /tmp/omnesis-runtime --shell-app macos/build/Build/Products/Debug/Omnesis.app --out /tmp/Omnesis.app --arch "$(node -p process.arch)" --version "$(node -p 'JSON.parse(require("fs").readFileSync("packages/core/package.json")).version')"
 ```
 
+To compile the native application and both hosted and external UI test bundles
+without running them, use `scripts/macos-test.sh --build-only --compile-tests`
+through the configured native build pool. This mode performs Debug
+`build-for-testing` with the usual ad-hoc test signing, retains the generated
+configuration schema and a compilation-only receipt, and stops before test launch.
+It does not prepare or build analytics, assemble a package, or qualify GUI behavior.
+It is separate from the default Release build-only scope and cannot be combined
+with package or hosted-test selectors.
+
 The native build bridge also accepts `scripts/macos-test.sh --build-only --package`
 when the configured native pool admits the build. This explicit scope installs
 locked build dependencies under an isolated home, compiles the production closure,

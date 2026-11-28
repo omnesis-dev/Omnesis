@@ -142,6 +142,8 @@ function hostedShellFixture({
   summaryStatus = 0,
   schemaStatus = 0,
   testStatus = 0,
+  buildStatus = 0,
+  compileTests = false,
 }) {
   const { root, options } = fixture();
   const calls = [],
@@ -173,7 +175,7 @@ exit "$FIXTURE_SUMMARY_STATUS"
       execution = spawnSync("bash", ["-c", args[1]], {
         input:
           `xcodegen() { return 0; }
-xcodebuild() { printf '%s\\0' "$@" >> "$FIXTURE_CAPTURE"; printf '\\0' >> "$FIXTURE_CAPTURE"; printf '%s\\n' "\${@: -1}" >> "$FIXTURE_CAPTURE.phases"; if [ "\${@: -1}" = test-without-building ]; then return "$FIXTURE_TEST_STATUS"; fi; }
+xcodebuild() { printf '%s\\0' "$@" >> "$FIXTURE_CAPTURE"; printf '\\0' >> "$FIXTURE_CAPTURE"; printf '%s\\n' "\${@: -1}" >> "$FIXTURE_CAPTURE.phases"; if [ "\${@: -1}" = test-without-building ]; then return "$FIXTURE_TEST_STATUS"; fi; return "$FIXTURE_BUILD_STATUS"; }
 python3() { if [ "\${1-}" = Tests/Support/capture-generated-test-schema.py ]; then printf 'schema\\n' >> "$FIXTURE_CAPTURE.phases"; return "$FIXTURE_SCHEMA_STATUS"; fi; cat >/dev/null; }
 ` + config.input,
         encoding: "utf8",
@@ -187,6 +189,7 @@ python3() { if [ "\${1-}" = Tests/Support/capture-generated-test-schema.py ]; th
           FIXTURE_SUMMARY_STATUS: String(summaryStatus),
           FIXTURE_SCHEMA_STATUS: String(schemaStatus),
           FIXTURE_TEST_STATUS: String(testStatus),
+          FIXTURE_BUILD_STATUS: String(buildStatus),
         },
       });
       return execution;
@@ -197,6 +200,7 @@ python3() { if [ "\${1-}" = Tests/Support/capture-generated-test-schema.py ]; th
       writeFileSync(
         join(options.worktree, "macos/.node-fixture/node"),
         `#!/bin/sh
+printf '%s\\n' "$1" >> "$FIXTURE_CAPTURE.node"
 if [ "$1" = --input-type=module ]; then
   export PATH="$FIXTURE_TOOLS:/usr/bin:/bin"
   exec ${shellArgument(process.execPath)} "$@"
@@ -212,7 +216,12 @@ fi
     calls,
     capture,
     xcrunCapture,
-    execute: () => runNativeCheck({ ...options, lane: "test", hostedOnly, filter }, run),
+    worktree: options.worktree,
+    execute: () =>
+      runNativeCheck(
+        { ...options, lane: "test", hostedOnly, filter, buildOnly: compileTests, compileTests },
+        run,
+      ),
     execution: () => execution,
     receipt: () => {
       const args = readFileSync(xcrunCapture, "utf8").split("\0").slice(0, -1);
@@ -664,5 +673,80 @@ posixTest.each([0, 23])(
         .trim()
         .split("\n"),
     ).toEqual(["build-for-testing", "schema", "test-without-building"]);
+  },
+);
+
+test("test compilation requires its closed build-only combination", () => {
+  const env = {
+    OMNESIS_EPIC_MACOS_HOST: "fixture",
+    OMNESIS_EPIC_MACOS_DESKTOP_WORKTREE: "/tmp/owned-compile-fixture",
+  };
+  expect(nativeCheckOptions(["test", "--build-only", "--compile-tests"], env)).toMatchObject({
+    buildOnly: true,
+    compileTests: true,
+    package: false,
+    hostedOnly: false,
+    filter: undefined,
+  });
+  for (const args of [
+    ["test", "--compile-tests"],
+    ["logic", "--compile-tests"],
+    ["logic", "--build-only", "--compile-tests"],
+    ["test", "--compile-tests", "--compile-tests"],
+    ["test", "--build-only", "--compile-tests", "--package"],
+    ["test", "--build-only", "--compile-tests", "--hosted-only"],
+    ["test", "--build-only", "--compile-tests", "--filter", "FixtureTests"],
+    ["test", "--build-only", "--compile-tests;unsafe"],
+  ])
+    expect(() => nativeCheckOptions(args, env)).toThrow("Usage");
+});
+
+posixTest.each([0, 19])(
+  "actual compile-only shell builds Debug test products without launching tests or analytics (%s)",
+  (buildStatus) => {
+    const fixture = hostedShellFixture({
+      compileTests: true,
+      hostedOnly: false,
+      buildStatus,
+      schemaStatus: 77,
+    });
+    if (buildStatus === 0) expect(() => fixture.execute()).not.toThrow();
+    else expect(() => fixture.execute()).toThrow();
+    expect(fixture.execution().status).toBe(buildStatus);
+    const invocations = readFileSync(fixture.capture, "utf8")
+      .split("\0\0")
+      .filter(Boolean)
+      .map((v) => v.split("\0"));
+    expect(invocations).toHaveLength(1);
+    const args = invocations[0];
+    expect(args.at(-1)).toBe("build-for-testing");
+    expect(args[args.indexOf("-configuration") + 1]).toBe("Debug");
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "CODE_SIGN_IDENTITY=-",
+        "CODE_SIGNING_ALLOWED=YES",
+        "CODE_SIGNING_REQUIRED=YES",
+      ]),
+    );
+    expect(args.filter((v) => v.startsWith("-only-testing:"))).toEqual([]);
+    expect(existsSync(fixture.capture + ".node")).toBe(false);
+    expect(existsSync(fixture.xcrunCapture)).toBe(false);
+    expect(
+      readFileSync(fixture.capture + ".phases", "utf8")
+        .trim()
+        .split("\n"),
+    ).toEqual(buildStatus === 0 ? ["build-for-testing", "schema"] : ["build-for-testing"]);
+    const remote = fixture.calls.find(
+      (call) => call.command === "ssh" && call.options.input?.includes('if [ "$2" = logic ]'),
+    );
+    expect(remote.args[1]).toContain("'compile-tests'");
+    const result = args[args.indexOf("-resultBundlePath") + 1];
+    const receipt = join(fixture.worktree, "macos", result + ".compilation.txt");
+    expect(existsSync(receipt)).toBe(buildStatus === 0);
+    if (buildStatus === 0) {
+      expect(readFileSync(receipt, "utf8")).toContain("scope=debug-test-compilation\n");
+      expect(readFileSync(receipt, "utf8")).toContain("testsExecuted=false\n");
+      expect(statSync(receipt).mode & 0o777).toBe(0o600);
+    }
   },
 );

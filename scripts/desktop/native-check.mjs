@@ -36,7 +36,13 @@ export function nativeCheckOptions(args, env = process.env) {
     typeof flags[2] === "string" &&
     !/[\r\n\0]/u.test(flags[2]) &&
     /^[A-Za-z_][A-Za-z0-9_]{0,127}(?:\/test[A-Za-z0-9_]{0,124})?$/.test(flags[2]);
+  const compileTests =
+    lane === "test" &&
+    flags.length === 2 &&
+    flags.includes("--build-only") &&
+    flags.includes("--compile-tests");
   const testFlags =
+    compileTests ||
     filteredHosted ||
     flags.length === 0 ||
     (flags.length === 1 && ["--build-only", "--hosted-only"].includes(flags[0])) ||
@@ -49,7 +55,7 @@ export function nativeCheckOptions(args, env = process.env) {
     (lane === "logic" ? flags.length > 0 && !filteredLogic : !testFlags)
   ) {
     throw new Error(
-      "Usage: native-check.mjs logic [--filter SuiteName/testName] | test [--build-only [--package]|--hosted-only [--filter SuiteName[/testName]]]",
+      "Usage: native-check.mjs logic [--filter SuiteName/testName] | test [--build-only [--package|--compile-tests]|--hosted-only [--filter SuiteName[/testName]]]",
     );
   }
   const host = env.OMNESIS_EPIC_MACOS_HOST;
@@ -67,6 +73,7 @@ export function nativeCheckOptions(args, env = process.env) {
     worktree,
     lane,
     buildOnly: flags.includes("--build-only"),
+    compileTests,
     hostedOnly: flags.includes("--hosted-only"),
     package: flags.includes("--package"),
     filter: filteredLogic ? flags[1] : filteredHosted ? flags[2] : undefined,
@@ -164,6 +171,8 @@ else
   if [ "$3" = yes ]; then
     action=build
     configuration=Release
+  elif [ "$3" = compile-tests ]; then
+    action=compile-tests
   fi
   signing_allowed=YES
   signing_required=YES
@@ -210,6 +219,13 @@ PYSCREEN
       .node-fixture/node .analytics-build-fixture/scripts/desktop/build-analytics.mjs \\
         --cache "$PWD/../evidence/desktop-analytics" --sources "$PWD/.analytics-build-fixture/sources"
     fi
+  elif [ "$action" = compile-tests ]; then
+    desktop_xcodebuild -resultBundlePath "$result" build-for-testing
+    python3 Tests/Support/capture-generated-test-schema.py --products build/Build/Products --evidence ../evidence/readiness-diagnostics >/dev/null 2>&1 || true
+    (umask 077; set -C; printf '%s\\n' 'format=1' 'scope=debug-test-compilation' \\
+      'requestedProducts=application,hosted-tests,external-ui-tests' \\
+      'buildForTestingReturned=true' 'testsExecuted=false' > "$result.compilation.txt")
+    printf '%s\\n' 'Debug test products compiled; application tests were not executed.'
   else
     desktop_xcodebuild build-for-testing
     python3 Tests/Support/capture-generated-test-schema.py --products build/Build/Products --evidence ../evidence/readiness-diagnostics >/dev/null 2>&1 || true
@@ -333,7 +349,7 @@ export function runNativeCheck(options, run = spawnSync, sourceRoot = root) {
     remote(check, [
       options.worktree,
       options.lane,
-      options.buildOnly ? "yes" : "no",
+      options.compileTests ? "compile-tests" : options.buildOnly ? "yes" : "no",
       options.hostedOnly ? "yes" : "no",
       options.package ? "yes" : "no",
       ...(options.filter && (options.lane === "logic" || options.hostedOnly)
@@ -370,7 +386,7 @@ if (isEntryScript(import.meta.url)) {
     const options = nativeCheckOptions(process.argv.slice(2));
     await prepareNativeNodeFixture(options);
     await prepareNativeCodexFixture(options);
-    if (options.buildOnly)
+    if (options.buildOnly && !options.compileTests)
       await prepareAnalyticsNativeFixture({
         output: join(root, "macos/.analytics-build-fixture"),
         cache: join(homedir(), ".cache", "omnesis-desktop-analytics-sources"),

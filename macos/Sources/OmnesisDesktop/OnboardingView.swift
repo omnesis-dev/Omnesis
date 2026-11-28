@@ -272,33 +272,67 @@ struct DesktopOnboardingView: View {
 struct RuntimeInteractionView: View {
     @Environment(DesktopStore.self) private var store
     let interaction: RuntimeInteraction
+    @State private var promptHeight: CGFloat?
+    /// Comparison prompts also keep their safety instruction and approval action visible.
+    private var maximumPromptHeight: CGFloat {
+        interaction.kind == "compareCode" ? 240 : 320
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.large) {
             Text(title).font(DesktopDesignTokens.Typography.pageTitle).accessibilityAddTraits(.isHeader)
-            if let message = interaction.message { Text(message) }
-            if let code = interaction
-                .code { Text(code).font(.largeTitle.monospaced()).textSelection(.enabled).accessibilityIdentifier("comparison-code") }
-            if let url = interaction.url {
-                Text("Continue securely in your browser, then return to Omnesis.").foregroundStyle(DesktopTheme.secondary)
-                Button("Open sign-in page") { store.openBrowser(url) }.buttonStyle(DesktopButtonStyle(primary: true))
+                .accessibilityIdentifier("runtime-prompt-title")
+            ScrollView {
+                promptContent.frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                    .background(GeometryReader { geometry in
+                        Color.clear.preference(key: RuntimePromptHeight.self, value: geometry.size.height)
+                    })
             }
-            ForEach(interaction.choices ?? []) { choice in
-                Button(choice.name) { store.respond(choice.id) }.buttonStyle(.bordered)
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(height: min(promptHeight ?? maximumPromptHeight, maximumPromptHeight))
+            .onPreferenceChange(RuntimePromptHeight.self) { height in
+                if let height, height.isFinite, height >= 0 { promptHeight = height }
             }
+            .accessibilityIdentifier("runtime-prompt-content")
             if interaction.kind == "compareCode" {
-                Text("Only approve if the same code is shown on your other device.")
-                Button("The codes match") { store.respond("approve") }.buttonStyle(DesktopButtonStyle(primary: true))
+                VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.xSmall) {
+                    if let code = interaction.code {
+                        Text(code).font(.largeTitle.monospaced()).textSelection(.enabled).accessibilityIdentifier("comparison-code")
+                    }
+                    Text("Only approve if the same code is shown on your other device.")
+                    Button("The codes match") { store.respond("approve") }.buttonStyle(DesktopButtonStyle(primary: true))
+                        .accessibilityIdentifier("runtime-prompt-approve")
+                }
             }
             HStack {
                 Button("Cancel") { store.command("cancel")
                     store.interaction = nil
-                }.keyboardShortcut(.cancelAction)
+                }.keyboardShortcut(.cancelAction).accessibilityIdentifier("runtime-prompt-cancel")
                 Spacer()
                 if interaction.kind == "openBrowser" || interaction.kind == "connectCode" {
                     Button("I’ve finished in the browser") { store.respond("continue") }
+                        .accessibilityIdentifier("runtime-prompt-continue")
                 }
             }
-        }.padding(DesktopDesignTokens.Space.section).frame(width: 480)
+        }.padding(DesktopDesignTokens.Space.section).frame(width: 480).fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var promptContent: some View {
+        VStack(alignment: .leading, spacing: DesktopDesignTokens.Space.large) {
+            if let message = interaction.message { Text(message).accessibilityIdentifier("runtime-prompt-message") }
+            if interaction.kind != "compareCode", let code = interaction.code {
+                Text(code).font(.largeTitle.monospaced()).textSelection(.enabled).accessibilityIdentifier("comparison-code")
+            }
+            if let url = interaction.url {
+                Text("Continue securely in your browser, then return to Omnesis.").foregroundStyle(DesktopTheme.secondary)
+                Button("Open sign-in page") { store.openBrowser(url) }.buttonStyle(DesktopButtonStyle(primary: true))
+                    .accessibilityIdentifier("runtime-prompt-browser")
+            }
+            ForEach(interaction.choices ?? []) { choice in
+                Button(choice.name) { store.respond(choice.id) }.buttonStyle(.bordered)
+                    .accessibilityIdentifier("runtime-prompt-choice-" + choice.id)
+            }
+        }
     }
 
     private var title: String {
@@ -307,6 +341,14 @@ struct RuntimeInteractionView: View {
         case "compareCode": "Confirm this is your device"
         default: "Connect your Omnesis account"
         }
+    }
+}
+
+private struct RuntimePromptHeight: PreferenceKey {
+    static let defaultValue: CGFloat? = nil
+    static func reduce(value: inout CGFloat?, nextValue: () -> CGFloat?) {
+        guard let next = nextValue() else { return }
+        value = value.map { max($0, next) } ?? next
     }
 }
 
