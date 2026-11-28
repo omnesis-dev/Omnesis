@@ -307,3 +307,50 @@ final class DesktopExclusiveOperationSelectionTests: XCTestCase {
         XCTAssertEqual(actualMatches, 1, "The actual setup selector must admit that discovered operation")
     }
 }
+
+/// Inspect XCTest's discovered names without invoking Catalog setup or any method.
+final class DesktopCatalogParentKillSelectionTests: XCTestCase {
+    private let selected = "CatalogFixtureChildTests.testIntentionalParentKillRetainsChildUntilOwnedSocketExit"
+
+    func testEveryCanonicalSpellingIsSelectedButUnrelatedOrMalformedNamesAreNot() {
+        let method = "testIntentionalParentKillRetainsChildUntilOwnedSocketExit"
+        for name in [
+            "CatalogFixtureChildTests." + method,
+            "DesktopCoreTests.CatalogFixtureChildTests." + method,
+            "-[DesktopCoreTests.CatalogFixtureChildTests " + method + "]",
+            "-[CatalogFixtureChildTests " + method + "]",
+        ] {
+            XCTAssertEqual(DesktopCoreLifecycleMetadata.normalize(name), selected)
+            XCTAssertTrue(CatalogFixtureChildTests.observesParentKillOperation(name))
+            XCTAssertFalse(CatalogFixtureChildTests.observesParentKillOperation("prefix" + name))
+            XCTAssertFalse(CatalogFixtureChildTests.observesParentKillOperation(name + "suffix"))
+            XCTAssertFalse(CatalogFixtureChildTests.observesParentKillOperation(name + "\n"))
+        }
+        for name in [
+            "OtherModule.CatalogFixtureChildTests." + method,
+            "-[OtherModule.CatalogFixtureChildTests " + method + "]",
+            "CatalogFixtureChildTests.testAnUnrelatedInventedCase",
+            "OtherTests." + method,
+            String(repeating: "x", count: 321),
+        ] {
+            XCTAssertFalse(CatalogFixtureChildTests.observesParentKillOperation(name))
+        }
+    }
+
+    func testNativeDiscoveredCatalogCaseNamesIncludeExactlyOneSelectedOperation() throws {
+        let discovered = CatalogFixtureChildTests.defaultTestSuite.tests
+        XCTAssertFalse(discovered.isEmpty, "Native Catalog discovery must expose its cases")
+        var expectedMatches = 0, actualMatches = 0
+        for test in discovered {
+            let instance = try XCTUnwrap(test as? CatalogFixtureChildTests, "Native discovery must return the exact Catalog test class")
+            // No raw name is printed or fabricated with init(selector:).
+            let expected = DesktopCoreLifecycleMetadata.normalize(instance.name) == selected
+            let actual = CatalogFixtureChildTests.observesParentKillOperation(instance.name)
+            XCTAssertEqual(actual, expected, "The actual setup selector must agree with the canonical native name")
+            if expected { expectedMatches += 1 }
+            if actual { actualMatches += 1 }
+        }
+        XCTAssertEqual(expectedMatches, 1, "Native discovery must canonically identify exactly one selected operation")
+        XCTAssertEqual(actualMatches, 1, "The actual setup selector must admit that discovered operation")
+    }
+}

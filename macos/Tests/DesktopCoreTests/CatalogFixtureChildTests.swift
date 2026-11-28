@@ -8,6 +8,58 @@ import Foundation
 import XCTest
 
 final class CatalogFixtureChildTests: XCTestCase {
+    private var parentKillJournal: DesktopFixturePhaseJournal?
+    private var parentKillObservationSelected = false
+    private var parentKillObservationRefused = false
+
+    static func observesParentKillOperation(_ name: String) -> Bool {
+        DesktopCoreLifecycleMetadata.normalize(name) ==
+            "CatalogFixtureChildTests.testIntentionalParentKillRetainsChildUntilOwnedSocketExit"
+    }
+
+    private func prepareParentKillJournal() {
+        guard Self.observesParentKillOperation(name) else { refuseParentKillObservation()
+            return
+        }
+        parentKillObservationSelected = true
+        do {
+            var checkout = URL(fileURLWithPath: #filePath)
+            for _ in 0 ..< 4 {
+                checkout.deleteLastPathComponent()
+            }
+            let canonical = try DesktopCanonicalPath.resolve(checkout.path)
+            parentKillJournal = try DesktopFixturePhaseJournal(checkout: URL(fileURLWithPath: canonical, isDirectory: true))
+        } catch { refuseParentKillObservation() }
+    }
+
+    private func refuseParentKillObservation() {
+        guard !parentKillObservationRefused else { return }
+        parentKillObservationRefused = true
+        let bytes = Array("catalog-parent-kill-observation=refused\n".utf8)
+        _ = bytes.withUnsafeBytes { Darwin.write(STDERR_FILENO, $0.baseAddress, $0.count) }
+    }
+
+    private func parentKillPhase(_ phase: DesktopFixturePhaseJournal.Phase) {
+        guard parentKillObservationSelected, !parentKillObservationRefused else { return }
+        guard parentKillJournal?.record(phase) == true else {
+            refuseParentKillObservation()
+            return
+        }
+    }
+
+    private func parentKillCleanupPhase(_ phase: CatalogFixtureChild.CleanupPhase) {
+        switch phase {
+        case .parentWaitEnter: parentKillPhase(.catalogParentKillOwnedParentWaitEnter)
+        case .parentWaitReturned: parentKillPhase(.catalogParentKillOwnedParentWaitReturned)
+        case .parentJoinEnter: parentKillPhase(.catalogParentKillOwnedParentJoinEnter)
+        case .parentJoinReturned: parentKillPhase(.catalogParentKillOwnedParentJoinReturned)
+        case .workerWaitEnter: parentKillPhase(.catalogParentKillOwnedWorkerWaitEnter)
+        case .workerWaitReturned: parentKillPhase(.catalogParentKillOwnedWorkerWaitReturned)
+        case .socketExitEnter: parentKillPhase(.catalogParentKillOwnedSocketExitEnter)
+        case .socketExitReturned: parentKillPhase(.catalogParentKillOwnedSocketExitReturned)
+        }
+    }
+
     func testFailureBeforeAdoptionTermJoinsTheParentsExactChild() async throws {
         let fixture = try Fixture()
         addTeardownBlock { try await fixture.cleanup() }
@@ -34,33 +86,69 @@ final class CatalogFixtureChildTests: XCTestCase {
     }
 
     func testIntentionalParentKillRetainsChildUntilOwnedSocketExit() async throws {
+        prepareParentKillJournal()
+        parentKillPhase(.catalogParentKillMethodEnter)
+        var teardownRegistered = false
+        defer {
+            parentKillPhase(.catalogParentKillMethodExit)
+            if !teardownRegistered { parentKillJournal = nil }
+        }
+        parentKillPhase(.catalogParentKillFixtureEnter)
         let fixture = try Fixture()
-        addTeardownBlock { try await fixture.cleanup() }
+        parentKillPhase(.catalogParentKillFixtureReturned)
+        addTeardownBlock {
+            self.parentKillPhase(.catalogParentKillTeardownEnter)
+            var returned = false
+            defer {
+                if !returned { self.parentKillPhase(.catalogParentKillTeardownUnwound) }
+                self.parentKillJournal = nil
+            }
+            try await fixture.cleanup(observe: self.parentKillCleanupPhase)
+            self.parentKillPhase(.catalogParentKillTeardownReturned)
+            returned = true
+        }
+        teardownRegistered = true
         let socket = fixture.home.appendingPathComponent("child.sock").path
         let literal = try String(decoding: JSONEncoder().encode(socket), as: UTF8.self)
+        parentKillPhase(.catalogParentKillStartEnter)
         try fixture.startChild(
             "import net from'node:net';import fs from'node:fs';let server=net.createServer(c=>c.once('data',()=>{c.end();server.close(()=>{try{fs.unlinkSync(\(literal))}catch{};process.exit(0)})}));server.listen(\(literal));",
             socket: socket
         )
+        parentKillPhase(.catalogParentKillStartReturned)
+        parentKillPhase(.catalogParentKillReadyEnter)
         try await fixture.wait {
             try fixture.owner?.tryAdopt()
             return fixture.owner?.identity != nil && fixture.output.text.contains("catalog-ready-written")
         }
+        parentKillPhase(.catalogParentKillReadyReturned)
+        parentKillPhase(.catalogParentKillControllerKillEnter)
         try fixture.owner?.killControllerAfterReady()
+        parentKillPhase(.catalogParentKillControllerKillReturned)
+        parentKillPhase(.catalogParentKillDirectParentWaitEnter)
         try await fixture.wait { !fixture.parent.isRunning }
+        parentKillPhase(.catalogParentKillDirectParentWaitReturned)
+        parentKillPhase(.catalogParentKillDirectJoinEnter)
         fixture.parent.waitUntilExit()
+        parentKillPhase(.catalogParentKillDirectJoinReturned)
         var shutdownCalls = 0
-        try await fixture.owner?.cleanup {
+        parentKillPhase(.catalogParentKillFirstCleanupEnter)
+        try await fixture.owner?.cleanup(observe: parentKillCleanupPhase) {
             shutdownCalls += 1
             try Self.exitSocket(socket)
         }
+        parentKillPhase(.catalogParentKillFirstCleanupReturned)
         XCTAssertFalse(FileManager.default.fileExists(atPath: socket))
-        try await fixture.owner?.cleanup {
+        parentKillPhase(.catalogParentKillRepeatCleanupEnter)
+        try await fixture.owner?.cleanup(observe: parentKillCleanupPhase) {
             shutdownCalls += 1
             throw Fixture.Failure.unavailable
         }
+        parentKillPhase(.catalogParentKillRepeatCleanupReturned)
         XCTAssertEqual(shutdownCalls, 1, "Repeated cleanup must use proven child exit without contacting a removed socket")
+        parentKillPhase(.catalogParentKillRemoveEnter)
         try fixture.removeAfterJoined()
+        parentKillPhase(.catalogParentKillRemoveReturned)
     }
 
     func testJoinedAdoptedChildCanLeaveSocketEntryRetiredWithItsPrivateHome() async throws {
@@ -364,9 +452,9 @@ final class CatalogFixtureChildTests: XCTestCase {
             guard try condition() else { throw Failure.timedOut }
         }
 
-        func cleanup() async throws {
+        func cleanup(observe: ((CatalogFixtureChild.CleanupPhase) -> Void)? = nil) async throws {
             if let owner {
-                try await owner.cleanup {
+                try await owner.cleanup(observe: observe) {
                     if let socket = self.socket, FileManager.default.fileExists(atPath: socket) {
                         try CatalogFixtureChildTests.exitSocket(socket)
                     }
