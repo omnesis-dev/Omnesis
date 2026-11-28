@@ -126,6 +126,21 @@ final class BackgroundOriginRegistrationTests: XCTestCase {
         }
     }
 
+    func testMatchingPresenterCallbackBeyondTheDiagnosticPrefixIsClaimedExactlyOnce() {
+        let events = PresenterQueueEvents()
+        for _ in 0 ..< 4 {
+            XCTAssertFalse(events.observeMove(rawPathEqual: false, canonicalMatch: false))
+        }
+        XCTAssertFalse(events.moveObservations.matchingCallbackObserved)
+        XCTAssertTrue(events.observeMove(rawPathEqual: false, canonicalMatch: true))
+        XCTAssertFalse(events.observeMove(rawPathEqual: false, canonicalMatch: true))
+        let observations = events.moveObservations
+        XCTAssertEqual(observations.values.count, 4)
+        XCTAssertTrue(observations.values.allSatisfy { !$0.rawPathEqual && !$0.canonicalMatch })
+        XCTAssertTrue(observations.truncated)
+        XCTAssertTrue(observations.matchingCallbackObserved)
+    }
+
     func testActualCoordinatedMovePrecedesVerificationOnTheExactPresenterQueue() async throws {
         try await fixture { root, archive in
             let original = try app(root, "QueuedOriginal")
@@ -181,7 +196,7 @@ final class BackgroundOriginRegistrationTests: XCTestCase {
             try movedResult.get()
             XCTAssertEqual(try verifiedResult.get().path, moved.path)
             XCTAssertEqual(events.values, ["move", "callback-returning", "verify"])
-            XCTAssertTrue(observations.values.contains { $0.canonicalMatch })
+            XCTAssertTrue(observations.matchingCallbackObserved)
             // A later legitimate change may invalidate the proof; the assertion concerns the
             // actual verification queue/object checkpoint, not permanent future authority.
         }
@@ -377,10 +392,10 @@ private final class PresenterQueueEvents: @unchecked Sendable {
         return true
     }
 
-    var moveObservations: (values: [MoveObservation], truncated: Bool) {
+    var moveObservations: (values: [MoveObservation], truncated: Bool, matchingCallbackObserved: Bool) {
         lock.lock()
         defer { lock.unlock() }
-        return (callbacks, callbacksTruncated)
+        return (callbacks, callbacksTruncated, claimedMatchingCallback)
     }
 
     func append(_ value: String) {
