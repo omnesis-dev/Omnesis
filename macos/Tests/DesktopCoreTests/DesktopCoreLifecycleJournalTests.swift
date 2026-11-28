@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import Darwin
+import DesktopCore
 import Foundation
 import XCTest
 
@@ -101,7 +102,8 @@ final class DesktopCoreLifecycleObserver: NSObject, XCTestObservation {
         for _ in 0 ..< 4 {
             checkout.deleteLastPathComponent()
         }
-        guard let journal = try? DesktopFixturePhaseJournal(checkout: checkout) else { return }
+        guard let path = try? DesktopCanonicalPath.resolve(checkout.path),
+              let journal = try? DesktopFixturePhaseJournal(checkout: URL(fileURLWithPath: path, isDirectory: true)) else { return }
         let sink = DesktopCoreLifecycleSink(journal: journal)
         guard sink.record(.registrationPrepared) else { sink.close()
             return
@@ -137,7 +139,7 @@ final class DesktopCoreLifecycleJournalTests: XCTestCase {
     private func root() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("omnesis-core-journal-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
-        return try root.resolvingSymlinksInPath()
+        return try URL(fileURLWithPath: DesktopCanonicalPath.resolve(root.path), isDirectory: true)
     }
 
     func testPartialPreparationAndUnmatchedEndAreRecordedWithoutInventingABegin() throws {
