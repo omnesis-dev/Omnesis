@@ -326,7 +326,11 @@ export type IndexerToMain =
   // Whether the HNSW graph is being built, serving, or released for lack of
   // memory (semantic search degraded, keyword search only).
   | ({ type: "vectorIndex" } & SemanticSearchStatus)
-  | { type: "shutdownComplete" }
+  | {
+      type: "shutdownComplete";
+      /** The thread still holds a local model it cannot free; keep it alive (see `llama-models.ts`). */
+      keepThread?: boolean;
+    }
   | {
       /**
        * Boot-phase progress. Covers model weight loading (from
@@ -525,4 +529,8 @@ export type BuildEmbedderToMain =
   | { type: "embedError"; id: number; error: string }
   | { type: "embedQueryResult"; id: number; vector: number[] }
   | { type: "embedQueryError"; id: number; error: string }
-  | { type: "shutdownComplete" };
+  | {
+      type: "shutdownComplete";
+      /** The thread still holds a local model it cannot free; keep it alive (see `llama-models.ts`). */
+      keepThread?: boolean;
+    };

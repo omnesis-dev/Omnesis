@@ -8,6 +8,7 @@ import { shutdownWorker } from "./shutdown-worker.js";
 
 class DeferredWorker extends EventEmitter {
   threadId = 1;
+  unref = vi.fn();
   finishTermination!: (code: number) => void;
   terminate = vi.fn(
     () =>
@@ -134,6 +135,51 @@ describe("worker shutdown ownership", () => {
     worker.emit("message", { type: "shutdownComplete" });
     await expect(stopped).rejects.toThrow("termination refused");
     expect(worker.listenerCount("exit")).toBe(0);
+  });
+
+  test.each([false, true])(
+    "a worker holding a model it cannot free is kept alive, not ended (native drain %s)",
+    async (waitForNativeDrain) => {
+      vi.useFakeTimers();
+      const worker = new DeferredWorker();
+      const stopped = shutdownWorker(worker.asWorker(), () => {}, vi.fn(), { waitForNativeDrain });
+      worker.emit("message", { type: "shutdownComplete", keepThread: true });
+      await stopped;
+      await vi.advanceTimersByTimeAsync(5_001);
+      expect(worker.terminate).not.toHaveBeenCalled();
+      expect(worker.unref).toHaveBeenCalledOnce();
+      expect(worker.listenerCount("message")).toBe(0);
+      expect(worker.listenerCount("exit")).toBe(0);
+    },
+  );
+
+  test("a real worker that asks to be kept is still running when disposal completes", async () => {
+    const worker = new Worker(
+      new URL(
+        `data:text/javascript,${encodeURIComponent(`
+      import { parentPort } from 'node:worker_threads';
+      parentPort.on('message', (message) => {
+        if (message.type === 'shutdown') parentPort.postMessage({ type: 'shutdownComplete', keepThread: true });
+        else parentPort.postMessage({ type: 'alive' });
+      });
+      parentPort.postMessage({ type: 'ready' });
+    `)}`,
+      ),
+    );
+    try {
+      await once(worker, "message");
+      await shutdownWorker(
+        worker,
+        () => worker.postMessage({ type: "shutdown" }),
+        () => {},
+      );
+      expect(worker.threadId).not.toBe(-1);
+      worker.postMessage({ type: "ping" });
+      const [reply] = (await once(worker, "message")) as [{ type: string }];
+      expect(reply.type).toBe("alive");
+    } finally {
+      await worker.terminate();
+    }
   });
 
   test("a real acknowledged worker has exited when disposal completes", async () => {

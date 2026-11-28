@@ -13,7 +13,8 @@
  */
 
 import { createLogger, type CompleteCapability } from "@omnesis/core";
-import { getLlamaModule, getLlamaInstance } from "../llama-instance.js";
+import { getLlamaModule } from "../llama-instance.js";
+import { loadLlamaModel, releaseLlamaModel } from "../llama-models.js";
 import type { LlamaCompletion, LlamaContext, LlamaModel } from "node-llama-cpp";
 
 const log = createLogger("inference:completer");
@@ -72,9 +73,9 @@ export class LlamaCppCompleter implements CompleteCapability {
     log.info(`Loading completion model: ${this.modelPath}`);
     const startMs = Date.now();
 
-    const [llama, llamaInstance] = await Promise.all([getLlamaModule(), getLlamaInstance()]);
+    const llama = await getLlamaModule();
 
-    this.model = await llamaInstance.loadModel({ modelPath: this.modelPath });
+    this.model = await loadLlamaModel({ modelPath: this.modelPath });
     this.context = await this.model.createContext({ contextSize: "auto" });
     const contextSequence = this.context.getSequence();
     this.completion = new llama.LlamaCompletion({ contextSequence });
@@ -101,7 +102,7 @@ export class LlamaCppCompleter implements CompleteCapability {
       this.context = null;
     }
     if (this.model) {
-      await this.model.dispose();
+      await releaseLlamaModel(this.model);
       this.model = null;
     }
 

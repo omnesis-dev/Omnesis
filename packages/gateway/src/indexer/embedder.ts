@@ -23,7 +23,7 @@
  */
 
 import { createLogger } from "@omnesis/core";
-import { getLlamaInstance } from "../llama-instance.js";
+import { loadLlamaModel, releaseLlamaModel } from "../llama-models.js";
 import {
   NO_EMBEDDER_PREFIXES,
   type EmbedderEncoding,
@@ -165,8 +165,7 @@ export class LlamaCppEmbedder implements Embedder {
     log.info(`Loading embedding model: ${this.modelPath}`);
     const startMs = Date.now();
 
-    const llamaInstance = await getLlamaInstance();
-    this.model = await llamaInstance.loadModel({
+    this.model = await loadLlamaModel({
       modelPath: this.modelPath,
       onLoadProgress: this.onLoadProgress,
     });
@@ -308,7 +307,7 @@ export class LlamaCppEmbedder implements Embedder {
     this.slots = [];
     this.maxInputTokens = undefined;
     if (this.model) {
-      await this.model.dispose();
+      await releaseLlamaModel(this.model);
       this.model = null;
     }
     this.loadPromise = null;

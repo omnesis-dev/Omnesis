@@ -15,7 +15,8 @@
  *   init → ready (after model loads, watermark set)
  *   embedQuery{id,text} → embedQueryResult{id,vector} | embedQueryError{id,err}
  *   heartbeat every N ms so main can detect a wedged worker
- *   shutdown → shutdownComplete (main side calls worker.terminate())
+ *   shutdown → shutdownComplete (main side calls worker.terminate(), unless the
+ *   thread holds a model this host cannot free; see llama-models.ts)
  */
 
 import { assertNever } from "@omnesis/core";
@@ -63,6 +64,7 @@ import {
   invalidateVectorGraph,
 } from "../indexer/invalidate-semantic-index.js";
 import { GraphKeeper, planGraphAdmission } from "../indexer/graph-keeper.js";
+import { holdsUnfreeableLlamaModels } from "../llama-models.js";
 import { memoryHeadroom } from "../memory-budget.js";
 import { openEncryptedSqlite } from "../sqlite-encryption.js";
 import {
@@ -1707,8 +1709,7 @@ async function handleShutdown(): Promise<void> {
       );
       return;
     }
-    post({ type: "shutdownComplete" });
-    parentPort!.close();
+    acknowledgeShutdown();
     return;
   }
   state.shuttingDown = true;
@@ -1772,8 +1773,17 @@ async function handleShutdown(): Promise<void> {
     /* best-effort */
   }
 
-  post({ type: "shutdownComplete" });
-  parentPort!.close();
+  acknowledgeShutdown();
+}
+
+/**
+ * Acknowledge shutdown. A thread holding a local model this host cannot free
+ * stays alive, since ending it would free the model (see `llama-models.ts`).
+ */
+function acknowledgeShutdown(): void {
+  const keepThread = holdsUnfreeableLlamaModels();
+  post({ type: "shutdownComplete", ...(keepThread ? { keepThread } : {}) });
+  if (!keepThread) parentPort!.close();
 }
 
 /**

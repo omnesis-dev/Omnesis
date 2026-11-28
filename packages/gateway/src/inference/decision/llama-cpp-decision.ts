@@ -39,7 +39,8 @@ import {
   type DecisionRequest,
   type DecisionResult,
 } from "@omnesis/core";
-import { getLlamaModule, getLlamaInstance } from "../../llama-instance.js";
+import { getLlamaModule } from "../../llama-instance.js";
+import { loadLlamaModel, releaseLlamaModel } from "../../llama-models.js";
 import {
   answerFromTokenProbabilities,
   decisionOptions,
@@ -208,8 +209,10 @@ export class LlamaCppDecision implements DecisionCapability {
     log.info(`Loading decision model: ${this.modelPath}`);
     const startMs = Date.now();
     this.modelId = localModelId(this.modelPath);
-    const [llama, instance] = await Promise.all([getLlamaModule(), getLlamaInstance()]);
-    const model = await instance.loadModel({ modelPath: this.modelPath });
+    const [llama, model] = await Promise.all([
+      getLlamaModule(),
+      loadLlamaModel({ modelPath: this.modelPath }),
+    ]);
     try {
       const context = await model.createContext({
         contextSize: { max: Math.min(model.trainContextSize, MAX_CONTEXT_SIZE) },
@@ -224,7 +227,7 @@ export class LlamaCppDecision implements DecisionCapability {
       );
       return { model, context, sequence, chatWrapper };
     } catch (err) {
-      await model.dispose();
+      await releaseLlamaModel(model);
       throw err;
     }
   }
@@ -238,7 +241,7 @@ export class LlamaCppDecision implements DecisionCapability {
     const loaded = await loading.catch(() => null);
     if (!loaded) return;
     await loaded.context.dispose();
-    await loaded.model.dispose();
+    await releaseLlamaModel(loaded.model);
     log.info(`Decision model unloaded: ${this.modelId}`);
   }
 
